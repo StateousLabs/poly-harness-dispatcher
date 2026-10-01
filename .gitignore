@@ -1,0 +1,17 @@
+# Throwaway spikes and examples (local reference only)
+spikes/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
