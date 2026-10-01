@@ -15,13 +15,20 @@ def write_json(path: Path, data: Any) -> None:
 
 
 def write_private(path: Path, text: str) -> None:
-    """Write a file only the current user should read (credentials)."""
+    """Write a file only the current user should read (credentials).
+
+    On POSIX systems, creates the file with 0o600 permissions from the start to avoid
+    a window where credentials are readable. On Windows, POSIX modes are ignored."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+    finally:
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
 
 
 def deep_merge(base: dict, extra: dict, *, conflicts: list[str] | None = None, _path: str = "") -> dict:

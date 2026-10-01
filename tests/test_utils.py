@@ -75,3 +75,37 @@ def test_resolve_argv_wraps_cmd_shims(tmp_path):
     argv = _shell.resolve_argv([str(shim), "-p"])
     assert argv[1:] == ["/c", str(shim), "-p"]
     assert argv[0].lower().endswith("cmd.exe")
+
+
+def test_write_private_writes_exact_text_and_mode(tmp_path):
+    creds_path = tmp_path / "nested" / "secret.txt"
+    text_with_unicode = "token=xyz&café=1\n"
+
+    # Write new file
+    _fs.write_private(creds_path, text_with_unicode)
+    assert creds_path.read_text(encoding="utf-8") == text_with_unicode
+
+    # Check mode is 0o600 on POSIX (Windows ignores POSIX modes)
+    if os.name != "nt":
+        mode = creds_path.stat().st_mode & 0o777
+        assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
+
+    # Overwrite existing file with new text
+    new_text = "new_secret=abc\ncafé2"
+    _fs.write_private(creds_path, new_text)
+    assert creds_path.read_text(encoding="utf-8") == new_text
+
+
+def test_write_json_creates_parents_and_ensures_unicode(tmp_path):
+    json_path = tmp_path / "a" / "b" / "c" / "data.json"
+    data = {"name": "café", "value": 42, "flag": True}
+
+    _fs.write_json(json_path, data)
+
+    assert json_path.exists()
+    import json as json_lib
+    loaded = json_lib.loads(json_path.read_text(encoding="utf-8"))
+    assert loaded == data
+    # Verify unicode was preserved (not escaped)
+    content = json_path.read_text(encoding="utf-8")
+    assert "café" in content
