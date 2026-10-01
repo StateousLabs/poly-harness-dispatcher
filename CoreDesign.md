@@ -172,6 +172,52 @@ Normalized event types (minimal v1): `run.started`, `message`, `tool_call`, `too
 
 ---
 
+## Package layout
+
+`src/phd/` is split into domain packages; a package never imports from one that sits above it in the
+dependency order below.
+
+```
+src/phd/
+  __init__.py        public re-exports only (Spec, Dispatcher, RunResult, ... and phd.runs)
+  errors.py          the exception taxonomy
+  constants.py       harness names, modes, REDACTED
+  runs.py            three-line re-export so `import phd.runs` works (impl: results/runs.py)
+
+  _util/             fs.py, toml.py, shell.py: stdlib-only helpers, no phd imports except errors
+  spec/              what to run: Spec, Inputs, Credentials, Stack, HookDef, placeholders
+  harnesses/         one sub-package per CLI
+    __init__.py        get_adapter() registry
+    base.py            Adapter / StreamParser protocols
+    outcome.py         Outcome, classify_error, shared parser helpers
+    catalog.py         ModelCatalog (dispatches to each harness's models.py)
+    claude/ codex/ opencode/   adapter.py, parser.py, models.py each
+  materialize/       the pure step: write a run's isolated home, run nothing
+    __init__.py        materialize()
+    context.py         MaterializeContext, MaterializedHome, SECRET_ENV
+    prompt.py          prompt assembly
+    hooks/             translate.py (neutral -> native hook config), opencode_plugin.py,
+                       runtime.py (write_runtime), shim.py (stdlib-only script copied into each run home)
+  execution/         process.py (HarnessProcess, child_env), dispatcher.py (Dispatcher), handle.py (RunHandle)
+  results/           model.py (RunResult, Usage, RunError, Event), ledger.py (LocalLedger, ResultSink), runs.py
+```
+
+Dependency direction (lower depends on nothing above it):
+
+```
+_util  <-  errors, constants  <-  spec, results  <-  materialize, harnesses  <-  execution  <-  phd/__init__
+```
+
+`results` depends only on `_util` and `errors`, so `harnesses.outcome` can use `Usage` and `RunError`
+without reaching up. `materialize` and `harnesses` are mutually aware: adapters use
+`materialize.context` and `materialize.hooks`, and `materialize()` looks the adapter up through
+`harnesses.get_adapter` (imported inside the function to keep the import graph acyclic).
+
+Future sprints add sibling packages: `sandbox/` (isolated execution environments), `runner/` (the
+in-sandbox API), `stacks/` (local and remote stack sources) and `auth/`.
+
+---
+
 ## 3. Public API (sketch)
 
 ```python
