@@ -6,6 +6,7 @@ command a neutral event."""
 
 import json
 import math
+import os
 import sys
 from collections.abc import Iterable
 from importlib import resources
@@ -30,7 +31,7 @@ NATIVE_TOOLS = {
 def native_tool(harness: str, tool: str) -> str:
     if tool.startswith("mcp:") and harness == "claude":
         server, _, name = tool[4:].partition("/")
-        return f"mcp__{server}__{name}" if name else f"mcp__{server}"
+        return f"mcp__{server}__{name}" if name else f"mcp__{server}__.*"
     try:
         return NATIVE_TOOLS[harness][tool]
     except KeyError:
@@ -59,10 +60,23 @@ def _shim_command(shim: Path, harness: str, index: int) -> str:
     return shell_join([Path(sys.executable).as_posix(), shim.as_posix(), harness, str(index)])
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _hook_command(shim: Path, harness: str, index: int) -> str:
+    command = _shim_command(shim, harness, index)
+    if harness == "codex" and _is_windows():
+        # codex runs hooks via `cmd.exe /C`, which strips the first and last quote when the line has
+        # more than two quotes; one extra outer pair keeps every inner quote intact.
+        return f'"{command}"'
+    return command
+
+
 def claude_style_block(harness: str, hooks: list[dict], shim: Path) -> dict:
     block: dict[str, list] = {}
     for index, hook in enumerate(hooks):
-        entry: dict = {"hooks": [{"type": "command", "command": _shim_command(shim, harness, index),
+        entry: dict = {"hooks": [{"type": "command", "command": _hook_command(shim, harness, index),
                                   "timeout": int(math.ceil(hook["timeout_s"]))}]}
         if hook.get("tool"):
             matcher = native_tool(harness, hook["tool"])

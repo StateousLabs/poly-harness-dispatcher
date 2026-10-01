@@ -27,6 +27,7 @@ from .result import Event, RunError, RunResult, Usage, decide_status
 from .spec import Inputs, Spec
 
 
+
 class Dispatcher:
     def __init__(self, spec: Spec, *, runs_root: str | Path | None = None, sinks: Sequence[ResultSink] = (),
                  catalog: ModelCatalog | None = None, validate_model: bool = True,
@@ -165,7 +166,11 @@ class RunHandle:
             try:
                 result = await self._run_to_result()
             except Exception as e:  # never let wait() raise or events() hang (CoreDesign §3)
+                self._kill_if_running()
                 result = self._minimal_result(e)
+            except BaseException:  # KeyboardInterrupt / CancelledError: never leave the harness running
+                self._kill_if_running()
+                raise
             for sink in self._d.sinks:
                 try:
                     await sink.put(result)
@@ -174,6 +179,11 @@ class RunHandle:
         finally:
             self._result = result
             self._queue.put_nowait(None)
+
+    def _kill_if_running(self) -> None:
+        proc = self._proc
+        if proc is not None and proc.proc is not None and proc.proc.returncode is None:
+            proc.kill_tree()
 
     def _minimal_result(self, e: Exception) -> RunResult:
         spec, m = self._d.spec, self.materialized
@@ -244,6 +254,13 @@ class RunHandle:
                 return True
         return False
 
+    def _scrub(self, text: str) -> str:
+        spec = self._d.spec
+        for value in [*spec.secrets.values(), spec.credentials.secret]:
+            if value:
+                text = text.replace(value, REDACTED)
+        return text
+
     def _build_result(self, o: Outcome, exit_code: int | None, *, timed_out: bool, budget_hit: bool,
                       internal: Exception | None) -> RunResult:
         spec, m = self._d.spec, self.materialized
@@ -260,7 +277,9 @@ class RunHandle:
         elif o.error is not None:
             error = o.error
         elif exit_code != 0:
-            error = RunError("harness_crash", f"exit code {exit_code}; stderr: {self._proc.stderr_tail()}")
+            error = RunError("harness_crash", f"exit code {exit_code}; stderr: {self._scrub(self._proc.stderr_tail())}")
+        elif o.result_text is None and o.raw_final is None:
+            error = RunError("no_result", "harness exited without a final result")
         else:
             error = None
         structured = o.structured_output

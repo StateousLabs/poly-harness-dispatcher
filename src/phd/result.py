@@ -32,7 +32,7 @@ class Usage:
 
 @dataclass
 class RunError:
-    kind: str  # auth | model_unavailable | billing | budget | timeout | cancelled | harness_error | harness_crash | phd_internal
+    kind: str  # auth | model_unavailable | billing | budget | timeout | cancelled | harness_error | harness_crash | no_result | phd_internal
     message: str
 
 

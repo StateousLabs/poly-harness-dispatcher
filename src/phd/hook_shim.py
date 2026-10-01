@@ -84,7 +84,8 @@ def main(argv: list[str]) -> int:
 
         sys.stdout.write(proc.stdout)
         sys.stderr.write(proc.stderr)
-        return {0: 0, 2: 2}.get(proc.returncode, 1)
+        # exit 2 blocks only before a tool runs; elsewhere (e.g. a claude Stop hook) it would keep the agent going
+        return {0: 0, 2: 2 if event_type == "pre_tool" else 1}.get(proc.returncode, 1)
     except Exception as e:
         error_code = 2 if event_type == "pre_tool" else 1
         sys.stderr.write(f"PHD hook shim error: {e}\n")

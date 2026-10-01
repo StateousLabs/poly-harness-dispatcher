@@ -63,7 +63,10 @@ class LocalLedger:
              since: datetime | None = None) -> builtins.list[RunResult]:
         results = []
         for path in self.root.glob("*/result.json"):
-            r = RunResult.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            try:
+                r = RunResult.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except (ValueError, KeyError, TypeError):  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+                continue  # one corrupt result.json must not hide every other run
             if harness and r.harness != harness:
                 continue
             if stack and r.stack != stack:

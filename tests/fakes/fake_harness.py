@@ -5,6 +5,8 @@ FAKE_CHILD_PIDFILE  spawn a sleeping grandchild process and write its pid here
 FAKE_STREAM         path of a JSONL file to print line by line
 FAKE_SLEEP          seconds to sleep after printing (simulates a hang)
 FAKE_EXIT           exit code (default 0)
+FAKE_NO_STDIN       set to 1 to never read stdin (the writer blocks once the pipe fills)
+FAKE_STDERR         text to write to stderr
 """
 import json
 import os
@@ -16,7 +18,10 @@ PREFIXES = ("CLAUDE_", "CODEX_", "OPENCODE_", "ANTHROPIC_", "OPENAI_", "XDG_", "
 
 
 def main() -> int:
-    stdin = sys.stdin.buffer.read().decode("utf-8")
+    stdin = "" if os.environ.get("FAKE_NO_STDIN") == "1" else sys.stdin.buffer.read().decode("utf-8")
+    if text := os.environ.get("FAKE_STDERR"):
+        sys.stderr.write(text)
+        sys.stderr.flush()
     if path := os.environ.get("FAKE_ECHO_FILE"):
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"argv": sys.argv[1:], "stdin": stdin, "cwd": os.getcwd(),

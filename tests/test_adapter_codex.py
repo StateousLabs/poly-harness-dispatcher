@@ -37,7 +37,7 @@ def test_codex_home_layout_and_argv(tmp_path, make_spec, inputs, workdir, fake_u
     assert all(entry["enabled"] is False for entry in cfg["skills"]["config"])
 
     pre = json.loads((home / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]
-    assert pre["matcher"] == "Bash" and pre["hooks"][0]["command"].endswith("codex 0")
+    assert pre["matcher"] == "Bash" and pre["hooks"][0]["command"].rstrip('"').endswith("codex 0")
 
     assert m.argv == ["codex", "exec", "--json", "--strict-config", "--skip-git-repo-check",
                       "-C", str(workdir), "-m", "gpt-5.6-terra", "--ignore-rules",

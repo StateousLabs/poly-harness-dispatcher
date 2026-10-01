@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -37,7 +38,8 @@ def test_check_supported():
         hooks.check_supported("opencode", [HookDef("session_start", "x")])
 
 
-def test_claude_style_block(tmp_path):
+def test_claude_style_block(tmp_path, monkeypatch):
+    monkeypatch.setattr(hooks, "_is_windows", lambda: False)
     shim = tmp_path / "home" / "phd" / "hook_shim.py"
     block = hooks.claude_style_block("codex", [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10.0}], shim)
     entry = block["PreToolUse"][0]
@@ -96,7 +98,7 @@ def test_shim_maps_mcp_tool_names(tmp_path):
 
 
 def test_neutral_tool_mcp_without_subpath():
-    assert hooks.native_tool("claude", "mcp:echo") == "mcp__echo"
+    assert hooks.native_tool("claude", "mcp:echo") == "mcp__echo__.*"
 
 
 def test_shim_error_on_invalid_stdin_json_pre_tool(tmp_path):
@@ -175,3 +177,68 @@ def test_hook_shim_neutral_tool():
     from phd import hook_shim
     assert hook_shim.neutral_tool("mcp__echo") == "mcp:echo"
     assert hook_shim.neutral_tool("mcp__echo__echo") == "mcp:echo/echo"
+
+
+def test_codex_command_gets_outer_quotes_on_windows(tmp_path, monkeypatch):
+    shim = tmp_path / "run dir" / "hook_shim.py"
+    hook = [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10}]
+    monkeypatch.setattr(hooks, "_is_windows", lambda: True)
+    codex = hooks.claude_style_block("codex", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
+    inner = hooks._shim_command(shim, "codex", 0)
+    assert codex == f'"{inner}"' and codex.startswith('"') and codex.endswith('"')
+    claude = hooks.claude_style_block("claude", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
+    assert claude == hooks._shim_command(shim, "claude", 0)
+    monkeypatch.setattr(hooks, "_is_windows", lambda: False)
+    codex = hooks.claude_style_block("codex", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
+    assert codex == inner
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe quoting is Windows-only")
+def test_codex_hook_runs_under_cmd_exe_with_spaced_path(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run dir"
+    run_dir.mkdir()
+    guard = run_dir / "my guard.py"
+    guard.write_text(GUARD, encoding="utf-8")
+    real_python = sys.executable
+    launcher = run_dir / "py launcher.bat"  # a spaced interpreter path too: four quotes, the case cmd.exe mangles
+    launcher.write_text('@"' + real_python + '" %*' + chr(13) + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(sys, "executable", str(launcher))
+    hook_cmd = shell_join([Path(real_python).as_posix(), guard.as_posix()])
+    shim = hooks.write_runtime(run_dir / "home", run_id="r", run_dir=run_dir,
+                               hooks=[{"event": "pre_tool", "tool": "shell", "command": hook_cmd, "timeout_s": 10}])
+    monkeypatch.setattr(hooks, "_is_windows", lambda: True)
+    command = hooks.claude_style_block("codex", [{"event": "pre_tool", "tool": "shell", "command": hook_cmd,
+                                                  "timeout_s": 10}], shim)["PreToolUse"][0]["hooks"][0]["command"]
+
+    def run(cmd):  # a string, not a list: list2cmdline would backslash-escape the quotes cmd.exe sees
+        return subprocess.run(f"cmd.exe /C {cmd}", input=json.dumps(
+            {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "echo hi"}, "cwd": "/w"}),
+            text=True, capture_output=True)
+
+    ok = run(command)
+    assert ok.returncode == 0, ok.stderr
+    assert (run_dir / "seen.jsonl").is_file()  # the shim really ran the guard
+    blocked = subprocess.run(f"cmd.exe /C {command}", text=True, capture_output=True, input=json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": "rm -rf x"}}))
+    assert blocked.returncode == 2 and "blocked: rm -rf" in blocked.stderr
+
+
+def test_materialized_hooks_quote_spaced_stack_dir(tmp_path, make_spec, inputs):
+    from phd import Dispatcher
+    d = Dispatcher(make_spec("claude"), runs_root=tmp_path / "run dir", validate_model=False)
+    m = d.plan(inputs)
+    resolved = json.loads((m.home / "phd" / "hooks.resolved.json").read_text(encoding="utf-8"))
+    stack = (m.home / "stack").as_posix()
+    assert " " in stack
+    assert resolved[0]["command"] == f'python "{stack}"/hooks/guard.py'  # adjacent quoted + bare text is one shell word'
+    mcp = json.loads((m.home / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert any(stack + "/mcp/echo_server.py" in arg for srv in mcp.values() for arg in srv["args"])
+
+
+def test_shim_non_pre_tool_exit_2_maps_to_1(tmp_path):
+    cmd = f"{Path(sys.executable).as_posix()} -c \"import sys; sys.exit(2)\""
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": "stop", "tool": None, "command": cmd, "timeout_s": 10}])
+    result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True, capture_output=True,
+                            input=json.dumps({"hook_event_name": "Stop"}))
+    assert result.returncode == 1

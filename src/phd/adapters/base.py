@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from .._fs import deep_merge
+from .._shell import shell_join
 from ..constants import REDACTED
 from ..placeholders import resolve
 from ..prompt import Prompt
@@ -34,8 +35,9 @@ class MaterializeContext:
         return resolve(self.spec.stack.mcp_servers, stack_dir=self.stack_dir.as_posix(), secrets=self.spec.secrets)
 
     def hooks(self) -> list[dict]:
-        return [resolve(h.as_dict(), stack_dir=self.stack_dir.as_posix(), secrets=self.spec.secrets)
-                for h in self.spec.stack.hooks]
+        # hook commands are shell lines: quote the stack path so a spaced run dir stays one argument
+        stack = shell_join([self.stack_dir.as_posix()])
+        return [resolve(h.as_dict(), stack_dir=stack, secrets=self.spec.secrets) for h in self.spec.stack.hooks]
 
     def merge_harness_config(self, base: dict) -> dict:
         conflicts: list[str] = []
@@ -56,7 +58,7 @@ class MaterializedHome:
     run_dir: Path
     home: Path
     argv: list[str]
-    env: dict[str, str]
+    env: dict[str, str] = field(repr=False)
     stdin: str
     warnings: list[str]
 

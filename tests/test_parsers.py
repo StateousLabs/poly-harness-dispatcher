@@ -167,8 +167,11 @@ def test_opencode_malformed_error_string():
     """OpenCode parser should not raise on error being a plain string."""
     p = OpencodeParser()
     events = p.feed({"type": "error", "error": "boom"})
-    assert [t for t, _ in events] == ["log"]
-    assert p.outcome() is not None
+    assert events == []
+    assert p.outcome().error == RunError("harness_error", "boom")
+    p = OpencodeParser()
+    p.feed({"type": "error", "error": "401 unauthorized"})
+    assert p.outcome().error.kind == "auth"
 
 
 def test_opencode_malformed_token_counts():
@@ -215,3 +218,18 @@ def test_opencode_non_retryable_error():
 def test_classify_error_with_boundaries(message, kind):
     """classify_error should use word boundaries for error codes."""
     assert classify_error(message) == kind
+
+
+def test_claude_error_subtype_without_is_error_flag():
+    p = ClaudeParser()
+    p.feed({"type": "result", "subtype": "error_during_execution", "is_error": False, "session_id": "s"})
+    assert p.outcome().error == RunError("harness_error", "error_during_execution")
+    p = ClaudeParser()
+    p.feed({"type": "result", "subtype": "error_max_budget_usd", "is_error": False})
+    assert p.outcome().error.kind == "budget"
+    p = ClaudeParser()
+    p.feed({"type": "result", "subtype": "error_during_execution", "is_error": False, "result": "401 unauthorized"})
+    assert p.outcome().error.kind == "auth"
+    p = ClaudeParser()
+    p.feed({"type": "result", "subtype": "success", "is_error": False, "result": "fine"})
+    assert p.outcome().error is None

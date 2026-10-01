@@ -27,6 +27,7 @@ class HarnessProcess:
         self.killed = False
         self.overflowed = False
         self._stderr_task: asyncio.Task | None = None
+        self._stdin_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         if os.name == "nt":
@@ -37,13 +38,21 @@ class HarnessProcess:
             *self.argv, cwd=self.cwd, env=self.env, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=STREAM_LIMIT, **group)
         self._stderr_task = asyncio.create_task(self._copy_stderr())
+        # The prompt is written in the background: a harness that never reads stdin must not block
+        # start() (and so escape timeout_s).
+        self._stdin_task = asyncio.create_task(self._write_stdin())
+
+    async def _write_stdin(self) -> None:
         try:
             self.proc.stdin.write(self.stdin_text.encode("utf-8"))
             await self.proc.stdin.drain()
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
-            self.proc.stdin.close()
+            try:
+                self.proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
 
     async def lines(self) -> AsyncIterator[str]:
         while True:
@@ -63,6 +72,10 @@ class HarnessProcess:
         while self.proc.returncode is None:
             await asyncio.sleep(0.05)
         code = self.proc.returncode
+        if self._stdin_task is not None and not self._stdin_task.done():
+            self._stdin_task.cancel()  # the process is gone; a pending write can never finish
+        if self._stdin_task is not None:
+            await asyncio.gather(self._stdin_task, return_exceptions=True)
         if self._stderr_task is not None:
             try:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), 5)
@@ -71,6 +84,8 @@ class HarnessProcess:
         return code
 
     def kill_tree(self) -> None:
+        if self._stdin_task is not None and not self._stdin_task.done():
+            self._stdin_task.cancel()
         if self.proc is None:
             return
         if os.name == "nt":

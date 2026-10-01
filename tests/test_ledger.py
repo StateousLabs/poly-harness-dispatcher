@@ -41,3 +41,13 @@ def test_records(tmp_path):
         ledger.read_record("nope")
     with pytest.raises(KeyError):
         ledger.get("nope")
+
+
+async def test_list_skips_corrupt_results(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    rid, d = ledger.allocate()
+    await ledger.put(result(d, rid))
+    for name, body in [("bad-json", "{not json"), ("bad-shape", "{}"), ("bad-type", "[]")]:
+        _, bad = ledger.allocate()
+        (bad / "result.json").write_text(body, encoding="utf-8")
+    assert [r.run_id for r in ledger.list()] == [rid]

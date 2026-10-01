@@ -92,9 +92,10 @@ class ClaudeParser:
                             reasoning_tokens=_int((usage.get("output_tokens_details") or {}).get("thinking_tokens")))
             if "structured_output" in obj:
                 o.structured_output = obj["structured_output"]
-            if obj.get("is_error"):
+            subtype = str(obj.get("subtype") or "")
+            if obj.get("is_error") or subtype.startswith("error"):
                 message = str(obj.get("result") or obj.get("subtype") or "claude reported an error")
-                kind_ = "budget" if "budget" in str(obj.get("subtype", "")) else classify_error(message)
+                kind_ = "budget" if "budget" in subtype else classify_error(message)
                 o.error = RunError(kind_, message)
             events.append(("usage", asdict(o.usage) | {"cost_usd": o.cost_usd}))
         return events
@@ -194,6 +195,9 @@ class OpencodeParser:
             events.append(("usage", asdict(self.out.usage) | {"cost_usd": self._cost}))
         elif kind == "error":
             err = obj.get("error") or {}
+            if isinstance(err, str):
+                self.out.error = RunError(classify_error(err), err)
+                return events
             message = (err.get("data") or {}).get("message") or err.get("name") or str(err)
             is_retryable = (err.get("data") or {}).get("isRetryable") if isinstance(err, dict) else False
             if is_retryable:

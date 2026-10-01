@@ -239,3 +239,48 @@ async def test_build_result_failure_still_yields_result(tmp_path, monkeypatch, m
     r = await asyncio.wait_for(handle.wait(), 20)
     assert r.status is not RunStatus.SUCCEEDED and r.error.kind == "phd_internal"
     assert "run.finished" in [ev.type async for ev in handle.events()]
+
+
+async def test_interrupted_run_kills_process_tree(tmp_path, monkeypatch, make_spec, inputs):
+    pidfile = tmp_path / "child.pid"
+    monkeypatch.setenv("FAKE_CHILD_PIDFILE", str(pidfile))
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    handle = await dispatcher(make_spec("claude"), tmp_path).start(inputs)
+    for _ in range(100):
+        if pidfile.exists() and pidfile.read_text().strip():
+            break
+        await asyncio.sleep(0.1)
+    grandchild, child = int(pidfile.read_text()), handle._proc.proc.pid
+    handle._task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await handle._task
+    assert wait_dead(child) and wait_dead(grandchild)
+
+
+def test_timeout_covers_a_stalled_stdin_write(tmp_path, monkeypatch, make_spec, inputs):
+    from phd import Inputs
+    monkeypatch.setenv("FAKE_NO_STDIN", "1")
+    monkeypatch.setenv("FAKE_SLEEP", "30")
+    big = Inputs(brief=inputs.brief, rules=inputs.rules, msg="x" * (2 * 1024 * 1024))
+    t0 = time.monotonic()
+    r = dispatcher(make_spec("claude", timeout_s=2), tmp_path).spawn(big)
+    assert r.status is RunStatus.TIMED_OUT and time.monotonic() - t0 < 15
+
+
+def test_plan_repr_hides_secrets(tmp_path, make_spec, inputs):
+    assert "test-oauth-token" not in repr(dispatcher(make_spec("claude"), tmp_path).plan(inputs))
+
+
+def test_exit_zero_without_final_result_fails(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_EXIT", "0")
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    assert r.status is RunStatus.FAILED and r.error.kind == "no_result"
+
+
+def test_crash_stderr_tail_is_scrubbed(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_EXIT", "3")
+    monkeypatch.setenv("FAKE_STDERR", "boom token=test-oauth-token prefix=phd-echo end")
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    assert r.error.kind == "harness_crash" and "boom" in r.error.message and "<redacted>" in r.error.message
+    text = (tmp_path / "runs" / r.run_id / "result.json").read_text(encoding="utf-8")
+    assert "test-oauth-token" not in text and "phd-echo" not in text
