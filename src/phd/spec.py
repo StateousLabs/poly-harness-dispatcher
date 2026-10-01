@@ -65,15 +65,25 @@ class Credentials:
             raise UnknownHarness(f"unknown harness {harness!r}; expected one of {list(HARNESSES)}")
         return makers[harness]()
 
+    def _read_auth_file(self) -> dict:
+        """Read and parse auth file, raising MissingCredentials for any error."""
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise MissingCredentials(f"{self.path}: failed to read or parse ({e})")
+        if not isinstance(data, dict):
+            raise MissingCredentials(f"{self.path}: top level must be a JSON object, got {type(data).__name__}")
+        return data
+
     def claude_access_token(self) -> str:
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._read_auth_file()
         token = (data.get("claudeAiOauth") or {}).get("accessToken")
         if not token:
             raise MissingCredentials(f"{self.path} has no claudeAiOauth.accessToken; run `claude auth login`")
         return token
 
     def opencode_auth_content(self) -> str:
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._read_auth_file()
         if self.providers:
             missing = [p for p in self.providers if p not in data]
             if missing:
