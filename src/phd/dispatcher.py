@@ -23,7 +23,7 @@ from .materialize import materialize
 from .models import ModelCatalog
 from .parsers import Outcome
 from .prompt import resume_message
-from .result import Event, RunError, RunResult, decide_status
+from .result import Event, RunError, RunResult, Usage, decide_status
 from .spec import Inputs, Spec
 
 
@@ -45,14 +45,19 @@ class Dispatcher:
 
     # ---- fresh runs
     def plan(self, inputs: Inputs) -> MaterializedHome:
+        return self._plan(inputs)[0]
+
+    def _plan(self, inputs: Inputs) -> tuple[MaterializedHome, str]:
+        stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
         m = materialize(self.spec, inputs, run_id=run_id, run_dir=run_dir)
         m.warnings[:0] = self.warnings
         self.ledger.write_record(run_dir, self._record(m, base_argv=m.argv, resumed_from=None))
-        return m
+        return m, stack_hash
 
     async def start(self, inputs: Inputs) -> RunHandle:
-        return await RunHandle.launch(self, self.plan(inputs), resumed_from=None)
+        m, stack_hash = self._plan(inputs)
+        return await RunHandle.launch(self, m, resumed_from=None, stack_hash=stack_hash)
 
     def spawn(self, inputs: Inputs) -> RunResult:
         return _run_sync(self._spawn(inputs))
@@ -62,7 +67,13 @@ class Dispatcher:
 
     # ---- resume
     async def start_resume(self, previous: RunResult | str, msg: str) -> RunHandle:
-        prev = previous if isinstance(previous, RunResult) else self.ledger.get(previous)
+        if isinstance(previous, RunResult):
+            prev = previous
+        else:
+            try:
+                prev = self.ledger.get(previous)
+            except KeyError:
+                raise NotResumable(f"no finished run {previous!r} in {self.ledger.root}") from None
         if prev.harness != self.spec.harness:
             raise NotResumable(f"run {prev.run_id} used {prev.harness!r}; this dispatcher runs {self.spec.harness!r}")
         if not prev.session_id:
@@ -78,7 +89,7 @@ class Dispatcher:
         m = MaterializedHome(run_id=run_id, run_dir=run_dir, home=home, argv=argv, env=env,
                              stdin=stdin, warnings=list(self.warnings))
         self.ledger.write_record(run_dir, self._record(m, base_argv=record["base_argv"], resumed_from=prev.run_id))
-        return await RunHandle.launch(self, m, resumed_from=prev.run_id)
+        return await RunHandle.launch(self, m, resumed_from=prev.run_id, stack_hash=prev.stack_hash)
 
     def resume(self, previous: RunResult | str, msg: str) -> RunResult:
         return _run_sync(self._resume(previous, msg))
@@ -103,8 +114,9 @@ def _run_sync(coro):
 
 
 class RunHandle:
-    def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None):
+    def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None, stack_hash: str):
         self._d = dispatcher
+        self._stack_hash = stack_hash
         self.materialized = m
         self.run_id = m.run_id
         self.resumed_from = resumed_from
@@ -117,8 +129,9 @@ class RunHandle:
         self._t0 = time.monotonic()
 
     @classmethod
-    async def launch(cls, d: Dispatcher, m: MaterializedHome, *, resumed_from: str | None) -> RunHandle:
-        handle = cls(d, m, resumed_from)
+    async def launch(cls, d: Dispatcher, m: MaterializedHome, *, resumed_from: str | None,
+                     stack_hash: str) -> RunHandle:
+        handle = cls(d, m, resumed_from, stack_hash)
         override = d.executables.get(d.spec.harness)
         argv = [*override, *m.argv[1:]] if override else resolve_argv(m.argv)
         handle._proc = HarnessProcess(argv, env=child_env(m.env), cwd=d.spec.cwd, stdin_text=m.stdin,
@@ -130,6 +143,7 @@ class RunHandle:
     async def events(self) -> AsyncIterator[Event]:
         while (event := await self._queue.get()) is not None:
             yield event
+        self._queue.put_nowait(None)  # leave the sentinel for any other / later iterator
 
     async def wait(self) -> RunResult:
         await asyncio.shield(self._task)
@@ -146,6 +160,36 @@ class RunHandle:
         self._queue.put_nowait(event)
 
     async def _pump(self) -> None:
+        result: RunResult | None = None
+        try:
+            try:
+                result = await self._run_to_result()
+            except Exception as e:  # never let wait() raise or events() hang (CoreDesign §3)
+                result = self._minimal_result(e)
+            for sink in self._d.sinks:
+                try:
+                    await sink.put(result)
+                except Exception as e:
+                    result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
+        finally:
+            self._result = result
+            self._queue.put_nowait(None)
+
+    def _minimal_result(self, e: Exception) -> RunResult:
+        spec, m = self._d.spec, self.materialized
+        return RunResult(
+            run_id=m.run_id, harness=spec.harness, model=spec.model, stack=spec.stack.ref,
+            stack_hash=self._stack_hash, status=decide_status(RunError("phd_internal", "")), exit_code=None,
+            error=RunError("phd_internal", f"{type(e).__name__}: {e}"), result_text=None, structured_output=None,
+            cost_usd=None, cost_source="unknown", usage=Usage(), num_turns=None,
+            duration_ms=int((time.monotonic() - self._t0) * 1000), session_id=None, resumable=False,
+            resumed_from=self.resumed_from, run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd),
+            project_config=spec.project_config, autonomy=spec.autonomy, unsafe=spec.unsafe,
+            credential_kind=spec.credentials.kind, started_at=self._started_at.isoformat(),
+            finished_at=datetime.now(timezone.utc).isoformat(), warnings=list(m.warnings),
+            events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))
+
+    async def _run_to_result(self) -> RunResult:
         spec, m = self._d.spec, self.materialized
         parser = self._d.adapter.parser()
         timed_out = budget_hit = False
@@ -165,19 +209,20 @@ class RunHandle:
                 internal = e
                 self._proc.kill_tree()
                 exit_code = await self._proc.wait()
-            result = self._build_result(parser.outcome(), exit_code, timed_out=timed_out,
-                                        budget_hit=budget_hit, internal=internal)
+            try:
+                result = self._build_result(parser.outcome(), exit_code, timed_out=timed_out,
+                                            budget_hit=budget_hit, internal=internal)
+            except Exception as e:
+                result = self._minimal_result(e)
+                result.exit_code = exit_code
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:
-            robust_rmtree(m.home)
-            result.resumable = False
-        for sink in self._d.sinks:
             try:
-                await sink.put(result)
-            except Exception as e:
-                result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
-        self._result = result
-        self._queue.put_nowait(None)
+                robust_rmtree(m.home)
+            except OSError as e:
+                result.warnings.append(f"could not remove run home {m.home}: {e}")
+            result.resumable = False
+        return result
 
     async def _consume(self, events_file: TextIO, parser) -> bool:
         budget = self._d.spec.budget_usd
@@ -226,7 +271,7 @@ class RunHandle:
                 pass
         return RunResult(
             run_id=m.run_id, harness=spec.harness, model=spec.model, stack=spec.stack.ref,
-            stack_hash=spec.stack.content_hash(), status=decide_status(error), exit_code=exit_code, error=error,
+            stack_hash=self._stack_hash, status=decide_status(error), exit_code=exit_code, error=error,
             result_text=o.result_text, structured_output=structured, cost_usd=o.cost_usd,
             cost_source=o.cost_source, usage=o.usage, num_turns=o.num_turns,
             duration_ms=int((time.monotonic() - self._t0) * 1000), session_id=o.session_id,

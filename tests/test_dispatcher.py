@@ -180,3 +180,62 @@ def test_stream_overflow_fails_run(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(stream))
     r = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
     assert r.status is RunStatus.FAILED and r.error.kind == "stream_overflow"
+
+
+async def test_events_second_iteration_terminates(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "opencode_ok.jsonl"))
+    handle = await dispatcher(make_spec("opencode"), tmp_path).start(inputs)
+    await handle.wait()
+    first = [ev.type async for ev in handle.events()]
+    second = await asyncio.wait_for(_drain(handle), 5)
+    assert first[-1] == "run.finished" and second == []
+
+
+async def _drain(handle):
+    return [ev async for ev in handle.events()]
+
+
+async def test_resume_unknown_run_is_not_resumable(tmp_path, make_spec):
+    with pytest.raises(NotResumable, match="no-such-run"):
+        await dispatcher(make_spec("claude"), tmp_path).start_resume("no-such-run", "hi")
+
+
+def test_home_cleanup_failure_is_a_warning(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+
+    def boom(path):
+        raise OSError("file in use")
+    monkeypatch.setattr("phd.dispatcher.robust_rmtree", boom)
+    d = dispatcher(make_spec("claude", resumable=False), tmp_path)
+    r = d.spawn(inputs)
+    assert r.status is RunStatus.SUCCEEDED and not r.resumable
+    assert any("could not remove run home" in w and r.home_dir in w for w in r.warnings)
+    assert (tmp_path / "runs" / r.run_id / "result.json").is_file()
+
+
+async def test_stack_hash_pinned_at_plan_time(tmp_path, monkeypatch, make_spec, inputs):
+    from phd.stack import Stack
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    monkeypatch.setenv("FAKE_SLEEP", "1")
+    d = dispatcher(make_spec("claude"), tmp_path)
+    handle = await d.start(inputs)
+
+    def boom(self):
+        raise OSError("stack moved")
+    monkeypatch.setattr(Stack, "content_hash", boom)
+    r = await handle.wait()
+    assert r.status is RunStatus.SUCCEEDED and r.stack_hash.startswith("sha256:")
+    resumed = await (await d.start_resume(r, "again")).wait()
+    assert resumed.stack_hash == r.stack_hash
+
+
+async def test_build_result_failure_still_yields_result(tmp_path, monkeypatch, make_spec, inputs):
+    from phd.dispatcher import RunHandle
+
+    def boom(self, *a, **k):
+        raise ValueError("bad outcome")
+    monkeypatch.setattr(RunHandle, "_build_result", boom)
+    handle = await dispatcher(make_spec("claude"), tmp_path).start(inputs)
+    r = await asyncio.wait_for(handle.wait(), 20)
+    assert r.status is not RunStatus.SUCCEEDED and r.error.kind == "phd_internal"
+    assert "run.finished" in [ev.type async for ev in handle.events()]
