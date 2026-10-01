@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-claude-1","model":"claude-haiku-4-5-20251001","claude_code_version":"2.1.286","tools":["Bash"],"mcp_servers":[{"name":"echo","status":"connected"}]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Checking."},{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"echo hello-from-shell"}}]},"session_id":"sess-claude-1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"hello-from-shell","is_error":false}]},"session_id":"sess-claude-1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"},"session_id":"sess-claude-1"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":8000,"num_turns":3,"result":"HELPER-IDENTITY-OK\n\ndone\n\nRULES-OK","session_id":"sess-claude-1","total_cost_usd":0.0284,"usage":{"input_tokens":27,"cache_creation_input_tokens":8533,"cache_read_input_tokens":69875,"output_tokens":870,"output_tokens_details":{"thinking_tokens":413}}}

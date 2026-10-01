@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-claude-2","claude_code_version":"2.1.286"}
+{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Not logged in · Please run /login","session_id":"sess-claude-2","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}

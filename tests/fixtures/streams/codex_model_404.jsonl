@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a0f52b-29a7-7182-adad-69435e1b6232"}
+{"type":"turn.started"}
+{"type":"error","message":"unexpected status 404 Not Found: The model `gpt-5.5` does not exist or you do not have access to it."}
+{"type":"turn.failed","error":{"message":"unexpected status 404 Not Found: The model `gpt-5.5` does not exist or you do not have access to it."}}
