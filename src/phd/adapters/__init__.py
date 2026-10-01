@@ -3,8 +3,9 @@
 from ..errors import UnknownHarness
 from .base import Adapter, MaterializeContext, MaterializedHome
 from .claude import ClaudeAdapter
+from .codex import CodexAdapter
 
-_ADAPTERS: dict[str, Adapter] = {"claude": ClaudeAdapter()}
+_ADAPTERS: dict[str, Adapter] = {"claude": ClaudeAdapter(), "codex": CodexAdapter()}
 
 
 def get_adapter(harness: str) -> Adapter:
