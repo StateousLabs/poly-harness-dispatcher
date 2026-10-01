@@ -302,6 +302,12 @@ Failure → `ModelNotSupported(harness, model, supported=[...], hint=...)`, e.g.
 *"`claude-haiku-5` is not a Claude model. Supported: opus, sonnet, haiku, claude-opus-5-5, …
 Did you mean `claude-haiku-4-5`?"*
 
+**Catalogue ≠ entitlement (spike finding).** `codex debug models` listed `gpt-5.5` as visible,
+but the account got `404 model does not exist or you do not have access`. Pre-launch validation
+can only catch *unknown* models; *unavailable-to-this-account* must be classified post-launch as
+`error.kind="model_unavailable"`, with the catalogue list attached to the error. Likewise
+OpenCode returned `402 Insufficient account funds` → `error.kind="billing"`.
+
 ---
 
 ## 9. Neutral MCP format (`.mcp.json`)
@@ -418,6 +424,43 @@ Every **[verify]** above. Grouped:
 3. **OpenCode** — hermetic data/auth dir (XDG overrides); skills location; stdin prompt support;
    repo AGENTS.md suppression; structured output; plugin hook event names.
 4. **Windows** — process-tree kill for `.cmd` shims (job objects); long prompts via stdin for all three.
+
+### 14.1 Spike results — 2026-10-01 (materialization spike, host, no isolation)
+
+Prototype in `spikes/materialize/` (gitignored): stack in the `config/` layout with three real
+skills (`fastapi-backend`: SKILL.md + references/ + scripts/; `pdf`: extra top-level docs +
+scripts/; `import-memory`: SKILL.md only), a stdio MCP (`echo`) with an `${env:}` secret, and a
+neutral `pre_tool`/`shell` hook. The cwd held a **poisoned** `CLAUDE.md` / `AGENTS.md`.
+Self-check task: list skills, call the MCP, run a shell command; identity and rules each
+required a marker line.
+
+| Check | claude 2.1.284 (haiku) | codex 0.147.0 (gpt-5.6-terra) | opencode 1.18.18 (big-pickle) |
+|---|---|---|---|
+| Identity (AGENTS.md) + rules applied | ✅ `--append-system-prompt-file` | ✅ `$CODEX_HOME/AGENTS.md` | ✅ `instructions: [...]` |
+| Stack skills discovered | ✅ `$CLAUDE_CONFIG_DIR/skills/` | ✅ `$CODEX_HOME/skills/` | ✅ `$OPENCODE_CONFIG_DIR/skills/` |
+| Host user skills kept out | ✅ | ❌ **`~/.agents/skills` leaks** even with `HOME`/`USERPROFILE` overridden (Windows home resolved via OS) | ✅ with `OPENCODE_DISABLE_CLAUDE_CODE=1`, `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` |
+| Harness built-in skills present | yes (bundled: dataviz, code-review, …) | yes (`.system`: imagegen, skill-creator, …) | yes (`customize-opencode`) |
+| Repo CLAUDE.md / AGENTS.md suppressed (`ignore`) | ✅ `--setting-sources user` (no `--bare` needed) | ✅ `project_doc_max_bytes = 0` | ✅ `OPENCODE_DISABLE_PROJECT_CONFIG=1` |
+| MCP (stdio, secret substituted) | ✅ `--strict-mcp-config --mcp-config` | ✅ after adding `default_tools_approval_mode = "approve"` (else *"user cancelled MCP tool call"* under `approval_policy="never"`) | ✅ `mcp.<name>.type="local"` |
+| Neutral hook fired with neutral payload | ✅ settings.json `PreToolUse` → PHD shim | ⏭ not translated yet | ✅ generated plugin `config/plugin/phd-hooks.js` (`tool.execute.before`) → PHD shim |
+| Credentials | ✅ host **access token only** as `CLAUDE_CODE_OAUTH_TOKEN` (no refresh token copied) | ✅ copied `auth.json` (chatgpt mode) | ✅ `OPENCODE_AUTH_CONTENT` env (no file) |
+| Prompt on stdin | ✅ | ✅ (`-` arg) | ✅ |
+| Collector | ✅ `result` line: cost, usage, session_id, num_turns | ✅ `thread.started.thread_id`, `item.completed{agent_message}`, `turn.completed.usage`; no cost | ✅ `sessionID`, `text`, `step_finish` tokens/cost |
+| Cost of the check | $0.028 | n/a (subscription; no cost reported) | $0 (free model) |
+
+**Resolved [verify] items:** Claude repo-CLAUDE.md suppression, `--append-system-prompt-file`,
+skills dir in `-p` mode, and (per `--system-prompt-snapshot` help) appended system prompt is
+recorded and re-sent on resume; Codex skills dir, event names, repo AGENTS.md suppression, MCP
+approval key; OpenCode hermetic env vars (`OPENCODE_CONFIG_DIR`, `OPENCODE_AUTH_CONTENT`,
+`OPENCODE_DISABLE_*`, `XDG_*`), skills dir, stdin prompt, plugin hook event.
+
+**Still open:**
+1. Codex: stop `~/.agents/skills` (user-level) loading on a bare host — find a config switch or a
+   per-skill disable; inside a sandbox the host home does not exist, so this is host-mode only.
+2. Codex: neutral hook translation (format + hook trust).
+3. Built-in harness skills: decide whether PHD tries to disable them or accepts and records them.
+4. OpenCode `session_start` / `stop` hook events; structured output.
+5. Resume, timeout/kill of `.cmd` process trees, and the `rm -rf` block path — not yet exercised.
 
 ---
 
