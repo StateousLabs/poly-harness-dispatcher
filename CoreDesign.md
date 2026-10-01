@@ -454,13 +454,57 @@ recorded and re-sent on resume; Codex skills dir, event names, repo AGENTS.md su
 approval key; OpenCode hermetic env vars (`OPENCODE_CONFIG_DIR`, `OPENCODE_AUTH_CONTENT`,
 `OPENCODE_DISABLE_*`, `XDG_*`), skills dir, stdin prompt, plugin hook event.
 
+### 14.2 Follow-up spike — codex gaps + resume (2026-10-01)
+
+**Codex user-skill leak — closed.** Codex resolves the user home through the OS, so overriding
+`HOME`/`USERPROFILE` does **not** redirect `~/.agents/skills`. Fix: the materializer enumerates
+foreign `SKILL.md` files (`~/.agents/skills/*` plus repo-level `.agents/skills` from cwd upward,
+unless `project_config="full"`) and disables each in `config.toml`:
+```toml
+[[skills.config]]
+path = "C:/Users/<u>/.agents/skills/<name>/SKILL.md"
+enabled = false
+```
+Accepted by `--strict-config` (PHD should always pass it so unknown keys fail loudly). The same
+mechanism can disable codex's built-in `.system` skills if we decide to.
+
+**Codex hooks — closed.** Hooks load from `$CODEX_HOME/hooks.json` in Claude's schema
+(`{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ...}]}]}}`;
+also `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `PreCompact`, …).
+The payload is Claude-compatible (`tool_name: "Bash"`, `tool_input`), so the neutral-hook shim is
+shared by claude and codex. Trust: pass `--dangerously-bypass-hook-trust` (PHD authored the hooks)
+— it emits a warning `error` item on stdout that the collector must ignore. **Windows gotcha:**
+codex runs hook commands through `cmd.exe`; a command starting with `"` loses its quotes under
+`cmd /c`, so quote only arguments that need it. Blocking works (exit 2), but codex surfaces only
+*"rejected: blocked by policy"* — to pass the reason through, the shim should also emit a
+Claude-style `permissionDecision` JSON on stdout [verify].
+
+**Hook blocking — verified on all three** (`rm -rf <nonexistent>` blocked by `guard.py`).
+
+**Resume — verified on all three** (set code word, resume, recall it; same `session_id`):
+
+| | claude | codex | opencode |
+|---|---|---|---|
+| Command | original argv + `--resume <sid>` | `codex exec resume <sid> --json … -m <model> -` (**no `-C`**: cwd comes from the process) | original argv + `--session <sid>` |
+| Needs | same `CLAUDE_CONFIG_DIR` | same `CODEX_HOME` | same `XDG_DATA_HOME` |
+| Identity + rules on resumed turn | ✅ persisted | ✅ persisted | ✅ |
+| Cost of resume | $0.033 (haiku) | n/a | $0 |
+
+**Other findings:**
+- Codex refuses to create helper binaries when `CODEX_HOME` is under the system temp dir —
+  PHD run dirs must not live in `%TEMP%` / `/tmp`.
+- Claude auto-memory wrote to `<home>/projects/<git-root-key>/memory/` — hermetic (inside the run
+  home), but keyed by git root, and a resumed run sees it. Consider disabling auto-memory in the
+  materialized `settings.json` for reproducibility [verify setting name].
+- Prompt-safety lesson for live tests: a trailing `.` after a shell command in a prompt was read
+  as part of the command (`rm -rf ./x .`). Test commands go in code spans with nothing after.
+
 **Still open:**
-1. Codex: stop `~/.agents/skills` (user-level) loading on a bare host — find a config switch or a
-   per-skill disable; inside a sandbox the host home does not exist, so this is host-mode only.
-2. Codex: neutral hook translation (format + hook trust).
-3. Built-in harness skills: decide whether PHD tries to disable them or accepts and records them.
-4. OpenCode `session_start` / `stop` hook events; structured output.
-5. Resume, timeout/kill of `.cmd` process trees, and the `rm -rf` block path — not yet exercised.
+1. Built-in harness skills: disable (codex `skills.config`, others [verify]) or accept and record.
+2. OpenCode `session_start` / `stop` hook events; OpenCode structured output.
+3. Codex block reason passthrough (`permissionDecision` JSON).
+4. Timeout / kill of `.cmd` process trees on Windows — not yet exercised.
+5. Claude auto-memory switch.
 
 ---
 
