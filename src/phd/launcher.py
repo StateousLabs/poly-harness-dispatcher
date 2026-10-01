@@ -25,6 +25,7 @@ class HarnessProcess:
         self.stdin_text, self.stderr_path = stdin_text, stderr_path
         self.proc: asyncio.subprocess.Process | None = None
         self.killed = False
+        self.overflowed = False
         self._stderr_task: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -46,24 +47,46 @@ class HarnessProcess:
 
     async def lines(self) -> AsyncIterator[str]:
         while True:
-            raw = await self.proc.stdout.readline()
+            try:
+                raw = await self.proc.stdout.readline()
+            except (ValueError, asyncio.LimitOverrunError):
+                self.overflowed = True
+                self.kill_tree()
+                return
             if not raw:
                 return
             yield raw.decode("utf-8", errors="replace").rstrip("\r\n")
 
     async def wait(self) -> int:
-        code = await self.proc.wait()
+        # Process.wait() only resolves once every inherited pipe has closed, so a descendant
+        # holding stdout/stderr would hang it; poll the transport's returncode instead.
+        while self.proc.returncode is None:
+            await asyncio.sleep(0.05)
+        code = self.proc.returncode
         if self._stderr_task is not None:
-            await self._stderr_task
+            try:
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), 5)
+            except asyncio.TimeoutError:
+                self._stderr_task.cancel()  # a descendant still holds stderr open
         return code
 
     def kill_tree(self) -> None:
-        if self.proc is None or self.proc.returncode is not None:
+        if self.proc is None:
             return
-        self.killed = True
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
+            # taskkill cannot walk a dead PID's tree: orphaned Windows descendants are a known
+            # limitation (a Job Object would fix it later).
+            if self.proc.returncode is not None:
+                return
+            self.killed = True
+            result = subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
+            if result.returncode != 0 and self.proc.returncode is None:
+                try:
+                    self.proc.kill()
+                except ProcessLookupError:
+                    pass
         else:
+            self.killed = True
             try:
                 os.killpg(self.proc.pid, signal.SIGKILL)
             except ProcessLookupError:
