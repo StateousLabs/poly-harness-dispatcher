@@ -4,8 +4,9 @@ from ..errors import UnknownHarness
 from .base import Adapter, MaterializeContext, MaterializedHome
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
+from .opencode import OpencodeAdapter
 
-_ADAPTERS: dict[str, Adapter] = {"claude": ClaudeAdapter(), "codex": CodexAdapter()}
+_ADAPTERS: dict[str, Adapter] = {"claude": ClaudeAdapter(), "codex": CodexAdapter(), "opencode": OpencodeAdapter()}
 
 
 def get_adapter(harness: str) -> Adapter:
