@@ -515,6 +515,7 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 12. non-`PhdError` pre-launch errors (undecodable brief/identity files, `nan` `timeout_s`).
 13. run-dir pruning.
 14. resume cwd/model mismatch check.
+15. Codex hook commands on Windows when the Python interpreter path contains spaces: PHD wraps the command in outer quotes for cmd /C, verified only against cmd.exe directly, not against real codex.
 
 ---
 

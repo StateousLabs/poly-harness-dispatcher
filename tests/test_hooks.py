@@ -179,18 +179,23 @@ def test_hook_shim_neutral_tool():
     assert hook_shim.neutral_tool("mcp__echo__echo") == "mcp:echo/echo"
 
 
-def test_codex_command_gets_outer_quotes_on_windows(tmp_path, monkeypatch):
+def test_codex_command_outer_quotes_only_for_spaced_interpreter_on_windows(tmp_path, monkeypatch):
     shim = tmp_path / "run dir" / "hook_shim.py"
     hook = [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10}]
+
+    def command(harness):
+        return hooks.claude_style_block(harness, hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
+
+    monkeypatch.setattr(sys, "executable", "C:/py/python.exe")
     monkeypatch.setattr(hooks, "_is_windows", lambda: True)
-    codex = hooks.claude_style_block("codex", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
-    inner = hooks._shim_command(shim, "codex", 0)
-    assert codex == f'"{inner}"' and codex.startswith('"') and codex.endswith('"')
-    claude = hooks.claude_style_block("claude", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
-    assert claude == hooks._shim_command(shim, "claude", 0)
+    plain = hooks._shim_command(shim, "codex", 0)
+    assert not plain.startswith('"') and command("codex") == plain  # unchanged: the form verified live
+    monkeypatch.setattr(sys, "executable", "C:/Program Files/py/python.exe")
+    spaced = hooks._shim_command(shim, "codex", 0)
+    assert spaced.startswith('"') and command("codex") == f'"{spaced}"'
+    assert command("claude") == hooks._shim_command(shim, "claude", 0)
     monkeypatch.setattr(hooks, "_is_windows", lambda: False)
-    codex = hooks.claude_style_block("codex", hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
-    assert codex == inner
+    assert command("codex") == spaced
 
 
 @pytest.mark.skipif(os.name != "nt", reason="cmd.exe quoting is Windows-only")

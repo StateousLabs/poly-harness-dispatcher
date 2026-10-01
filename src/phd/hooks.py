@@ -66,9 +66,10 @@ def _is_windows() -> bool:
 
 def _hook_command(shim: Path, harness: str, index: int) -> str:
     command = _shim_command(shim, harness, index)
-    if harness == "codex" and _is_windows():
-        # codex runs hooks via `cmd.exe /C`, which strips the first and last quote when the line has
-        # more than two quotes; one extra outer pair keeps every inner quote intact.
+    if harness == "codex" and _is_windows() and command.startswith('"'):
+        # Only when the interpreter path needed quoting: cmd.exe /C strips the first and last quote
+        # of a line that starts with one, so add one outer pair. An unquoted leading word is left
+        # alone (the form verified live against codex).
         return f'"{command}"'
     return command
 
