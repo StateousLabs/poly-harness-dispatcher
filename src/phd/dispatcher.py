@@ -13,16 +13,16 @@ from typing import TextIO
 
 from ._util.fs import is_within, robust_rmtree
 from ._util.shell import resolve_argv
-from .adapters import get_adapter
-from .adapters.base import MaterializedHome
+from .harnesses import get_adapter
+from .harnesses.catalog import ModelCatalog
+from .harnesses.outcome import Outcome
+from .materialize.context import MaterializedHome
+from .materialize.prompt import resume_message
 from .constants import REDACTED
 from .errors import InvalidRunsRoot, NotResumable
 from .launcher import HarnessProcess, child_env
 from .results import LocalLedger, ResultSink
 from .materialize import materialize
-from .models import ModelCatalog
-from .parsers import Outcome
-from .prompt import resume_message
 from .results.model import Event, RunError, RunResult, Usage, decide_status
 from .spec import Inputs, Spec
 

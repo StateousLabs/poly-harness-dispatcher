@@ -4,8 +4,8 @@ prompt; brief + msg form the first user message, delivered on stdin."""
 from dataclasses import dataclass
 from pathlib import Path
 
-from .errors import EmptyTask
-from .spec import Inputs
+from ..errors import EmptyTask
+from ..spec import Inputs
 
 PROJECT_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 

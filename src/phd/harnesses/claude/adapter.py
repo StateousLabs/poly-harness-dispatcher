@@ -3,12 +3,12 @@
 import json
 from pathlib import Path
 
-from .._util.fs import write_json
-from ..errors import MissingCredentials
-from ..hooks import check_supported, claude_style_block, write_runtime
-from ..parsers import ClaudeParser
-from ..spec import Spec
-from .base import MaterializeContext
+from ..._util.fs import write_json
+from ...errors import MissingCredentials
+from ...materialize.hooks import check_supported, claude_style_block, write_runtime
+from .parser import ClaudeParser
+from ...materialize.context import MaterializeContext
+from ...spec import Spec
 
 
 class ClaudeAdapter:

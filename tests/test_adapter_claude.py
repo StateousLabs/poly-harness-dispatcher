@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from phd.adapters import get_adapter
+from phd.harnesses import get_adapter
 from phd.constants import REDACTED
 from phd.errors import UnknownHarness
 from phd.materialize import materialize

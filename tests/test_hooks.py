@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from phd import hooks
+from phd.materialize import hooks
+from phd.materialize.hooks import translate
 from phd._util.shell import shell_join
 from phd.errors import HookUnsupported
 from phd.spec import HookDef
@@ -39,14 +40,14 @@ def test_check_supported():
 
 
 def test_claude_style_block(tmp_path, monkeypatch):
-    monkeypatch.setattr(hooks, "_is_windows", lambda: False)
+    monkeypatch.setattr(translate, "_is_windows", lambda: False)
     shim = tmp_path / "home" / "phd" / "hook_shim.py"
     block = hooks.claude_style_block("codex", [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10.0}], shim)
     entry = block["PreToolUse"][0]
     assert entry["matcher"] == "Bash"
     assert entry["hooks"][0]["type"] == "command"
     assert entry["hooks"][0]["timeout"] == 10 and isinstance(entry["hooks"][0]["timeout"], int)
-    assert entry["hooks"][0]["command"] == hooks._shim_command(shim, "codex", 0)
+    assert entry["hooks"][0]["command"] == translate._shim_command(shim, "codex", 0)
 
 
 def test_opencode_plugin_is_filled_in(tmp_path):
@@ -174,7 +175,7 @@ def test_shim_error_on_non_object_json_pre_tool(tmp_path):
 
 
 def test_hook_shim_neutral_tool():
-    from phd import hook_shim
+    from phd.materialize.hooks import shim as hook_shim
     assert hook_shim.neutral_tool("mcp__echo") == "mcp:echo"
     assert hook_shim.neutral_tool("mcp__echo__echo") == "mcp:echo/echo"
 
@@ -187,14 +188,14 @@ def test_codex_command_outer_quotes_only_for_spaced_interpreter_on_windows(tmp_p
         return hooks.claude_style_block(harness, hook, shim)["PreToolUse"][0]["hooks"][0]["command"]
 
     monkeypatch.setattr(sys, "executable", "C:/py/python.exe")
-    monkeypatch.setattr(hooks, "_is_windows", lambda: True)
-    plain = hooks._shim_command(shim, "codex", 0)
+    monkeypatch.setattr(translate, "_is_windows", lambda: True)
+    plain = translate._shim_command(shim, "codex", 0)
     assert not plain.startswith('"') and command("codex") == plain  # unchanged: the form verified live
     monkeypatch.setattr(sys, "executable", "C:/Program Files/py/python.exe")
-    spaced = hooks._shim_command(shim, "codex", 0)
+    spaced = translate._shim_command(shim, "codex", 0)
     assert spaced.startswith('"') and command("codex") == f'"{spaced}"'
-    assert command("claude") == hooks._shim_command(shim, "claude", 0)
-    monkeypatch.setattr(hooks, "_is_windows", lambda: False)
+    assert command("claude") == translate._shim_command(shim, "claude", 0)
+    monkeypatch.setattr(translate, "_is_windows", lambda: False)
     assert command("codex") == spaced
 
 
@@ -211,7 +212,7 @@ def test_codex_hook_runs_under_cmd_exe_with_spaced_path(tmp_path, monkeypatch):
     hook_cmd = shell_join([Path(real_python).as_posix(), guard.as_posix()])
     shim = hooks.write_runtime(run_dir / "home", run_id="r", run_dir=run_dir,
                                hooks=[{"event": "pre_tool", "tool": "shell", "command": hook_cmd, "timeout_s": 10}])
-    monkeypatch.setattr(hooks, "_is_windows", lambda: True)
+    monkeypatch.setattr(translate, "_is_windows", lambda: True)
     command = hooks.claude_style_block("codex", [{"event": "pre_tool", "tool": "shell", "command": hook_cmd,
                                                   "timeout_s": 10}], shim)["PreToolUse"][0]["hooks"][0]["command"]
 

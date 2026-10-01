@@ -3,7 +3,10 @@ import json
 import pytest
 
 from conftest import STREAMS
-from phd.parsers import ClaudeParser, CodexParser, OpencodeParser, classify_error
+from phd.harnesses.claude.parser import ClaudeParser
+from phd.harnesses.codex.parser import CodexParser
+from phd.harnesses.opencode.parser import OpencodeParser
+from phd.harnesses.outcome import classify_error
 from phd.results import RunError, RunResult, RunStatus, Usage
 from phd.results.model import decide_status
 

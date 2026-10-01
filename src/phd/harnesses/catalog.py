@@ -2,21 +2,19 @@
 account may use it is known only after launch (error.kind="model_unavailable")."""
 
 import difflib
-import json
-import re
 import subprocess
 from collections.abc import Callable
 
-from ._util.shell import resolve_argv
-from .errors import HarnessNotInstalled, ModelNotSupported, UnknownHarness
-
-CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
-CLAUDE_KNOWN_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5",
-                    "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
-_CLAUDE_PATTERN = re.compile(r"claude-[a-z0-9][a-z0-9.-]*")
-_CONTEXT_SUFFIX = re.compile(r"\[[0-9]+m\]$")
+from .._util.shell import resolve_argv
+from ..errors import HarnessNotInstalled, ModelNotSupported, UnknownHarness
+from .claude import models as claude_models
+from .codex import models as codex_models
+from .opencode import models as opencode_models
 
 Runner = Callable[[list[str]], str]
+
+_LOADERS: dict[str, Callable[[Runner], list[str]]] = {
+    "claude": claude_models.load, "codex": codex_models.load, "opencode": opencode_models.load}
 
 
 def _run_cli(argv: list[str]) -> str:
@@ -38,24 +36,18 @@ class ModelCatalog:
         return self._cache[harness]
 
     def _load(self, harness: str) -> list[str]:
-        if harness == "claude":
-            return [*CLAUDE_ALIASES, *CLAUDE_KNOWN_IDS]
-        if harness == "codex":
-            data = json.loads(self._run(["codex", "debug", "models"]))
-            return [m["slug"] for m in data.get("models", []) if m.get("slug")]
-        if harness == "opencode":
-            lines = (line.strip() for line in self._run(["opencode", "models"]).splitlines())
-            return [line for line in lines if "/" in line and " " not in line]
-        raise UnknownHarness(f"unknown harness {harness!r}")
+        try:
+            loader = _LOADERS[harness]
+        except KeyError:
+            raise UnknownHarness(f"unknown harness {harness!r}") from None
+        return loader(self._run)
 
     def validate(self, harness: str, model: str) -> list[str]:
         """Raise ModelNotSupported for an unknown model; otherwise return warnings."""
         if harness == "claude":
-            base = _CONTEXT_SUFFIX.sub("", model)
-            if base in CLAUDE_ALIASES or base in CLAUDE_KNOWN_IDS:
-                return []
-            if _CLAUDE_PATTERN.fullmatch(base):
-                return [f"claude model {model!r} is not in PHD's known list; it will be tried as-is"]
+            warnings = claude_models.validate(model)
+            if warnings is not None:
+                return warnings
             known = self.models("claude")
             raise ModelNotSupported("claude", model, known, _closest(model, known))
         try:

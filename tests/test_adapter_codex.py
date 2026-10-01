@@ -3,8 +3,8 @@ import tomllib
 
 import pytest
 
-from phd.adapters import codex as codex_adapter
-from phd.adapters import get_adapter
+from phd.harnesses.codex import adapter as codex_adapter
+from phd.harnesses import get_adapter
 from phd.materialize import materialize
 
 

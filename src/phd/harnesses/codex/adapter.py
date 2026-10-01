@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-from .._util import toml as _toml
-from .._util.fs import write_json, write_private
-from ..errors import MissingCredentials
-from ..hooks import check_supported, claude_style_block, write_runtime
-from ..parsers import CodexParser
-from ..spec import Spec
-from .base import MaterializeContext
+from ..._util import toml as _toml
+from ..._util.fs import write_json, write_private
+from ...errors import MissingCredentials
+from ...materialize.hooks import check_supported, claude_style_block, write_runtime
+from .parser import CodexParser
+from ...materialize.context import MaterializeContext
+from ...spec import Spec
 
 RESUME_FLAGS = ("--json", "--strict-config", "--skip-git-repo-check", "--ignore-rules",
                 "--dangerously-bypass-hook-trust")

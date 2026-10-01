@@ -6,9 +6,8 @@ from .errors import (CwdNotFound, EmptyTask, HarnessNotInstalled, HookUnsupporte
                      InvalidRunsRoot, InvalidSpec, MissingCredentials, MissingSecret, ModelNotSupported,
                      NotResumable, PhdError, StackIncompatible, StackInvalid, UnknownHarness,
                      UnsafeAutonomy, UnsupportedFeature)
-from .results import LocalLedger, ResultSink
-from .models import ModelCatalog
-from .results import Event, RunError, RunResult, RunStatus, Usage
+from .harnesses.catalog import ModelCatalog
+from .results import Event, LocalLedger, ResultSink, RunError, RunResult, RunStatus, Usage
 from .spec import Credentials, HookDef, Inputs, Spec, Stack
 
 __version__ = "0.1.0"

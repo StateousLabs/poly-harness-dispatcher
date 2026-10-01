@@ -1,7 +1,7 @@
 import pytest
 
 from phd.errors import EmptyTask
-from phd.prompt import assemble, resume_message
+from phd.materialize.prompt import assemble, resume_message
 from phd.spec import Inputs
 
 

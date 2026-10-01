@@ -3,7 +3,7 @@ import json
 import pytest
 
 from phd.errors import ModelNotSupported
-from phd.models import ModelCatalog
+from phd.harnesses.catalog import ModelCatalog
 
 CODEX = json.dumps({"models": [{"slug": "gpt-5.6-terra"}, {"slug": "gpt-5.6-luna"}, {"slug": "gpt-5.5"}]})
 OPENCODE = "opencode/big-pickle\nopencode/deepseek-v4-flash\nsome log line\n"

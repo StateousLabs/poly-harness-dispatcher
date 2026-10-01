@@ -3,13 +3,14 @@
 import shutil
 from pathlib import Path
 
-from .adapters import get_adapter
-from .adapters.base import MaterializeContext, MaterializedHome
+from ..spec import Inputs, Spec
+from .context import MaterializeContext, MaterializedHome
 from .prompt import assemble
-from .spec import Inputs, Spec
 
 
 def materialize(spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> MaterializedHome:
+    from ..harnesses import get_adapter  # deferred: harness adapters import materialize.context
+
     adapter = get_adapter(spec.harness)
     home = run_dir / "home"
     home.mkdir(parents=True)
@@ -20,3 +21,6 @@ def materialize(spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> Ma
     argv, env = adapter.materialize(ctx)
     return MaterializedHome(run_id=run_id, run_dir=run_dir, home=home, argv=argv, env=env,
                             stdin=prompt.user, warnings=ctx.warnings)
+
+
+__all__ = ["MaterializeContext", "MaterializedHome", "materialize"]

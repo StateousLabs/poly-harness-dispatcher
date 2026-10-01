@@ -1,4 +1,4 @@
-"""Shared adapter plumbing: the materialize context, the materialized home, the protocol."""
+"""The materialize context and the materialized home: what an adapter is handed and what it yields."""
 
 from __future__ import annotations
 
@@ -6,17 +6,13 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
 
 from .._util.fs import deep_merge
 from .._util.shell import shell_join
 from ..constants import REDACTED
-from ..spec.placeholders import resolve
-from ..prompt import Prompt
 from ..spec import Spec
-
-if TYPE_CHECKING:
-    from ..parsers import Outcome
+from ..spec.placeholders import resolve
+from .prompt import Prompt
 
 SECRET_ENV = re.compile(r"TOKEN|KEY|AUTH_CONTENT|SECRET|PASSWORD", re.IGNORECASE)
 
@@ -64,19 +60,3 @@ class MaterializedHome:
 
     def redacted_env(self) -> dict[str, str]:
         return {k: (REDACTED if SECRET_ENV.search(k) else v) for k, v in self.env.items()}
-
-
-class StreamParser(Protocol):
-    def feed(self, obj: dict) -> list[tuple[str, dict]]: ...
-    def running_cost(self) -> float | None: ...
-    def outcome(self) -> Outcome: ...
-
-
-class Adapter(Protocol):
-    name: str
-
-    def validate(self, spec: Spec) -> list[str]: ...
-    def materialize(self, ctx: MaterializeContext) -> tuple[list[str], dict[str, str]]: ...
-    def credential_env(self, spec: Spec, home: Path) -> dict[str, str]: ...
-    def resume_argv(self, base_argv: list[str], session_id: str, spec: Spec) -> list[str]: ...
-    def parser(self) -> StreamParser: ...

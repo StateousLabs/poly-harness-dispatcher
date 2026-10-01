@@ -1,0 +1,28 @@
+"""The adapter and stream-parser protocols every harness implements."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
+
+from ..spec import Spec
+
+if TYPE_CHECKING:
+    from ..materialize.context import MaterializeContext
+    from .outcome import Outcome
+
+
+class StreamParser(Protocol):
+    def feed(self, obj: dict) -> list[tuple[str, dict]]: ...
+    def running_cost(self) -> float | None: ...
+    def outcome(self) -> Outcome: ...
+
+
+class Adapter(Protocol):
+    name: str
+
+    def validate(self, spec: Spec) -> list[str]: ...
+    def materialize(self, ctx: MaterializeContext) -> tuple[list[str], dict[str, str]]: ...
+    def credential_env(self, spec: Spec, home: Path) -> dict[str, str]: ...
+    def resume_argv(self, base_argv: list[str], session_id: str, spec: Spec) -> list[str]: ...
+    def parser(self) -> StreamParser: ...

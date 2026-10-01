@@ -4,7 +4,7 @@ import shutil
 import pytest
 
 from conftest import FIXTURES
-from phd.adapters import get_adapter
+from phd.harnesses import get_adapter
 from phd.errors import HookUnsupported, UnsupportedFeature
 from phd.materialize import materialize
 from phd.spec import Stack
