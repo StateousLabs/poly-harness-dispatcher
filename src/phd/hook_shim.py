@@ -19,8 +19,11 @@ CLAUDE_TO_NEUTRAL = {"Bash": "shell", "Read": "read", "Write": "write", "Edit": 
 
 def neutral_tool(name: str) -> str:
     if name.startswith("mcp__"):
-        _, server, tool = name.split("__", 2)
-        return f"mcp:{server}/{tool}"
+        parts = name.split("__", 2)
+        if len(parts) == 2:
+            return f"mcp:{parts[1]}"
+        else:
+            return f"mcp:{parts[1]}/{parts[2]}"
     return CLAUDE_TO_NEUTRAL.get(name, name)
 
 
@@ -33,11 +36,36 @@ def to_neutral(harness: str, event: str, raw: dict) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    harness, index = argv[1], int(argv[2])
-    hook = json.loads((HERE / "hooks.resolved.json").read_text(encoding="utf-8"))[index]
-    config = json.loads((HERE / "shim_config.json").read_text(encoding="utf-8"))
-    raw = json.loads(sys.stdin.read() or "{}")
-    event = to_neutral(harness, hook["event"], raw)
+    event_type = "pre_tool"  # default to pre_tool for error handling (most restrictive)
+    try:
+        harness, index = argv[1], int(argv[2])
+    except (IndexError, ValueError) as e:
+        sys.stderr.write(f"PHD hook shim error: invalid arguments: {e}\n")
+        return 2
+
+    try:
+        hook = json.loads((HERE / "hooks.resolved.json").read_text(encoding="utf-8"))[index]
+    except (FileNotFoundError, json.JSONDecodeError, IndexError, TypeError) as e:
+        sys.stderr.write(f"PHD hook shim error: failed to read hooks.resolved.json: {e}\n")
+        return 2
+
+    try:
+        config = json.loads((HERE / "shim_config.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError) as e:
+        sys.stderr.write(f"PHD hook shim error: failed to read shim_config.json: {e}\n")
+        return 2
+
+    # Determine event type for error responses
+    event_type = hook.get("event", "pre_tool")
+
+    try:
+        raw = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as e:
+        error_code = 2 if event_type == "pre_tool" else 1
+        sys.stderr.write(f"PHD hook shim error: invalid stdin JSON: {e}\n")
+        return error_code
+
+    event = to_neutral(harness, event_type, raw)
     event["run_id"] = config["run_id"]
     env = dict(os.environ, PHD_RUN_DIR=config["run_dir"], PHD_RUN_ID=config["run_id"])
     timeout = hook.get("timeout_s", 30)
@@ -45,8 +73,14 @@ def main(argv: list[str]) -> int:
         proc = subprocess.run(hook["command"], shell=True, input=json.dumps(event), text=True,
                               capture_output=True, env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
-        sys.stderr.write(f"PHD hook timed out after {timeout}s: {hook['command']}\n")
-        return 1
+        error_code = 2 if event_type == "pre_tool" else 1
+        sys.stderr.write(f"PHD hook shim error: hook timed out after {timeout}s: {hook['command']}\n")
+        return error_code
+    except Exception as e:
+        error_code = 2 if event_type == "pre_tool" else 1
+        sys.stderr.write(f"PHD hook shim error: failed to run hook command: {e}\n")
+        return error_code
+
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
     return {0: 0, 2: 2}.get(proc.returncode, 1)

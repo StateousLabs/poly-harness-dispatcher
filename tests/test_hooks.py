@@ -42,8 +42,9 @@ def test_claude_style_block(tmp_path):
     block = hooks.claude_style_block("codex", [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10.0}], shim)
     entry = block["PreToolUse"][0]
     assert entry["matcher"] == "Bash"
-    assert entry["hooks"][0]["type"] == "command" and entry["hooks"][0]["timeout"] == 10.0
-    assert entry["hooks"][0]["command"].endswith(f"{shim.as_posix()} codex 0") or " " in shim.as_posix()
+    assert entry["hooks"][0]["type"] == "command"
+    assert entry["hooks"][0]["timeout"] == 10 and isinstance(entry["hooks"][0]["timeout"], int)
+    assert entry["hooks"][0]["command"] == hooks._shim_command(shim, "codex", 0)
 
 
 def test_opencode_plugin_is_filled_in(tmp_path):
@@ -92,3 +93,45 @@ def test_shim_maps_mcp_tool_names(tmp_path):
                    input=json.dumps({"tool_name": "mcp__echo__echo", "tool_input": {}, "tool_response": "x"}))
     seen = json.loads((tmp_path / "seen.jsonl").read_text(encoding="utf-8"))
     assert seen["tool"] == "mcp:echo/echo" and seen["event"] == "post_tool" and seen["output"] == "x"
+
+
+def test_neutral_tool_mcp_without_subpath():
+    assert hooks.native_tool("claude", "mcp:echo") == "mcp__echo"
+
+
+def test_shim_error_on_invalid_stdin_json_pre_tool(tmp_path):
+    guard = tmp_path / "guard.py"
+    guard.write_text(GUARD, encoding="utf-8")
+    command = shell_join([Path(sys.executable).as_posix(), guard.as_posix()])
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": "pre_tool", "tool": None, "command": command, "timeout_s": 10}])
+    result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True,
+                           capture_output=True, input="invalid json")
+    assert result.returncode == 2
+    assert "PHD hook shim error" in result.stderr
+
+
+def test_shim_error_on_pre_tool_timeout(tmp_path):
+    sleep_cmd = f"{Path(sys.executable).as_posix()} -c \"import time; time.sleep(5)\""
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": "pre_tool", "tool": None, "command": sleep_cmd, "timeout_s": 0.1}])
+    result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True,
+                           capture_output=True, input=json.dumps({"tool_name": "Bash"}))
+    assert result.returncode == 2
+    assert "PHD hook shim error" in result.stderr
+
+
+def test_shim_error_code_for_post_tool_exit(tmp_path):
+    exit_3_cmd = f"{Path(sys.executable).as_posix()} -c \"import sys; sys.exit(3)\""
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": "post_tool", "tool": None, "command": exit_3_cmd, "timeout_s": 10}])
+    result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True,
+                           capture_output=True, input=json.dumps({"tool_name": "Bash"}))
+    assert result.returncode == 1
+
+
+def test_claude_edit_matcher_covers_multiedit(tmp_path):
+    shim = tmp_path / "home" / "phd" / "hook_shim.py"
+    block = hooks.claude_style_block("claude", [{"event": "pre_tool", "tool": "edit", "command": "c", "timeout_s": 10}], shim)
+    entry = block["PreToolUse"][0]
+    assert entry["matcher"] == "Edit|MultiEdit"

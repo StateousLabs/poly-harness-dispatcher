@@ -5,6 +5,7 @@ opencode gets a generated plugin. All of them call the same shim, which hands th
 command a neutral event."""
 
 import json
+import math
 import sys
 from collections.abc import Iterable
 from importlib import resources
@@ -62,9 +63,13 @@ def claude_style_block(harness: str, hooks: list[dict], shim: Path) -> dict:
     block: dict[str, list] = {}
     for index, hook in enumerate(hooks):
         entry: dict = {"hooks": [{"type": "command", "command": _shim_command(shim, harness, index),
-                                  "timeout": hook["timeout_s"]}]}
+                                  "timeout": int(math.ceil(hook["timeout_s"]))}]}
         if hook.get("tool"):
-            entry["matcher"] = native_tool(harness, hook["tool"])
+            matcher = native_tool(harness, hook["tool"])
+            # For claude, edit also matches MultiEdit (the shim translates MultiEdit to edit)
+            if harness == "claude" and hook["tool"] == "edit":
+                matcher = "Edit|MultiEdit"
+            entry["matcher"] = matcher
         block.setdefault(CLAUDE_STYLE_EVENTS[hook["event"]], []).append(entry)
     return block
 
