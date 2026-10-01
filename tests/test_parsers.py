@@ -4,7 +4,8 @@ import pytest
 
 from conftest import STREAMS
 from phd.parsers import ClaudeParser, CodexParser, OpencodeParser, classify_error
-from phd.result import RunError, RunResult, RunStatus, Usage, decide_status
+from phd.results import RunError, RunResult, RunStatus, Usage
+from phd.results.model import decide_status
 
 
 def feed_all(parser, name):

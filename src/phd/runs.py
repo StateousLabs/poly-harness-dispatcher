@@ -1,14 +1,5 @@
-"""`phd.runs.list(...)` / `phd.runs.get(run_id)` over the default ledger."""
+"""`import phd.runs` entry point; the implementation lives in `phd.results.runs`."""
 
-import builtins
+from .results.runs import get, list  # noqa: A004 - mirrors CoreDesign's phd.runs.list
 
-from .ledger import LocalLedger
-from .result import RunResult
-
-
-def list(**filters) -> builtins.list[RunResult]:  # noqa: A001 - mirrors CoreDesign's phd.runs.list
-    return LocalLedger().list(**filters)
-
-
-def get(run_id: str) -> RunResult:
-    return LocalLedger().get(run_id)
+__all__ = ["get", "list"]

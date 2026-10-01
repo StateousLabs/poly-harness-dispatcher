@@ -8,7 +8,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .result import RunError, Usage
+from .results import RunError, Usage
 
 
 @dataclass

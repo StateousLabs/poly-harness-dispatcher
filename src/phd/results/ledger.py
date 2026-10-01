@@ -9,9 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from ._util.fs import write_json
-from .errors import NotResumable
-from .result import RunResult
+from .._util.fs import write_json
+from ..errors import NotResumable
+from .model import RunResult
 
 DEFAULT_RUNS_ROOT = Path.home() / ".phd" / "runs"
 

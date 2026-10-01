@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from phd.errors import NotResumable
-from phd.ledger import LocalLedger
-from phd.result import RunResult, RunStatus, Usage
+from phd.results import LocalLedger
+from phd.results import RunResult, RunStatus, Usage
 
 
 def result(run_dir, run_id, harness="claude", started="2026-10-01T10:00:00+00:00"):
