@@ -1,12 +1,12 @@
 """OpenCode stream parser: the CLI's JSON stream → normalized events and a final Outcome
-(CoreDesign §2e, event shapes verified in §14.1)."""
+(CoreDesign §2e). Event shapes verified against opencode 1.18.18 (CoreDesign §14.1)."""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 
-from ...results.model import RunError, Usage
-from ..outcome import Outcome, _int, classify_error
+from ...results import RunError, Usage
+from ..outcome import Outcome, as_int, classify_error
 
 
 class OpencodeParser:
@@ -33,9 +33,9 @@ class OpencodeParser:
             tokens = part.get("tokens") or {}
             cache = tokens.get("cache") or {}
             self.out.usage.add(Usage(
-                input_tokens=_int(tokens.get("input")) + _int(cache.get("read")) + _int(cache.get("write")),
-                cached_input_tokens=_int(cache.get("read")), output_tokens=_int(tokens.get("output")),
-                reasoning_tokens=_int(tokens.get("reasoning"))))
+                input_tokens=as_int(tokens.get("input")) + as_int(cache.get("read")) + as_int(cache.get("write")),
+                cached_input_tokens=as_int(cache.get("read")), output_tokens=as_int(tokens.get("output")),
+                reasoning_tokens=as_int(tokens.get("reasoning"))))
             self._cost += part.get("cost") or 0
             self.out.cost_usd, self.out.raw_final = self._cost, obj
             self.out.num_turns = (self.out.num_turns or 0) + 1

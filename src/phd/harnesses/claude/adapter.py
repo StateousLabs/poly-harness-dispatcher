@@ -5,10 +5,9 @@ from pathlib import Path
 
 from ..._util.fs import write_json
 from ...errors import MissingCredentials
-from ...materialize.hooks import check_supported, claude_style_block, write_runtime
-from .parser import ClaudeParser
-from ...materialize.context import MaterializeContext
+from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
+from .parser import ClaudeParser
 
 
 class ClaudeAdapter:

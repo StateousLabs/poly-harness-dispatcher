@@ -5,10 +5,9 @@ from pathlib import Path
 from ..._util import toml as _toml
 from ..._util.fs import write_json, write_private
 from ...errors import MissingCredentials
-from ...materialize.hooks import check_supported, claude_style_block, write_runtime
-from .parser import CodexParser
-from ...materialize.context import MaterializeContext
+from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
+from .parser import CodexParser
 
 RESUME_FLAGS = ("--json", "--strict-config", "--skip-git-repo-check", "--ignore-rules",
                 "--dangerously-bypass-hook-trust")

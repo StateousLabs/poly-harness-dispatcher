@@ -1,12 +1,12 @@
 """Codex stream parser: the CLI's JSON stream → normalized events and a final Outcome
-(CoreDesign §2e, event shapes verified in §14.1)."""
+(CoreDesign §2e). Event shapes verified against codex 0.147.0 (CoreDesign §14.1)."""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 
-from ...results.model import RunError, Usage
-from ..outcome import Outcome, _int, classify_error
+from ...results import RunError, Usage
+from ..outcome import Outcome, as_int, classify_error
 
 
 class CodexParser:
@@ -43,10 +43,10 @@ class CodexParser:
                     events.append(("log", {"text": message, "level": "warning"}))
         elif kind == "turn.completed":
             u = obj.get("usage") or {}
-            self.out.usage.add(Usage(input_tokens=_int(u.get("input_tokens")),
-                                     cached_input_tokens=_int(u.get("cached_input_tokens")),
-                                     output_tokens=_int(u.get("output_tokens")),
-                                     reasoning_tokens=_int(u.get("reasoning_output_tokens"))))
+            self.out.usage.add(Usage(input_tokens=as_int(u.get("input_tokens")),
+                                     cached_input_tokens=as_int(u.get("cached_input_tokens")),
+                                     output_tokens=as_int(u.get("output_tokens")),
+                                     reasoning_tokens=as_int(u.get("reasoning_output_tokens"))))
             self.out.num_turns = (self.out.num_turns or 0) + 1
             self.out.raw_final = obj
             self.out.error = None  # clear error on successful turn completion (recovered run)

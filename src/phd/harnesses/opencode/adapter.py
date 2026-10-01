@@ -4,10 +4,9 @@ from pathlib import Path
 
 from ..._util.fs import write_json
 from ...errors import MissingCredentials, UnsupportedFeature
-from ...materialize.hooks import check_supported, opencode_plugin, write_runtime
-from .parser import OpencodeParser
-from ...materialize.context import MaterializeContext
+from ...materialize import MaterializeContext, check_supported, opencode_plugin, write_runtime
 from ...spec import Spec
+from .parser import OpencodeParser
 
 
 class OpencodeAdapter:

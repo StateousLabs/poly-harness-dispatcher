@@ -2,10 +2,10 @@ import json
 import tomllib
 
 import pytest
+from helpers import materialize_spec
 
-from phd.harnesses.codex import adapter as codex_adapter
 from phd.harnesses import get_adapter
-from phd.materialize import materialize
+from phd.harnesses.codex import adapter as codex_adapter
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def fake_user_home(tmp_path, monkeypatch):
 
 
 def test_codex_home_layout_and_argv(tmp_path, make_spec, inputs, workdir, fake_user_home):
-    m = materialize(make_spec("codex"), inputs, run_id="r1", run_dir=tmp_path / "r1")
+    m = materialize_spec(make_spec("codex"), inputs, run_id="r1", run_dir=tmp_path / "r1")
     home = m.home
     assert (home / "skills" / "demo-notes" / "SKILL.md").is_file()
     agents = (home / "AGENTS.md").read_text(encoding="utf-8")
@@ -51,18 +51,18 @@ def test_repo_level_skills_disabled_unless_full(tmp_path, make_spec, inputs, wor
     (repo_skill / "SKILL.md").write_text("---\nname: repo-skill\ndescription: x\n---\n", encoding="utf-8")
     target = (repo_skill / "SKILL.md").as_posix()
 
-    ignore = materialize(make_spec("codex"), inputs, run_id="a", run_dir=tmp_path / "a")
+    ignore = materialize_spec(make_spec("codex"), inputs, run_id="a", run_dir=tmp_path / "a")
     paths = [e["path"] for e in tomllib.loads((ignore.home / "config.toml").read_text(encoding="utf-8"))["skills"]["config"]]
     assert target in paths
 
-    full = materialize(make_spec("codex", project_config="full"), inputs, run_id="b", run_dir=tmp_path / "b")
+    full = materialize_spec(make_spec("codex", project_config="full"), inputs, run_id="b", run_dir=tmp_path / "b")
     cfg = tomllib.loads((full.home / "config.toml").read_text(encoding="utf-8"))
     assert target not in [e["path"] for e in cfg.get("skills", {}).get("config", [])]
     assert "project_doc_max_bytes" not in cfg and "--ignore-rules" not in full.argv
 
 
 def test_codex_full_autonomy_and_output_schema(tmp_path, make_spec, inputs, fake_user_home):
-    m = materialize(make_spec("codex", autonomy="full", unsafe=True, output_schema={"type": "object"}),
+    m = materialize_spec(make_spec("codex", autonomy="full", unsafe=True, output_schema={"type": "object"}),
                     inputs, run_id="r", run_dir=tmp_path / "r")
     assert tomllib.loads((m.home / "config.toml").read_text(encoding="utf-8"))["sandbox_mode"] == "danger-full-access"
     schema_path = m.argv[m.argv.index("--output-schema") + 1]

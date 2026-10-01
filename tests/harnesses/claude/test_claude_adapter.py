@@ -1,17 +1,17 @@
 import json
 
 import pytest
+from helpers import materialize_spec
 
-from phd.harnesses import get_adapter
 from phd.constants import REDACTED
 from phd.errors import UnknownHarness
-from phd.materialize import materialize
+from phd.harnesses import get_adapter
 from phd.spec import Credentials
 
 
 def test_claude_home_layout_and_argv(tmp_path, make_spec, inputs, workdir):
     spec = make_spec("claude", budget_usd=2.0)
-    m = materialize(spec, inputs, run_id="r1", run_dir=tmp_path / "r1")
+    m = materialize_spec(spec, inputs, run_id="r1", run_dir=tmp_path / "r1")
     home = m.home
     assert home == tmp_path / "r1" / "home"
     assert (home / "skills" / "demo-notes" / "references" / "notes.md").is_file()
@@ -49,7 +49,7 @@ def test_claude_home_layout_and_argv(tmp_path, make_spec, inputs, workdir):
 
 
 def test_claude_full_modes(tmp_path, make_spec, inputs):
-    m = materialize(make_spec("claude", project_config="full", autonomy="full", unsafe=True,
+    m = materialize_spec(make_spec("claude", project_config="full", autonomy="full", unsafe=True,
                               output_schema={"type": "object"}), inputs, run_id="r", run_dir=tmp_path / "r")
     assert m.argv[m.argv.index("--setting-sources") + 1] == "user,project,local"
     assert "--dangerously-skip-permissions" in m.argv and "--permission-mode" not in m.argv
@@ -58,19 +58,19 @@ def test_claude_full_modes(tmp_path, make_spec, inputs):
 
 def test_harness_config_merge_and_conflict_warning(tmp_path, make_spec, inputs):
     spec = make_spec("claude", harness_config={"permissions": {"allow": ["Bash(echo:*)"]}, "env": {"X": "1"}})
-    m = materialize(spec, inputs, run_id="r", run_dir=tmp_path / "r")
+    m = materialize_spec(spec, inputs, run_id="r", run_dir=tmp_path / "r")
     settings = json.loads((m.home / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"]["allow"][-1] == "Bash(echo:*)" and settings["env"] == {"X": "1"}
 
     clash = make_spec("claude", harness_config={"permissions": {"allow": "Bash"}})
-    m2 = materialize(clash, inputs, run_id="r2", run_dir=tmp_path / "r2")
+    m2 = materialize_spec(clash, inputs, run_id="r2", run_dir=tmp_path / "r2")
     assert any("permissions.allow" in w for w in m2.warnings)
 
 
 def test_host_login_injects_access_token_only(tmp_path, make_spec, inputs):
     creds = tmp_path / ".credentials.json"
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-123", "refreshToken": "rt-SECRET"}}))
-    m = materialize(make_spec("claude", credentials=Credentials.claude_host_login(creds)), inputs,
+    m = materialize_spec(make_spec("claude", credentials=Credentials.claude_host_login(creds)), inputs,
                     run_id="r", run_dir=tmp_path / "r")
     assert m.env["CLAUDE_CODE_OAUTH_TOKEN"] == "at-123"
     for f in m.home.rglob("*"):

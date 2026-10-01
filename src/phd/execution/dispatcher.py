@@ -10,13 +10,9 @@ from pathlib import Path
 from .._util.fs import is_within
 from ..constants import REDACTED
 from ..errors import InvalidRunsRoot, NotResumable
-from ..harnesses import get_adapter
-from ..harnesses.catalog import ModelCatalog
-from ..materialize import materialize
-from ..materialize.context import MaterializedHome
-from ..materialize.prompt import resume_message
-from ..results import LocalLedger, ResultSink
-from ..results.model import RunResult
+from ..harnesses import ModelCatalog, get_adapter
+from ..materialize import MaterializedHome, materialize, resume_message
+from ..results import LocalLedger, ResultSink, RunResult
 from ..spec import Inputs, Spec
 from .handle import RunHandle
 
@@ -44,7 +40,7 @@ class Dispatcher:
     def _plan(self, inputs: Inputs) -> tuple[MaterializedHome, str]:
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
-        m = materialize(self.spec, inputs, run_id=run_id, run_dir=run_dir)
+        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir)
         m.warnings[:0] = self.warnings
         self.ledger.write_record(run_dir, self._record(m, base_argv=m.argv, resumed_from=None))
         return m, stack_hash

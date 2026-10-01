@@ -2,16 +2,18 @@
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..spec import Inputs, Spec
 from .context import MaterializeContext, MaterializedHome
-from .prompt import assemble
+from .hooks import check_supported, claude_style_block, opencode_plugin, write_runtime
+from .prompt import Prompt, assemble, resume_message
+
+if TYPE_CHECKING:
+    from ..harnesses import Adapter
 
 
-def materialize(spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> MaterializedHome:
-    from ..harnesses import get_adapter  # deferred: harness adapters import materialize.context
-
-    adapter = get_adapter(spec.harness)
+def materialize(adapter: "Adapter", spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> MaterializedHome:
     home = run_dir / "home"
     home.mkdir(parents=True)
     stack_dir = home / "stack"  # read-only copy so ${stack} paths outlive the source stack
@@ -23,4 +25,5 @@ def materialize(spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> Ma
                             stdin=prompt.user, warnings=ctx.warnings)
 
 
-__all__ = ["MaterializeContext", "MaterializedHome", "materialize"]
+__all__ = ["MaterializeContext", "MaterializedHome", "Prompt", "assemble", "check_supported", "claude_style_block",
+           "materialize", "opencode_plugin", "resume_message", "write_runtime"]

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 from ..spec import Spec
 
 if TYPE_CHECKING:
-    from ..materialize.context import MaterializeContext
+    from ..materialize import MaterializeContext
     from .outcome import Outcome
 
 

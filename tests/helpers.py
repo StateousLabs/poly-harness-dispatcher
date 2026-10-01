@@ -3,6 +3,8 @@ import os
 import time
 
 from conftest import STREAMS
+from phd.harnesses import get_adapter
+from phd.materialize import materialize
 
 
 def pid_alive(pid: int) -> bool:
@@ -39,3 +41,7 @@ def feed_all(parser, name):
     for line in (STREAMS / name).read_text(encoding="utf-8").splitlines():
         events += parser.feed(json.loads(line))
     return events, parser.outcome()
+
+
+def materialize_spec(spec, inputs, **kw):
+    return materialize(get_adapter(spec.harness), spec, inputs, **kw)

@@ -15,7 +15,7 @@ def load(run: Callable[[list[str]], str]) -> list[str]:
     return [*CLAUDE_ALIASES, *CLAUDE_KNOWN_IDS]
 
 
-def validate(model: str) -> list[str] | None:
+def classify(model: str) -> list[str] | None:
     """Warnings if the model is acceptable (known, or id-shaped and tried as-is); None if unknown."""
     base = _CONTEXT_SUFFIX.sub("", model)
     if base in CLAUDE_ALIASES or base in CLAUDE_KNOWN_IDS:

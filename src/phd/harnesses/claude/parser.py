@@ -1,12 +1,12 @@
 """Claude stream parser: the CLI's JSON stream → normalized events and a final Outcome
-(CoreDesign §2e, event shapes verified in §14.1)."""
+(CoreDesign §2e). Event shapes verified against claude 2.1.286 (CoreDesign §14.1)."""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 
-from ...results.model import RunError, Usage
-from ..outcome import Outcome, _int, classify_error
+from ...results import RunError, Usage
+from ..outcome import Outcome, as_int, classify_error
 
 
 class ClaudeParser:
@@ -42,11 +42,11 @@ class ClaudeParser:
             o.result_text, o.num_turns, o.raw_final = obj.get("result"), obj.get("num_turns"), obj
             o.cost_usd = obj.get("total_cost_usd")
             o.cost_source = "harness" if o.cost_usd is not None else "unknown"
-            cache_read = _int(usage.get("cache_read_input_tokens"))
-            cache_write = _int(usage.get("cache_creation_input_tokens"))
-            o.usage = Usage(input_tokens=_int(usage.get("input_tokens")) + cache_read + cache_write,
-                            cached_input_tokens=cache_read, output_tokens=_int(usage.get("output_tokens")),
-                            reasoning_tokens=_int((usage.get("output_tokens_details") or {}).get("thinking_tokens")))
+            cache_read = as_int(usage.get("cache_read_input_tokens"))
+            cache_write = as_int(usage.get("cache_creation_input_tokens"))
+            o.usage = Usage(input_tokens=as_int(usage.get("input_tokens")) + cache_read + cache_write,
+                            cached_input_tokens=cache_read, output_tokens=as_int(usage.get("output_tokens")),
+                            reasoning_tokens=as_int((usage.get("output_tokens_details") or {}).get("thinking_tokens")))
             if "structured_output" in obj:
                 o.structured_output = obj["structured_output"]
             subtype = str(obj.get("subtype") or "")

@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING, TextIO
 from .._util.fs import robust_rmtree
 from .._util.shell import resolve_argv
 from ..constants import REDACTED
-from ..harnesses.outcome import Outcome
-from ..materialize.context import MaterializedHome
-from ..results.model import Event, RunError, RunResult, Usage, decide_status
+from ..harnesses import Outcome
+from ..materialize import MaterializedHome
+from ..results import Event, RunError, RunResult, Usage
+from ..results.model import decide_status
 from .process import HarnessProcess, child_env
 
 if TYPE_CHECKING:

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..results.model import RunError, Usage
+from ..results import RunError, Usage
 
 
 @dataclass
@@ -23,7 +23,7 @@ class Outcome:
     raw_final: dict | None = None
 
 
-def _int(v: Any) -> int:
+def as_int(v: Any) -> int:
     """Coerce token counts safely; return 0 for non-numeric values."""
     if isinstance(v, int):
         return v

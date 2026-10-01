@@ -15,6 +15,8 @@ Runner = Callable[[list[str]], str]
 
 _LOADERS: dict[str, Callable[[Runner], list[str]]] = {
     "claude": claude_models.load, "codex": codex_models.load, "opencode": opencode_models.load}
+# harnesses with no catalogue command: classify() returns warnings if acceptable, None if unknown
+_STATIC_CHECKS: dict[str, Callable[[str], list[str] | None]] = {"claude": claude_models.classify}
 
 
 def _run_cli(argv: list[str]) -> str:
@@ -44,12 +46,13 @@ class ModelCatalog:
 
     def validate(self, harness: str, model: str) -> list[str]:
         """Raise ModelNotSupported for an unknown model; otherwise return warnings."""
-        if harness == "claude":
-            warnings = claude_models.validate(model)
+        static_check = _STATIC_CHECKS.get(harness)
+        if static_check is not None:
+            warnings = static_check(model)
             if warnings is not None:
                 return warnings
-            known = self.models("claude")
-            raise ModelNotSupported("claude", model, known, _closest(model, known))
+            known = self.models(harness)
+            raise ModelNotSupported(harness, model, known, _closest(model, known))
         try:
             known = self.models(harness)
         except (HarnessNotInstalled, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
