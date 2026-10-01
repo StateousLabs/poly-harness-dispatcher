@@ -101,27 +101,28 @@ class Stack:
             raise StackIncompatible(f"stack {self.ref} supports {list(self.harnesses)}, not {harness!r}")
 
     def content_hash(self) -> str:
-        """Compute SHA256 hash of all stack files, skipping cache and hidden files.
+        """Compute SHA256 hash of all stack files, skipping cache and hidden directories.
 
-        Excludes:
-        - Any path component starting with "." (e.g., .git, .mcp.json is included since it's the filename)
-        - Any path component named "__pycache__"
+        Excludes (relative to stack root):
+        - Any directory component starting with "." (e.g., .git; .mcp.json file is hashed)
+        - Any directory component named "__pycache__"
         - Any *.pyc files
 
         Uses raw bytes (no line-ending normalization).
         """
         digest = hashlib.sha256()
         for path in sorted(p for p in self.root.rglob("*") if p.is_file()):
-            # Skip __pycache__ directories
-            if "__pycache__" in path.parts:
+            rel = path.relative_to(self.root)
+            # Skip __pycache__ directories (check relative path parts, excluding filename)
+            if "__pycache__" in rel.parts[:-1]:
                 continue
             # Skip hidden directories (but allow hidden files like .mcp.json)
-            if any(part.startswith(".") and part != "." for part in path.parts[:-1]):
+            if any(part.startswith(".") for part in rel.parts[:-1]):
                 continue
             # Skip .pyc files
-            if path.suffix == ".pyc":
+            if rel.suffix == ".pyc":
                 continue
-            digest.update(path.relative_to(self.root).as_posix().encode("utf-8"))
+            digest.update(rel.as_posix().encode("utf-8"))
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 
@@ -170,3 +171,32 @@ def test_invalid_default_models_values(stack_copy):
     (stack_copy / "stack.json").write_text(json.dumps(meta))
     with pytest.raises(StackInvalid, match="'default_models' values must be strings"):
         Stack.load(stack_copy)
+
+
+def test_content_hash_under_hidden_directory(tmp_path):
+    """content_hash works correctly even when stack is under a hidden directory.
+
+    Regression test: ensure filtering only applies to relative paths, not absolute paths.
+    If the stack is under ~/.phd or .superpowers, the hash must not collapse to empty.
+    """
+    # Copy fixture stack to a hidden directory
+    hidden_root = tmp_path / ".hidden"
+    hidden_root.mkdir()
+    stack_root = hidden_root / "config"
+    shutil.copytree(FIXTURES / "stack", stack_root)
+
+    # Load and compute hash
+    s = Stack.load(stack_root)
+    hash1 = s.content_hash()
+
+    # Verify hash is not the empty digest (would indicate all files were skipped)
+    empty_digest = "sha256:" + hashlib.sha256().hexdigest()
+    assert hash1 != empty_digest, "Hash collapsed to empty—filtering incorrectly applied to absolute path"
+
+    # Verify hash is stable
+    assert s.content_hash() == hash1
+
+    # Verify hash changes when content changes
+    (stack_root / "skills" / "demo-notes" / "references" / "notes.md").write_text("modified content")
+    hash2 = Stack.load(stack_root).content_hash()
+    assert hash2 != hash1, "Hash should change when content changes"
