@@ -32,7 +32,7 @@
 
 ## Not in this plan (deferred, call out if you disagree)
 
-`Stack.compose()` and the `~/.phd/{agents,skills,mcps,hooks}` component libraries; loading a stack from `.tar.gz`; the `phd auth` CLI; codex cost estimation from a price table (codex runs report `cost_source="unknown"`); disabling built-in harness skills; Claude auto-memory switch; OpenCode `session_start`/`stop` hooks and structured output (rejected loudly at validation).
+`Stack.compose()` and the `~/.phd/{agents,skills,mcps,hooks}` component libraries; loading a stack from `.tar.gz`; the `phd auth` CLI; codex cost estimation from a price table (codex runs report `cost_source="unknown"`); disabling built-in harness skills; Claude auto-memory switch; OpenCode `session_start`/`stop` hooks and structured output (rejected loudly at validation); `Credentials.openai_api_key` and the `Credentials.*_from_env()` constructors; claude restricted-mode "deny rules outside cwd"; model catalogue cache per CLI version (today it is per `ModelCatalog` instance); `validate="probe"`; `cli_version` for codex and opencode (always `None` today); stripping non-prefixed provider keys (`*_API_KEY`, `GITHUB_TOKEN`) from the child environment; non-`PhdError` pre-launch errors (undecodable brief/identity files, `nan` `timeout_s`); run-dir pruning; resume cwd/model mismatch check.
 
 ---
 

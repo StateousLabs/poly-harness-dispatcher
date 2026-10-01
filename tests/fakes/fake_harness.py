@@ -1,0 +1,43 @@
+"""Stand-in harness CLI for tests, driven by environment variables.
+
+FAKE_ECHO_FILE      append {"argv","stdin","cwd","env"} as one JSON line
+FAKE_CHILD_PIDFILE  spawn a sleeping grandchild process and write its pid here
+FAKE_STREAM         path of a JSONL file to print line by line
+FAKE_SLEEP          seconds to sleep after printing (simulates a hang)
+FAKE_EXIT           exit code (default 0)
+FAKE_NO_STDIN       set to 1 to never read stdin (the writer blocks once the pipe fills)
+FAKE_STDERR         text to write to stderr
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+PREFIXES = ("CLAUDE_", "CODEX_", "OPENCODE_", "ANTHROPIC_", "OPENAI_", "XDG_", "DISABLE_", "PHD_")
+
+
+def main() -> int:
+    stdin = "" if os.environ.get("FAKE_NO_STDIN") == "1" else sys.stdin.buffer.read().decode("utf-8")
+    if text := os.environ.get("FAKE_STDERR"):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    if path := os.environ.get("FAKE_ECHO_FILE"):
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"argv": sys.argv[1:], "stdin": stdin, "cwd": os.getcwd(),
+                                "env": {k: v for k, v in os.environ.items() if k.startswith(PREFIXES)}}) + "\n")
+    if path := os.environ.get("FAKE_CHILD_PIDFILE"):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        with open(path, "w") as f:
+            f.write(str(child.pid))
+    if path := os.environ.get("FAKE_STREAM"):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                sys.stdout.write(line if line.endswith("\n") else line + "\n")
+                sys.stdout.flush()
+    time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+    return int(os.environ.get("FAKE_EXIT", "0"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

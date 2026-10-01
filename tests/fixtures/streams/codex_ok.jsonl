@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"01a0f55a-d4f3-7d43-943f-8708f4dfa0cf"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I'll run the checks."}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"echo hello-from-shell","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"echo hello-from-shell","aggregated_output":"hello-from-shell\r\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_3","type":"mcp_tool_call","server":"echo","tool":"echo","arguments":{"text":"ping"},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"echo","tool":"echo","arguments":{"text":"ping"},"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"HELPER-IDENTITY-OK\nphd-echo: ping\nRULES-OK"}}
+{"type":"turn.completed","usage":{"input_tokens":55889,"cached_input_tokens":50176,"cache_write_input_tokens":0,"output_tokens":260,"reasoning_output_tokens":24}}

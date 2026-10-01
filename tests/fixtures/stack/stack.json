@@ -1,0 +1,7 @@
+{
+  "name": "fixture-helper",
+  "version": "0.1.0",
+  "description": "Test stack: one agent, two skills, one MCP, one hook.",
+  "harnesses": ["claude", "codex", "opencode"],
+  "default_models": { "claude": "haiku" }
+}

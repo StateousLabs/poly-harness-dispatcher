@@ -1,0 +1,5 @@
+{"type":"step_start","timestamp":1790822841973,"sessionID":"ses_abc","part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":1790822842000,"sessionID":"ses_abc","part":{"type":"tool","tool":"bash","callID":"call_1","state":{"status":"completed","input":{"command":"echo hello-from-shell"},"output":"hello-from-shell"}}}
+{"type":"step_finish","timestamp":1790822843000,"sessionID":"ses_abc","part":{"type":"step-finish","reason":"tool-calls","tokens":{"total":6000,"input":5800,"output":100,"reasoning":100,"cache":{"read":0,"write":0}},"cost":0.002}}
+{"type":"text","timestamp":1790822884452,"sessionID":"ses_abc","part":{"type":"text","text":"HELPER-IDENTITY-OK\nphd-echo: ping\nRULES-OK"}}
+{"type":"step_finish","timestamp":1790822884632,"sessionID":"ses_abc","part":{"type":"step-finish","reason":"stop","tokens":{"total":8773,"input":8523,"output":250,"reasoning":0,"cache":{"read":1000,"write":0}},"cost":0.001}}

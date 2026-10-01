@@ -172,6 +172,57 @@ Normalized event types (minimal v1): `run.started`, `message`, `tool_call`, `too
 
 ---
 
+## Package layout
+
+`src/phd/` is split into domain packages; a package never imports from one that sits above it in the
+dependency order below.
+
+```
+src/phd/
+  __init__.py        public re-exports only (Spec, Dispatcher, RunResult, ... and phd.runs)
+  errors.py          the exception taxonomy
+  constants.py       harness names, modes, REDACTED
+  runs.py            three-line re-export so `import phd.runs` works (impl: results/runs.py)
+
+  _util/             fs.py, toml.py, shell.py: stdlib-only helpers, no phd imports except errors
+  spec/              what to run: Spec, Inputs, Credentials, Stack, HookDef, placeholders
+  harnesses/         one sub-package per CLI
+    __init__.py        get_adapter() registry, ModelCatalog, Outcome (public surface)
+    base.py            Adapter / StreamParser protocols
+    outcome.py         Outcome, classify_error, shared parser helpers
+    catalog.py         ModelCatalog (dispatches to each harness's models.py)
+    claude/ codex/ opencode/   adapter.py, parser.py, models.py each
+  materialize/       the pure step: write a run's isolated home, run nothing
+    __init__.py        materialize(adapter, spec, inputs, ...) and the package's public surface
+    context.py         MaterializeContext, MaterializedHome, SECRET_ENV
+    prompt.py          prompt assembly
+    hooks/             translate.py (neutral -> native hook config), opencode_plugin.py,
+                       runtime.py (write_runtime), shim.py (stdlib-only script copied into each run home)
+  execution/         process.py (HarnessProcess, child_env), dispatcher.py (Dispatcher), handle.py (RunHandle)
+  results/           model.py (RunResult, Usage, RunError, Event), ledger.py (LocalLedger, ResultSink), runs.py
+```
+
+Dependency order (a package imports only from packages to its left):
+
+```
+errors, constants  <-  _util  <-  spec, results  <-  materialize  <-  harnesses  <-  execution  <-  phd/__init__
+```
+
+`_util` depends on `errors` (shell.py raises `HarnessNotInstalled`) and on nothing else. `results` depends
+only on `_util` and `errors`, so `harnesses.outcome` can use `Usage` and `RunError` without reaching up.
+`materialize()` takes the adapter as its first argument instead of looking it up, so `materialize` never
+imports `harnesses` at runtime; the adapters import `materialize` (context and hooks), and `execution`
+wires the two together.
+
+Import rule: cross-package imports go through the sub-package's `__init__` (its `__all__`). Reach into a
+submodule only for names that are deliberately not exported (for example `results.model.decide_status`,
+`spec.placeholders.resolve`). Within a package, import the sibling module directly.
+
+Future sprints add sibling packages: `sandbox/` (isolated execution environments), `runner/` (the
+in-sandbox API), `stacks/` (local and remote stack sources) and `auth/`.
+
+---
+
 ## 3. Public API (sketch)
 
 ```python
@@ -491,6 +542,7 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 | Cost of resume | $0.033 (haiku) | n/a | $0 |
 
 **Other findings:**
+- Claude Code on Windows runs shell commands through its `PowerShell` tool, not `Bash`; the neutral `shell` hook therefore maps to matcher `Bash|PowerShell` for claude (found by the live contract test, 2026-10-01).
 - Codex refuses to create helper binaries when `CODEX_HOME` is under the system temp dir —
   PHD run dirs must not live in `%TEMP%` / `/tmp`.
 - Claude auto-memory wrote to `<home>/projects/<git-root-key>/memory/` — hermetic (inside the run
@@ -499,12 +551,34 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 - Prompt-safety lesson for live tests: a trailing `.` after a shell command in a prompt was read
   as part of the command (`rm -rf ./x .`). Test commands go in code spans with nothing after.
 
+**Built-in harness skills — closed (2026-10-01).** A PHD agent's skills come only from its stack unless
+`Spec(harness_builtins=True)`. Default `False`; each adapter suppresses its harness's own skills:
+
+| Harness | Mechanism (verified) | Residual |
+|---|---|---|
+| claude 2.1.287 | `settings.json`: `disableBundledSkills: true`, `enabledPlugins` = the three `cc-plugin-*@builtin` set `false`, `permissions.deny` = `Skill(design)`, `Skill(doctor)`. Init event: 21 skills + 3 plugins -> 4 skills (stack's 2 + design, doctor), 0 plugins | `design` and `doctor` have no switch: they still list but cannot be invoked |
+| codex 0.147.0 | `config.toml`: `[skills.bundled] enabled = false` (found in the binary's `SkillsConfig`; accepted by `--strict-config`). Model lists 7 skills -> only the stack's 2; `skills/.system` is no longer installed. Path-based `skills.config` entries for `.system/*` were not needed | none |
+| opencode 1.18.18 | `customize-opencode` is hardcoded into `Skill.state` with no disable switch (`OPENCODE_DISABLE_*SKILLS` do not touch it). `permission.skill = {"customize-opencode": "deny"}` removes it from the model's list (`Skill.available` filters denied skills). Model lists 3 -> 2 | `opencode debug skill` still enumerates it (registry, not the model's view) |
+
+All three constants (`BUILTIN_PLUGINS`/`RESIDUAL_BUILTIN_SKILLS`, `BUILTIN_SKILLS`) carry the CLI version
+they were verified against; re-check them on CLI upgrades.
+
 **Still open:**
-1. Built-in harness skills: disable (codex `skills.config`, others [verify]) or accept and record.
+1. ~~Built-in harness skills~~ — closed, see "Built-in harness skills" above.
 2. OpenCode `session_start` / `stop` hook events; OpenCode structured output.
 3. Codex block reason passthrough (`permissionDecision` JSON).
 4. Timeout / kill of `.cmd` process trees on Windows — not yet exercised.
 5. Claude auto-memory switch.
+6. `Credentials.openai_api_key` and the `Credentials.*_from_env()` constructors.
+7. claude restricted-mode "deny rules outside cwd".
+8. model catalogue cache per CLI version (today it is per `ModelCatalog` instance).
+9. `validate="probe"`.
+10. `cli_version` for codex and opencode (always `None` today).
+11. stripping non-prefixed provider keys (`*_API_KEY`, `GITHUB_TOKEN`) from the child environment.
+12. non-`PhdError` pre-launch errors (undecodable brief/identity files, `nan` `timeout_s`).
+13. run-dir pruning.
+14. resume cwd/model mismatch check.
+15. Codex hook commands on Windows when the Python interpreter path contains spaces: PHD wraps the command in outer quotes for cmd /C, verified only against cmd.exe directly, not against real codex.
 
 ---
 

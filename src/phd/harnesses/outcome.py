@@ -1,0 +1,50 @@
+"""Shared parser plumbing: the normalized Outcome and error classification (CoreDesign §2e)."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..results import RunError, Usage
+
+
+@dataclass
+class Outcome:
+    session_id: str | None = None
+    result_text: str | None = None
+    structured_output: Any = None
+    cost_usd: float | None = None
+    cost_source: str = "unknown"
+    usage: Usage = field(default_factory=Usage)
+    num_turns: int | None = None
+    error: RunError | None = None
+    cli_version: str | None = None
+    raw_final: dict | None = None
+
+
+def as_int(v: Any) -> int:
+    """Coerce token counts safely; return 0 for non-numeric values."""
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return 0
+    return 0
+
+
+def classify_error(message: str) -> str:
+    m = message.lower()
+    if "do not have access" in m or ("model" in m and ("does not exist" in m or "not found" in m or "not supported" in m)):
+        return "model_unavailable"
+    if ("insufficient" in m and ("fund" in m or "credit" in m)) or re.search(r"\b402\b", m) or "billing" in m:
+        return "billing"
+    if "not logged in" in m or "unauthorized" in m or re.search(r"\b401\b", m) or "authentication" in m or "invalid api key" in m:
+        return "auth"
+    if "budget" in m:
+        return "budget"
+    return "harness_error"

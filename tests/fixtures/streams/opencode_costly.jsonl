@@ -1,0 +1,1 @@
+{"type":"step_finish","timestamp":1790822843000,"sessionID":"ses_cost","part":{"type":"step-finish","reason":"tool-calls","tokens":{"total":10,"input":5,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.5}}
