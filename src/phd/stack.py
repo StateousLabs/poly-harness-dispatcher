@@ -56,6 +56,13 @@ class Stack:
                 raise StackInvalid(f"{root / 'stack.json'}: 'harnesses' must be a non-empty list drawn from {list(HARNESSES)}")
             harnesses = tuple(harnesses)
 
+        default_models = meta.get("default_models", {})
+        if not isinstance(default_models, dict):
+            raise StackInvalid(f"{root / 'stack.json'}: 'default_models' must be an object")
+        for key, val in default_models.items():
+            if not isinstance(val, str):
+                raise StackInvalid(f"{root / 'stack.json'}: 'default_models' values must be strings")
+
         agents_dir = root / "agents"
         agents = sorted(agents_dir.glob("*.md")) if agents_dir.is_dir() else []
         if len(agents) != 1:
@@ -69,15 +76,23 @@ class Stack:
                     raise StackInvalid(f"{d}: skill folder has no SKILL.md")
                 skills.append(d)
 
-        mcp = _read_json(root / ".mcp.json").get("mcpServers", {})
+        mcp_data = _read_json(root / ".mcp.json")
+        mcp_servers_raw = mcp_data.get("mcpServers", {})
+        if not isinstance(mcp_servers_raw, dict):
+            raise StackInvalid(f"{root / '.mcp.json'}: 'mcpServers' must be an object")
+        mcp = mcp_servers_raw
         for name, server in mcp.items():
             _check_mcp(root, name, server)
 
-        hooks = tuple(_parse_hook(root, h) for h in _read_json(root / "hooks" / "hooks.json").get("hooks", []))
+        hooks_data = _read_json(root / "hooks" / "hooks.json")
+        hooks_raw = hooks_data.get("hooks", [])
+        if not isinstance(hooks_raw, list):
+            raise StackInvalid(f"{root / 'hooks' / 'hooks.json'}: 'hooks' must be an array")
+        hooks = tuple(_parse_hook(root, h) for h in hooks_raw)
 
         return cls(root=root, name=meta["name"], version=meta["version"],
                    description=meta.get("description", ""), harnesses=harnesses,
-                   default_models=dict(meta.get("default_models", {})),
+                   default_models=default_models,
                    agent_name=agents[0].stem, identity=agents[0].read_text(encoding="utf-8"),
                    skills=tuple(skills), mcp_servers=mcp, hooks=hooks)
 
@@ -86,8 +101,26 @@ class Stack:
             raise StackIncompatible(f"stack {self.ref} supports {list(self.harnesses)}, not {harness!r}")
 
     def content_hash(self) -> str:
+        """Compute SHA256 hash of all stack files, skipping cache and hidden files.
+
+        Excludes:
+        - Any path component starting with "." (e.g., .git, .mcp.json is included since it's the filename)
+        - Any path component named "__pycache__"
+        - Any *.pyc files
+
+        Uses raw bytes (no line-ending normalization).
+        """
         digest = hashlib.sha256()
         for path in sorted(p for p in self.root.rglob("*") if p.is_file()):
+            # Skip __pycache__ directories
+            if "__pycache__" in path.parts:
+                continue
+            # Skip hidden directories (but allow hidden files like .mcp.json)
+            if any(part.startswith(".") and part != "." for part in path.parts[:-1]):
+                continue
+            # Skip .pyc files
+            if path.suffix == ".pyc":
+                continue
             digest.update(path.relative_to(self.root).as_posix().encode("utf-8"))
             digest.update(b"\0")
             digest.update(path.read_bytes())
@@ -130,5 +163,19 @@ def _parse_hook(root: Path, hook: object) -> HookDef:
         raise StackInvalid(f"{where}: every hook needs a 'command' string")
     if hook.get("event") not in NEUTRAL_EVENTS:
         raise HookUnsupported(f"{where}: unknown hook event {hook.get('event')!r}; expected one of {list(NEUTRAL_EVENTS)}")
+
+    # Validate match field if present
+    match = hook.get("match")
+    if match is not None and not isinstance(match, dict):
+        raise StackInvalid(f"{where}: 'match' must be an object if present")
+
+    # Validate timeout_s
+    timeout_s_raw = hook.get("timeout_s", 30)
+    try:
+        timeout_s = float(timeout_s_raw)
+    except (TypeError, ValueError):
+        raise StackInvalid(f"{where}: 'timeout_s' must be numeric, got {timeout_s_raw!r}")
+
     return HookDef(event=hook["event"], command=hook["command"],
-                   tool=(hook.get("match") or {}).get("tool"), timeout_s=float(hook.get("timeout_s", 30)))
+                   tool=(match or {}).get("tool") if match is not None else None,
+                   timeout_s=timeout_s)

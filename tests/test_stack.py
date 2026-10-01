@@ -76,3 +76,97 @@ def test_content_hash_changes_with_content(stack_copy):
     assert before == Stack.load(stack_copy).content_hash()
     (stack_copy / "skills" / "demo-notes" / "references" / "notes.md").write_text("changed")
     assert Stack.load(stack_copy).content_hash() != before
+
+
+def test_content_hash_ignores_pycache_and_hidden(stack_copy):
+    """Hash should not change when __pycache__ or hidden files are added."""
+    before = Stack.load(stack_copy).content_hash()
+
+    # Add __pycache__ directory with .pyc file
+    pycache_dir = stack_copy / "hooks" / "__pycache__"
+    pycache_dir.mkdir()
+    (pycache_dir / "guard.cpython-313.pyc").write_bytes(b"fake pyc")
+
+    # Add hidden .git directory
+    git_dir = stack_copy / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main")
+
+    # Hash should be unchanged
+    after = Stack.load(stack_copy).content_hash()
+    assert after == before
+
+
+@pytest.mark.parametrize("invalid_mcp,expected_match", [
+    (None, "'mcpServers' must be an object"),
+    ([], "'mcpServers' must be an object"),
+    ("bad", "'mcpServers' must be an object"),
+])
+def test_invalid_mcp_type(stack_copy, invalid_mcp, expected_match):
+    """mcpServers must be a dict."""
+    (stack_copy / ".mcp.json").write_text(json.dumps({"mcpServers": invalid_mcp}))
+    with pytest.raises(StackInvalid, match=expected_match):
+        Stack.load(stack_copy)
+
+
+@pytest.mark.parametrize("invalid_hooks,expected_match", [
+    (None, "'hooks' must be an array"),
+    ({}, "'hooks' must be an array"),
+    ("bad", "'hooks' must be an array"),
+])
+def test_invalid_hooks_type(stack_copy, invalid_hooks, expected_match):
+    """hooks must be a list."""
+    (stack_copy / "hooks" / "hooks.json").write_text(json.dumps({"hooks": invalid_hooks}))
+    with pytest.raises(StackInvalid, match=expected_match):
+        Stack.load(stack_copy)
+
+
+@pytest.mark.parametrize("bad_match,expected_match", [
+    ("shell", "'match' must be an object"),
+    (123, "'match' must be an object"),
+    ([], "'match' must be an object"),
+])
+def test_invalid_hook_match_type(stack_copy, bad_match, expected_match):
+    """Hook match must be a dict if present."""
+    (stack_copy / "hooks" / "hooks.json").write_text(json.dumps({
+        "hooks": [{"event": "pre_tool", "command": "x", "match": bad_match}]
+    }))
+    with pytest.raises(StackInvalid, match=expected_match):
+        Stack.load(stack_copy)
+
+
+@pytest.mark.parametrize("bad_timeout,expected_match", [
+    ("soon", "'timeout_s' must be numeric"),
+    ([10], "'timeout_s' must be numeric"),
+    ({}, "'timeout_s' must be numeric"),
+])
+def test_invalid_hook_timeout_type(stack_copy, bad_timeout, expected_match):
+    """Hook timeout_s must be numeric."""
+    (stack_copy / "hooks" / "hooks.json").write_text(json.dumps({
+        "hooks": [{"event": "pre_tool", "command": "x", "timeout_s": bad_timeout}]
+    }))
+    with pytest.raises(StackInvalid, match=expected_match):
+        Stack.load(stack_copy)
+
+
+@pytest.mark.parametrize("bad_models,expected_match", [
+    ([], "'default_models' must be an object"),
+    ("bad", "'default_models' must be an object"),
+    (None, "'default_models' must be an object"),
+])
+def test_invalid_default_models_type(stack_copy, bad_models, expected_match):
+    """default_models must be a dict."""
+    meta = json.loads((stack_copy / "stack.json").read_text())
+    meta["default_models"] = bad_models
+    (stack_copy / "stack.json").write_text(json.dumps(meta))
+    with pytest.raises(StackInvalid, match=expected_match):
+        Stack.load(stack_copy)
+
+
+def test_invalid_default_models_values(stack_copy):
+    """default_models values must be strings."""
+    meta = json.loads((stack_copy / "stack.json").read_text())
+    meta["default_models"] = {"claude": 123}
+    (stack_copy / "stack.json").write_text(json.dumps(meta))
+    with pytest.raises(StackInvalid, match="'default_models' values must be strings"):
+        Stack.load(stack_copy)
