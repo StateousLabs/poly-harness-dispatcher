@@ -96,3 +96,122 @@ def test_run_result_round_trip():
     d = json.loads(json.dumps(r.to_dict()))
     assert d["status"] == "failed"
     assert RunResult.from_dict(d) == r
+
+
+def test_claude_malformed_message_string():
+    """Claude parser should not raise on message being a string instead of dict."""
+    p = ClaudeParser()
+    events = p.feed({"type": "assistant", "message": "x"})
+    assert [t for t, _ in events] == ["log"]
+    assert p.outcome() is not None
+
+
+def test_claude_malformed_content_item():
+    """Claude parser should not raise on content items being strings."""
+    p = ClaudeParser()
+    events = p.feed({"type": "assistant", "message": {"content": ["str"]}})
+    # String items are skipped gracefully, no exception raised
+    assert p.outcome() is not None
+
+
+def test_claude_malformed_token_counts():
+    """Claude parser should coerce string token counts without raising."""
+    p = ClaudeParser()
+    events = p.feed({
+        "type": "result",
+        "result": "ok",
+        "num_turns": 1,
+        "total_cost_usd": 0,
+        "usage": {"input_tokens": "12", "output_tokens": "5", "cache_read_input_tokens": "100"}
+    })
+    assert [t for t, _ in events] == ["usage"]
+    assert p.outcome().usage.input_tokens == 112  # "12" + "100" (cache_read)
+    assert p.outcome().usage.output_tokens == 5
+
+
+def test_codex_malformed_item_string():
+    """Codex parser should not raise on item being a string."""
+    p = CodexParser()
+    events = p.feed({"type": "item.completed", "item": "x"})
+    # Non-dict items are skipped gracefully, no exception raised
+    assert p.outcome() is not None
+
+
+def test_codex_malformed_item_message_null():
+    """Codex parser should not raise on item.message being null."""
+    p = CodexParser()
+    events = p.feed({"type": "item.completed", "item": {"type": "error", "message": None}})
+    # None messages are skipped gracefully, no exception raised
+    assert p.outcome() is not None
+
+
+def test_codex_malformed_token_counts():
+    """Codex parser should coerce string token counts without raising."""
+    p = CodexParser()
+    events = p.feed({"type": "turn.completed", "usage": {"input_tokens": "50", "output_tokens": "10"}})
+    assert [t for t, _ in events] == ["usage"]
+    assert p.outcome().usage.input_tokens == 50
+    assert p.outcome().usage.output_tokens == 10
+
+
+def test_codex_error_recovery():
+    """Codex parser should clear error on successful turn.completed."""
+    p = CodexParser()
+    p.feed({"type": "error", "message": "something failed"})
+    assert p.outcome().error is not None
+    p.feed({"type": "turn.completed", "usage": {}})
+    assert p.outcome().error is None
+
+
+def test_opencode_malformed_error_string():
+    """OpenCode parser should not raise on error being a plain string."""
+    p = OpencodeParser()
+    events = p.feed({"type": "error", "error": "boom"})
+    assert [t for t, _ in events] == ["log"]
+    assert p.outcome() is not None
+
+
+def test_opencode_malformed_token_counts():
+    """OpenCode parser should coerce string token counts without raising."""
+    p = OpencodeParser()
+    events = p.feed({
+        "type": "step_finish",
+        "part": {
+            "tokens": {"input": "5", "output": "10", "cache": {"read": "2"}}
+        }
+    })
+    assert [t for t, _ in events] == ["usage"]
+    assert p.outcome().usage.input_tokens == 7  # "5" + "2"
+    assert p.outcome().usage.output_tokens == 10
+
+
+def test_opencode_isretryable_error_as_warning():
+    """OpenCode parser should treat isRetryable:true errors as warnings, not failures."""
+    p = OpencodeParser()
+    events = p.feed({
+        "type": "error",
+        "error": {"data": {"message": "Temporary issue", "isRetryable": True}}
+    })
+    assert [t for t, _ in events] == ["log"]
+    assert events[0][1]["level"] == "warning"
+    assert p.outcome().error is None
+
+
+def test_opencode_non_retryable_error():
+    """OpenCode parser should treat isRetryable:false errors as actual failures."""
+    p = OpencodeParser()
+    events = p.feed({
+        "type": "error",
+        "error": {"data": {"message": "Permanent failure", "isRetryable": False}}
+    })
+    assert p.outcome().error is not None
+
+
+@pytest.mark.parametrize("message, kind", [
+    ("request 14012 failed", "harness_error"),
+    ("HTTP 402 Payment Required", "billing"),
+    ("status 401 unauthorized", "auth"),
+])
+def test_classify_error_with_boundaries(message, kind):
+    """classify_error should use word boundaries for error codes."""
+    assert classify_error(message) == kind

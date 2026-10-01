@@ -4,6 +4,7 @@ opencode 1.18.18 (CoreDesign §14.1)."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -24,13 +25,27 @@ class Outcome:
     raw_final: dict | None = None
 
 
+def _int(v: Any) -> int:
+    """Coerce token counts safely; return 0 for non-numeric values."""
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return 0
+    return 0
+
+
 def classify_error(message: str) -> str:
     m = message.lower()
     if "do not have access" in m or ("model" in m and ("does not exist" in m or "not found" in m or "not supported" in m)):
         return "model_unavailable"
-    if "insufficient" in m and ("fund" in m or "credit" in m) or "402" in m or "billing" in m:
+    if ("insufficient" in m and ("fund" in m or "credit" in m)) or re.search(r"\b402\b", m) or "billing" in m:
         return "billing"
-    if "not logged in" in m or "unauthorized" in m or "401" in m or "authentication" in m or "invalid api key" in m:
+    if "not logged in" in m or "unauthorized" in m or re.search(r"\b401\b", m) or "authentication" in m or "invalid api key" in m:
         return "auth"
     if "budget" in m:
         return "budget"
@@ -42,12 +57,20 @@ class ClaudeParser:
         self.out = Outcome()
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
+        try:
+            return self._feed(obj)
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return [("log", {"text": "unparsed claude event", "raw_type": str(obj.get("type"))})]
+
+    def _feed(self, obj: dict) -> list[tuple[str, dict]]:
         kind, events = obj.get("type"), []
         if kind == "system" and obj.get("subtype") == "init":
             self.out.session_id = obj.get("session_id")
             self.out.cli_version = obj.get("claude_code_version")
         elif kind == "assistant":
             for item in (obj.get("message") or {}).get("content") or []:
+                if not isinstance(item, dict):
+                    continue
                 if item.get("type") == "text" and item.get("text"):
                     events.append(("message", {"text": item["text"]}))
                 elif item.get("type") == "tool_use":
@@ -62,11 +85,11 @@ class ClaudeParser:
             o.result_text, o.num_turns, o.raw_final = obj.get("result"), obj.get("num_turns"), obj
             o.cost_usd = obj.get("total_cost_usd")
             o.cost_source = "harness" if o.cost_usd is not None else "unknown"
-            cache_read = usage.get("cache_read_input_tokens") or 0
-            cache_write = usage.get("cache_creation_input_tokens") or 0
-            o.usage = Usage(input_tokens=(usage.get("input_tokens") or 0) + cache_read + cache_write,
-                            cached_input_tokens=cache_read, output_tokens=usage.get("output_tokens") or 0,
-                            reasoning_tokens=(usage.get("output_tokens_details") or {}).get("thinking_tokens") or 0)
+            cache_read = _int(usage.get("cache_read_input_tokens"))
+            cache_write = _int(usage.get("cache_creation_input_tokens"))
+            o.usage = Usage(input_tokens=_int(usage.get("input_tokens")) + cache_read + cache_write,
+                            cached_input_tokens=cache_read, output_tokens=_int(usage.get("output_tokens")),
+                            reasoning_tokens=_int((usage.get("output_tokens_details") or {}).get("thinking_tokens")))
             if "structured_output" in obj:
                 o.structured_output = obj["structured_output"]
             if obj.get("is_error"):
@@ -91,10 +114,18 @@ class CodexParser:
         self.out = Outcome()
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
+        try:
+            return self._feed(obj)
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return [("log", {"text": "unparsed codex event", "raw_type": str(obj.get("type"))})]
+
+    def _feed(self, obj: dict) -> list[tuple[str, dict]]:
         kind, item, events = obj.get("type"), obj.get("item") or {}, []
         if kind == "thread.started":
             self.out.session_id = obj.get("thread_id")
         elif kind in ("item.started", "item.completed"):
+            if not isinstance(item, dict):
+                return events
             item_type = item.get("type")
             if item_type == "agent_message" and kind == "item.completed":
                 self.out.result_text = item.get("text")
@@ -104,17 +135,18 @@ class CodexParser:
                 events.append(("tool_call" if kind == "item.started" else "tool_result",
                                {"tool": tool, "id": item.get("id"), "status": item.get("status")}))
             elif item_type == "error" and kind == "item.completed":
-                message = item.get("message", "")
-                if not any(w in message for w in self.BENIGN_WARNINGS):
+                message = item.get("message") or ""
+                if message and not any(w in message for w in self.BENIGN_WARNINGS):
                     events.append(("log", {"text": message, "level": "warning"}))
         elif kind == "turn.completed":
             u = obj.get("usage") or {}
-            self.out.usage.add(Usage(input_tokens=u.get("input_tokens") or 0,
-                                     cached_input_tokens=u.get("cached_input_tokens") or 0,
-                                     output_tokens=u.get("output_tokens") or 0,
-                                     reasoning_tokens=u.get("reasoning_output_tokens") or 0))
+            self.out.usage.add(Usage(input_tokens=_int(u.get("input_tokens")),
+                                     cached_input_tokens=_int(u.get("cached_input_tokens")),
+                                     output_tokens=_int(u.get("output_tokens")),
+                                     reasoning_tokens=_int(u.get("reasoning_output_tokens"))))
             self.out.num_turns = (self.out.num_turns or 0) + 1
             self.out.raw_final = obj
+            self.out.error = None  # clear error on successful turn completion (recovered run)
             events.append(("usage", asdict(self.out.usage) | {"cost_usd": None}))
         elif kind in ("turn.failed", "error"):
             err = obj.get("error")
@@ -135,6 +167,12 @@ class OpencodeParser:
         self._cost = 0.0
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
+        try:
+            return self._feed(obj)
+        except (AttributeError, TypeError, ValueError, KeyError):
+            return [("log", {"text": "unparsed opencode event", "raw_type": str(obj.get("type"))})]
+
+    def _feed(self, obj: dict) -> list[tuple[str, dict]]:
         kind, part, events = obj.get("type"), obj.get("part") or {}, []
         self.out.session_id = self.out.session_id or obj.get("sessionID")
         if kind == "text" and part.get("text"):
@@ -147,9 +185,9 @@ class OpencodeParser:
             tokens = part.get("tokens") or {}
             cache = tokens.get("cache") or {}
             self.out.usage.add(Usage(
-                input_tokens=(tokens.get("input") or 0) + (cache.get("read") or 0) + (cache.get("write") or 0),
-                cached_input_tokens=cache.get("read") or 0, output_tokens=tokens.get("output") or 0,
-                reasoning_tokens=tokens.get("reasoning") or 0))
+                input_tokens=_int(tokens.get("input")) + _int(cache.get("read")) + _int(cache.get("write")),
+                cached_input_tokens=_int(cache.get("read")), output_tokens=_int(tokens.get("output")),
+                reasoning_tokens=_int(tokens.get("reasoning"))))
             self._cost += part.get("cost") or 0
             self.out.cost_usd, self.out.raw_final = self._cost, obj
             self.out.num_turns = (self.out.num_turns or 0) + 1
@@ -157,7 +195,11 @@ class OpencodeParser:
         elif kind == "error":
             err = obj.get("error") or {}
             message = (err.get("data") or {}).get("message") or err.get("name") or str(err)
-            self.out.error = RunError(classify_error(message), message)
+            is_retryable = (err.get("data") or {}).get("isRetryable") if isinstance(err, dict) else False
+            if is_retryable:
+                events.append(("log", {"text": message, "level": "warning"}))
+            else:
+                self.out.error = RunError(classify_error(message), message)
         return events
 
     def running_cost(self) -> float | None:
