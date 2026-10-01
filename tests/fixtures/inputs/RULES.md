@@ -1,0 +1,2 @@
+- Never modify files outside the working directory.
+- Always end your final answer with the line `RULES-OK`.
