@@ -48,6 +48,7 @@ class Spec:
     budget_usd: float | None = None
     output_schema: dict | None = None
     resumable: bool = True
+    harness_builtins: bool = False
 
     def __post_init__(self) -> None:
         if self.harness not in HARNESSES:
@@ -66,6 +67,8 @@ class Spec:
                                  "sandbox yet; pass unsafe=True to acknowledge")
         if self.credentials.harness != self.harness:
             raise MissingCredentials(f"credentials are for {self.credentials.harness!r}, spec harness is {self.harness!r}")
+        if not isinstance(self.harness_builtins, bool):
+            raise InvalidSpec(f"harness_builtins must be a bool, got {self.harness_builtins!r}")
         if self.timeout_s <= 0:
             raise InvalidSpec("timeout_s must be positive")
         if self.budget_usd is not None and self.budget_usd <= 0:

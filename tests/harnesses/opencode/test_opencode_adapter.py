@@ -20,7 +20,8 @@ def test_opencode_home_layout_env_and_argv(tmp_path, make_spec, inputs, workdir)
     assert cfg["instructions"] == [(home / "AGENTS.md").as_posix()]
     assert cfg["mcp"]["echo"] == {"type": "local", "enabled": True, "environment": {"ECHO_PREFIX": "phd-echo"},
                                   "command": ["python", (home / "stack" / "mcp" / "echo_server.py").as_posix()]}
-    assert cfg["permission"] == {"edit": "allow", "bash": {"*": "deny"}, "external_directory": "deny"}
+    assert cfg["permission"] == {"edit": "allow", "bash": {"*": "deny"}, "external_directory": "deny",
+                                 "skill": {"customize-opencode": "deny"}}
     assert cfg["autoupdate"] is False
     plugin = (cfg_dir / "plugin" / "phd-hooks.js").read_text(encoding="utf-8")
     assert "tool.execute.before" in plugin and "hook_shim.py" in plugin
@@ -40,7 +41,8 @@ def test_opencode_full_modes_and_user_permission_merge(tmp_path, make_spec, inpu
     full = materialize_spec(make_spec("opencode", project_config="full", autonomy="full", unsafe=True),
                        inputs, run_id="a", run_dir=tmp_path / "a")
     assert "OPENCODE_DISABLE_PROJECT_CONFIG" not in full.env and full.argv[-1] == "--auto"
-    assert json.loads((full.home / "config" / "opencode.json").read_text(encoding="utf-8"))["permission"] == {"*": "allow"}
+    assert json.loads((full.home / "config" / "opencode.json").read_text(encoding="utf-8"))["permission"] == {
+        "*": "allow", "skill": {"customize-opencode": "deny"}}
 
     allow_echo = materialize_spec(make_spec("opencode", harness_config={"permission": {"bash": {"echo *": "allow"}}}),
                              inputs, run_id="b", run_dir=tmp_path / "b")
@@ -61,3 +63,18 @@ def test_opencode_rejects_output_schema_and_session_hooks(tmp_path, make_spec):
 def test_opencode_resume_argv(make_spec):
     assert get_adapter("opencode").resume_argv(["opencode", "run"], "ses_1", make_spec("opencode")) == \
         ["opencode", "run", "--session", "ses_1"]
+
+
+def _permission(tmp_path, make_spec, inputs, **kw):
+    m = materialize_spec(make_spec("opencode", **kw), inputs, run_id="r", run_dir=tmp_path / "r")
+    return json.loads((m.home / "config" / "opencode.json").read_text(encoding="utf-8"))["permission"]
+
+
+def test_opencode_builtin_skill_denied_by_default(tmp_path, make_spec, inputs):
+    assert _permission(tmp_path, make_spec, inputs)["skill"] == {"customize-opencode": "deny"}
+    full = _permission(tmp_path / "f", make_spec, inputs, autonomy="full", unsafe=True)
+    assert full == {"*": "allow", "skill": {"customize-opencode": "deny"}}
+
+
+def test_opencode_builtin_skill_opt_in_writes_no_deny(tmp_path, make_spec, inputs):
+    assert "skill" not in _permission(tmp_path, make_spec, inputs, harness_builtins=True)

@@ -86,3 +86,30 @@ def test_claude_resume_argv(make_spec):
 def test_get_adapter_unknown():
     with pytest.raises(UnknownHarness):
         get_adapter("gemini")
+
+
+def _settings(tmp_path, make_spec, inputs, **kw):
+    m = materialize_spec(make_spec("claude", **kw), inputs, run_id="r", run_dir=tmp_path / "r")
+    return json.loads((m.home / "settings.json").read_text(encoding="utf-8"))
+
+
+def test_claude_builtins_suppressed_by_default(tmp_path, make_spec, inputs):
+    s = _settings(tmp_path, make_spec, inputs)
+    assert s["disableBundledSkills"] is True
+    assert s["enabledPlugins"] == {"cc-plugin-agents-md@builtin": False, "cc-plugin-telemetry@builtin": False,
+                                   "cc-plugin-plugin-authoring@builtin": False}
+    assert s["permissions"]["deny"] == ["Skill(design)", "Skill(doctor)"]
+    assert "Skill" in s["permissions"]["allow"]
+
+
+def test_claude_builtins_opt_in_writes_no_suppression(tmp_path, make_spec, inputs):
+    s = _settings(tmp_path, make_spec, inputs, harness_builtins=True)
+    assert "disableBundledSkills" not in s and "enabledPlugins" not in s
+    assert "deny" not in s["permissions"]
+
+
+def test_claude_builtins_harness_config_merges_on_top(tmp_path, make_spec, inputs):
+    s = _settings(tmp_path, make_spec, inputs,
+                  harness_config={"permissions": {"deny": ["Bash(rm:*)"]}, "enabledPlugins": {"x@y": True}})
+    assert s["permissions"]["deny"] == ["Skill(design)", "Skill(doctor)", "Bash(rm:*)"]
+    assert s["enabledPlugins"]["x@y"] is True and s["enabledPlugins"]["cc-plugin-telemetry@builtin"] is False

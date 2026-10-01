@@ -188,3 +188,11 @@ def test_claude_host_login_hides_refresh_token(tmp_path):
     f.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-1", "refreshToken": "rt-SECRET"}}))
     c = Credentials.claude_host_login(f)
     assert "rt-SECRET" not in repr(c)
+
+
+def test_harness_builtins_defaults_off_and_must_be_bool(make_spec):
+    assert make_spec("claude").harness_builtins is False
+    assert make_spec("claude", harness_builtins=True).harness_builtins is True
+    for bad in ("yes", 1, None):
+        with pytest.raises(InvalidSpec, match="harness_builtins"):
+            make_spec("claude", harness_builtins=bad)

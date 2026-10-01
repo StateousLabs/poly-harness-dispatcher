@@ -8,6 +8,10 @@ from ...materialize import MaterializeContext, check_supported, opencode_plugin,
 from ...spec import Spec
 from .parser import OpencodeParser
 
+# opencode 1.18.18 hardcodes one built-in skill with no disable switch; denying it through permissions
+# removes it from the model's skill list (Skill.available filters on the agent's permission).
+BUILTIN_SKILLS = ("customize-opencode",)
+
 
 class OpencodeAdapter:
     name = "opencode"
@@ -33,6 +37,8 @@ class OpencodeAdapter:
                 mcp[name] = {"type": "remote", "url": server["url"], "headers": server.get("headers", {}), "enabled": True}
         permission = ({"*": "allow"} if spec.autonomy == "full"
                       else {"edit": "allow", "bash": {"*": "deny"}, "external_directory": "deny"})
+        if not spec.harness_builtins:
+            permission["skill"] = {name: "deny" for name in BUILTIN_SKILLS}
         config = {"$schema": "https://opencode.ai/config.json", "instructions": [(home / "AGENTS.md").as_posix()],
                   "mcp": mcp, "permission": permission, "autoupdate": False}
 

@@ -62,3 +62,18 @@ def test_resume_recalls_context(harness, poisoned_cwd):
     assert second.status is RunStatus.SUCCEEDED, second.error
     assert "ZEBRA-42" in (second.result_text or "")
     assert second.session_id == first.session_id and second.resumed_from == first.run_id
+
+
+KNOWN_BUILTIN_SKILLS = {"claude": ["dataviz", "code-review", "simplify", "loop"],
+                        "codex": ["imagegen", "skill-creator"],
+                        "opencode": ["customize-opencode"]}
+
+
+@pytest.mark.parametrize("harness", HARNESSES)
+def test_only_stack_skills(harness, poisoned_cwd):
+    r = dispatcher(harness, poisoned_cwd).spawn(Inputs(msg="List the names of your skills, nothing else."))
+    assert r.status is RunStatus.SUCCEEDED, (r.error, r.stderr_path)
+    text = (r.result_text or "").lower()
+    assert "demo-notes" in text and "demo-minimal" in text, text
+    leaked = [name for name in KNOWN_BUILTIN_SKILLS[harness] if name in text]
+    assert not leaked, f"harness built-in skills visible: {leaked}\n{text}"

@@ -9,6 +9,12 @@ from ...materialize import MaterializeContext, check_supported, claude_style_blo
 from ...spec import Spec
 from .parser import ClaudeParser
 
+# Claude Code 2.1.287 ships bundled skills plus three builtin plugins. `disableBundledSkills` removes the
+# bundled skills and `enabledPlugins` the plugins; the skills `design` and `doctor` still list but are
+# denied through permissions (verified via the stream-json init event's `skills` / `plugins`).
+BUILTIN_PLUGINS = ("cc-plugin-agents-md@builtin", "cc-plugin-telemetry@builtin", "cc-plugin-plugin-authoring@builtin")
+RESIDUAL_BUILTIN_SKILLS = ("design", "doctor")
+
 
 class ClaudeAdapter:
     name = "claude"
@@ -25,6 +31,10 @@ class ClaudeAdapter:
         write_json(home / "mcp.json", {"mcpServers": servers})
 
         settings: dict = {"permissions": {"allow": ["Skill", *(f"mcp__{name}" for name in servers)]}}
+        if not spec.harness_builtins:
+            settings["disableBundledSkills"] = True
+            settings["enabledPlugins"] = {plugin: False for plugin in BUILTIN_PLUGINS}
+            settings["permissions"]["deny"] = [f"Skill({name})" for name in RESIDUAL_BUILTIN_SKILLS]
         hooks = ctx.hooks()
         if hooks:
             shim = write_runtime(home, run_id=ctx.run_id, run_dir=ctx.run_dir, hooks=hooks)

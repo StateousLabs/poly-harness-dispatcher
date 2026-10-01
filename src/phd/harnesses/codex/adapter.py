@@ -67,8 +67,13 @@ class CodexAdapter:
         if servers:
             config["mcp_servers"] = servers
         foreign = foreign_skills(spec.cwd, spec.project_config, user_home())
+        skills: dict = {}
         if foreign:
-            config["skills"] = {"config": [{"path": p.as_posix(), "enabled": False} for p in foreign]}
+            skills["config"] = [{"path": p.as_posix(), "enabled": False} for p in foreign]
+        if not spec.harness_builtins:
+            skills["bundled"] = {"enabled": False}  # the `.system` skills codex installs into CODEX_HOME on start
+        if skills:
+            config["skills"] = skills
         (home / "config.toml").write_text(_toml.dumps(ctx.merge_harness_config(config)), encoding="utf-8")
 
         hooks = ctx.hooks()

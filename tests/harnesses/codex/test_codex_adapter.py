@@ -82,3 +82,19 @@ def test_codex_resume_argv(make_spec):
 def test_codex_budget_is_a_warning(make_spec):
     warnings = get_adapter("codex").validate(make_spec("codex", budget_usd=1.0))
     assert any("budget_usd" in w for w in warnings)
+
+
+def _config(tmp_path, make_spec, inputs, fake_user_home, **kw):
+    m = materialize_spec(make_spec("codex", **kw), inputs, run_id="r", run_dir=tmp_path / "r")
+    return tomllib.loads((m.home / "config.toml").read_text(encoding="utf-8"))
+
+
+def test_codex_bundled_skills_disabled_by_default(tmp_path, make_spec, inputs, fake_user_home):
+    cfg = _config(tmp_path, make_spec, inputs, fake_user_home)
+    assert cfg["skills"]["bundled"] == {"enabled": False}
+    assert cfg["skills"]["config"]  # foreign-skill disabling still coexists
+
+
+def test_codex_bundled_skills_opt_in_writes_nothing(tmp_path, make_spec, inputs, fake_user_home):
+    cfg = _config(tmp_path, make_spec, inputs, fake_user_home, harness_builtins=True)
+    assert "bundled" not in cfg.get("skills", {})
