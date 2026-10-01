@@ -3,7 +3,7 @@
 Spawn headless AI coding agents — **Claude Code** (`claude -p`), **Codex** (`codex exec`) and
 **OpenCode** (`opencode run`) — from one harness-neutral spec, and get back one normalized result.
 
-> Layer 1 (core spawner) only: runs on the host with **no sandbox**. See `CoreDesign.md`.
+> Layer 1 (core spawner) only: runs on the host with **no sandbox**. See `docs/CoreDesign.md`.
 
 ## Install
 

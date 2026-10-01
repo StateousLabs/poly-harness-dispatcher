@@ -18,3 +18,6 @@ Thumbs.db
 
 # Live test run ledger (kept out of %TEMP% on purpose: codex refuses a temp CODEX_HOME)
 .phd-test-runs/
+
+# Local working notes (plans, specs) — not part of the repo
+docs/superpowers/
