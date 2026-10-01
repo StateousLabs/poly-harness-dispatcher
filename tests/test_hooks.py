@@ -135,3 +135,21 @@ def test_claude_edit_matcher_covers_multiedit(tmp_path):
     block = hooks.claude_style_block("claude", [{"event": "pre_tool", "tool": "edit", "command": "c", "timeout_s": 10}], shim)
     entry = block["PreToolUse"][0]
     assert entry["matcher"] == "Edit|MultiEdit"
+
+
+def test_shim_error_on_non_object_json_pre_tool(tmp_path):
+    guard = tmp_path / "guard.py"
+    guard.write_text(GUARD, encoding="utf-8")
+    command = shell_join([Path(sys.executable).as_posix(), guard.as_posix()])
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": "pre_tool", "tool": None, "command": command, "timeout_s": 10}])
+    result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True,
+                           capture_output=True, input=json.dumps([]))
+    assert result.returncode == 2
+    assert "PHD hook shim error" in result.stderr
+
+
+def test_hook_shim_neutral_tool():
+    from phd import hook_shim
+    assert hook_shim.neutral_tool("mcp__echo") == "mcp:echo"
+    assert hook_shim.neutral_tool("mcp__echo__echo") == "mcp:echo/echo"
