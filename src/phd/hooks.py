@@ -69,6 +69,9 @@ def claude_style_block(harness: str, hooks: list[dict], shim: Path) -> dict:
             # For claude, edit also matches MultiEdit (the shim translates MultiEdit to edit)
             if harness == "claude" and hook["tool"] == "edit":
                 matcher = "Edit|MultiEdit"
+            # Claude Code on Windows runs shell commands via its PowerShell tool, not Bash
+            if harness == "claude" and hook["tool"] == "shell":
+                matcher = "Bash|PowerShell"
             entry["matcher"] = matcher
         block.setdefault(CLAUDE_STYLE_EVENTS[hook["event"]], []).append(entry)
     return block

@@ -29,7 +29,7 @@ def test_claude_home_layout_and_argv(tmp_path, make_spec, inputs, workdir):
 
     settings = json.loads((home / "settings.json").read_text(encoding="utf-8"))
     pre = settings["hooks"]["PreToolUse"][0]
-    assert pre["matcher"] == "Bash" and pre["hooks"][0]["command"].endswith("claude 0")
+    assert pre["matcher"] == "Bash|PowerShell" and pre["hooks"][0]["command"].endswith("claude 0")
     assert "Skill" in settings["permissions"]["allow"] and "mcp__echo" in settings["permissions"]["allow"]
     assert (home / "phd" / "hook_shim.py").is_file()
 

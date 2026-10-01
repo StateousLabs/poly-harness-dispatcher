@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CLAUDE_TO_NEUTRAL = {"Bash": "shell", "Read": "read", "Write": "write", "Edit": "edit",
+CLAUDE_TO_NEUTRAL = {"Bash": "shell", "PowerShell": "shell", "Read": "read", "Write": "write", "Edit": "edit",
                      "MultiEdit": "edit", "WebFetch": "web_fetch", "WebSearch": "web_search"}
 
 

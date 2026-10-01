@@ -130,6 +130,28 @@ def test_shim_error_code_for_post_tool_exit(tmp_path):
     assert result.returncode == 1
 
 
+def test_claude_shell_matcher_covers_powershell(tmp_path):
+    shim = tmp_path / "home" / "phd" / "hook_shim.py"
+    hook = [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 10}]
+    assert hooks.claude_style_block("claude", hook, shim)["PreToolUse"][0]["matcher"] == "Bash|PowerShell"
+    assert hooks.claude_style_block("codex", hook, shim)["PreToolUse"][0]["matcher"] == "Bash"
+
+
+def test_shim_translates_powershell_to_shell(tmp_path):
+    guard = tmp_path / "guard.py"
+    guard.write_text("import json,sys\nopen(sys.argv[1],'w').write(json.dumps(json.load(sys.stdin)))\n",
+                     encoding="utf-8")
+    seen = tmp_path / "seen.json"
+    command = shell_join([Path(sys.executable).as_posix(), guard.as_posix(), seen.as_posix()])
+    shim = hooks.write_runtime(tmp_path / "home", run_id="run-1", run_dir=tmp_path,
+                               hooks=[{"event": "pre_tool", "tool": "shell", "command": command, "timeout_s": 10}])
+    r = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True, capture_output=True,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                                         "tool_input": {"command": "echo hi"}, "cwd": "/w"}))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(seen.read_text(encoding="utf-8"))["tool"] == "shell"
+
+
 def test_claude_edit_matcher_covers_multiedit(tmp_path):
     shim = tmp_path / "home" / "phd" / "hook_shim.py"
     block = hooks.claude_style_block("claude", [{"event": "pre_tool", "tool": "edit", "command": "c", "timeout_s": 10}], shim)

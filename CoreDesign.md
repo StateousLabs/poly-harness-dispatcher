@@ -491,6 +491,7 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 | Cost of resume | $0.033 (haiku) | n/a | $0 |
 
 **Other findings:**
+- Claude Code on Windows runs shell commands through its `PowerShell` tool, not `Bash`; the neutral `shell` hook therefore maps to matcher `Bash|PowerShell` for claude (found by the live contract test, 2026-10-01).
 - Codex refuses to create helper binaries when `CODEX_HOME` is under the system temp dir —
   PHD run dirs must not live in `%TEMP%` / `/tmp`.
 - Claude auto-memory wrote to `<home>/projects/<git-root-key>/memory/` — hermetic (inside the run
