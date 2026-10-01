@@ -173,8 +173,8 @@ def test_structured_output_from_result_text(tmp_path, monkeypatch, make_spec, in
 
 
 def test_stream_overflow_fails_run(tmp_path, monkeypatch, make_spec, inputs):
-    import phd.launcher
-    monkeypatch.setattr(phd.launcher, "STREAM_LIMIT", 1024)
+    import phd.execution.process
+    monkeypatch.setattr(phd.execution.process, "STREAM_LIMIT", 1024)
     stream = tmp_path / "big.jsonl"
     stream.write_text(json.dumps({"type": "x", "pad": "a" * 10240}) + "\n", encoding="utf-8")
     monkeypatch.setenv("FAKE_STREAM", str(stream))
@@ -205,7 +205,7 @@ def test_home_cleanup_failure_is_a_warning(tmp_path, monkeypatch, make_spec, inp
 
     def boom(path):
         raise OSError("file in use")
-    monkeypatch.setattr("phd.dispatcher.robust_rmtree", boom)
+    monkeypatch.setattr("phd.execution.handle.robust_rmtree", boom)
     d = dispatcher(make_spec("claude", resumable=False), tmp_path)
     r = d.spawn(inputs)
     assert r.status is RunStatus.SUCCEEDED and not r.resumable
@@ -230,7 +230,7 @@ async def test_stack_hash_pinned_at_plan_time(tmp_path, monkeypatch, make_spec, 
 
 
 async def test_build_result_failure_still_yields_result(tmp_path, monkeypatch, make_spec, inputs):
-    from phd.dispatcher import RunHandle
+    from phd.execution import RunHandle
 
     def boom(self, *a, **k):
         raise ValueError("bad outcome")

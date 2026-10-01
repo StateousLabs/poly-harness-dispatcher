@@ -7,8 +7,8 @@ import time
 
 from conftest import FAKE_HARNESS, STREAMS
 from helpers import wait_dead
-from phd import launcher
-from phd.launcher import HarnessProcess, child_env
+from phd.execution import process as launcher
+from phd.execution.process import HarnessProcess, child_env
 
 
 def make(tmp_path, stdin="hello"):

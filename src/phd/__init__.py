@@ -1,7 +1,7 @@
 """poly-harness-dispatcher: spawn headless coding agents from one harness-neutral spec."""
 
 from . import runs
-from .dispatcher import Dispatcher, RunHandle
+from .execution import Dispatcher, RunHandle
 from .errors import (CwdNotFound, EmptyTask, HarnessNotInstalled, HookUnsupported, InputNotFound,
                      InvalidRunsRoot, InvalidSpec, MissingCredentials, MissingSecret, ModelNotSupported,
                      NotResumable, PhdError, StackIncompatible, StackInvalid, UnknownHarness,
