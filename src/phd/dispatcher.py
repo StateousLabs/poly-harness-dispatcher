@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
-from ._fs import is_within, robust_rmtree
-from ._shell import resolve_argv
+from ._util.fs import is_within, robust_rmtree
+from ._util.shell import resolve_argv
 from .adapters import get_adapter
 from .adapters.base import MaterializedHome
 from .constants import REDACTED

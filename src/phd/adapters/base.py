@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from .._fs import deep_merge
-from .._shell import shell_join
+from .._util.fs import deep_merge
+from .._util.shell import shell_join
 from ..constants import REDACTED
-from ..placeholders import resolve
+from ..spec.placeholders import resolve
 from ..prompt import Prompt
 from ..spec import Spec
 

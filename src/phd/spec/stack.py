@@ -9,8 +9,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import HARNESSES, NEUTRAL_EVENTS
-from .errors import HookUnsupported, StackIncompatible, StackInvalid
+from ..constants import HARNESSES, NEUTRAL_EVENTS
+from ..errors import HookUnsupported, StackIncompatible, StackInvalid
 
 
 @dataclass(frozen=True)

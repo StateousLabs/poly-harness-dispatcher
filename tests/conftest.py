@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from phd.stack import Stack
+from phd.spec import Stack
 from phd.spec import Credentials, Inputs, Spec
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -7,7 +7,7 @@ from conftest import FIXTURES
 from phd.adapters import get_adapter
 from phd.errors import HookUnsupported, UnsupportedFeature
 from phd.materialize import materialize
-from phd.stack import Stack
+from phd.spec import Stack
 
 
 def test_opencode_home_layout_env_and_argv(tmp_path, make_spec, inputs, workdir):

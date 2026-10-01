@@ -6,7 +6,7 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
-from .errors import HarnessNotInstalled
+from ..errors import HarnessNotInstalled
 
 _NEEDS_QUOTES = re.compile(r"[\s&|<>^()]")
 

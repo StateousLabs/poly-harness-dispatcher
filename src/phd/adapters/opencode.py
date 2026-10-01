@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .._fs import write_json
+from .._util.fs import write_json
 from ..errors import MissingCredentials, UnsupportedFeature
 from ..hooks import check_supported, opencode_plugin, write_runtime
 from ..parsers import OpencodeParser

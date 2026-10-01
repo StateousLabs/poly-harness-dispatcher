@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from phd import _fs, _shell, _toml
+from phd._util import fs as _fs, shell as _shell, toml as _toml
 from phd.errors import HarnessNotInstalled
 
 

@@ -7,7 +7,7 @@ import re
 import subprocess
 from collections.abc import Callable
 
-from ._shell import resolve_argv
+from ._util.shell import resolve_argv
 from .errors import HarnessNotInstalled, ModelNotSupported, UnknownHarness
 
 CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")

@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from phd import hooks
-from phd._shell import shell_join
+from phd._util.shell import shell_join
 from phd.errors import HookUnsupported
-from phd.stack import HookDef
+from phd.spec import HookDef
 
 GUARD = textwrap.dedent('''
     import json, os, sys

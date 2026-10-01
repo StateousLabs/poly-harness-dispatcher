@@ -9,8 +9,7 @@ from .errors import (CwdNotFound, EmptyTask, HarnessNotInstalled, HookUnsupporte
 from .ledger import LocalLedger, ResultSink
 from .models import ModelCatalog
 from .result import Event, RunError, RunResult, RunStatus, Usage
-from .spec import Credentials, Inputs, Spec
-from .stack import HookDef, Stack
+from .spec import Credentials, HookDef, Inputs, Spec, Stack
 
 __version__ = "0.1.0"
 

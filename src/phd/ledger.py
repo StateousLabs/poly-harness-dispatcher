@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from ._fs import write_json
+from ._util.fs import write_json
 from .errors import NotResumable
 from .result import RunResult
 

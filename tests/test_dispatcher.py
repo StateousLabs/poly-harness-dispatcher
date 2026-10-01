@@ -214,7 +214,7 @@ def test_home_cleanup_failure_is_a_warning(tmp_path, monkeypatch, make_spec, inp
 
 
 async def test_stack_hash_pinned_at_plan_time(tmp_path, monkeypatch, make_spec, inputs):
-    from phd.stack import Stack
+    from phd.spec import Stack
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     monkeypatch.setenv("FAKE_SLEEP", "1")
     d = dispatcher(make_spec("claude"), tmp_path)

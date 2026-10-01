@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from .errors import MissingSecret
+from ..errors import MissingSecret
 
 _ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 

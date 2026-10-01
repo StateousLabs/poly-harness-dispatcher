@@ -6,7 +6,7 @@ import pytest
 
 from conftest import FIXTURES
 from phd.errors import HookUnsupported, StackIncompatible, StackInvalid
-from phd.stack import HookDef, Stack
+from phd.spec import HookDef, Stack
 
 
 @pytest.fixture

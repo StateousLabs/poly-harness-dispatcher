@@ -3,11 +3,11 @@ import json
 import pytest
 
 from conftest import FIXTURES
-from phd import placeholders
+from phd.spec import placeholders
 from phd.errors import (CwdNotFound, EmptyTask, InputNotFound, InvalidSpec, MissingCredentials,
                         MissingSecret, StackIncompatible, UnknownHarness, UnsafeAutonomy)
 from phd.spec import Credentials, Inputs
-from phd.stack import Stack
+from phd.spec import Stack
 
 
 def test_env_refs_and_resolve():

@@ -12,10 +12,10 @@ from collections.abc import Iterable
 from importlib import resources
 from pathlib import Path
 
-from ._fs import write_json
-from ._shell import shell_join
+from ._util.fs import write_json
+from ._util.shell import shell_join
 from .errors import HookUnsupported
-from .stack import HookDef
+from .spec import HookDef
 
 CLAUDE_STYLE_EVENTS = {"session_start": "SessionStart", "pre_tool": "PreToolUse",
                        "post_tool": "PostToolUse", "stop": "Stop"}
