@@ -15,3 +15,6 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Live test run ledger (kept out of %TEMP% on purpose: codex refuses a temp CODEX_HOME)
+.phd-test-runs/
