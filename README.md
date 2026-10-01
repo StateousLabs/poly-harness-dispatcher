@@ -46,6 +46,25 @@ Async: `handle = await Dispatcher(spec).start(inputs)`, then `async for ev in ha
 Every run is recorded under `~/.phd/runs/<run_id>/` (`run.json`, `result.json`,
 `events.jsonl`, `stderr.log`, `home/`); query with `phd.runs.list()` / `phd.runs.get(run_id)`.
 
+## Defaults and safety
+
+- `project_config="ignore"`: the repo's `CLAUDE.md` / `AGENTS.md` / project skills are not loaded.
+- `autonomy="restricted"`; `autonomy="full"` bypasses every harness permission check and requires `unsafe=True`.
+- `timeout_s=1800` (covers writing the prompt too); `resumable=True` keeps the run home so `resume()` works.
+- `Dispatcher(spec).plan(inputs)` is a dry run: it writes the run home and returns the `MaterializedHome`
+  (argv, env, stdin, warnings) without launching anything.
+- Hook commands (`hooks/hooks.json`) may use `${stack}`, the run's read-only copy of the stack; it is shell-quoted,
+  so paths with spaces are safe.
+- `Credentials.from_host("claude")` reads `~/.claude/.credentials.json`. On macOS the login lives in the
+  Keychain, so that file is absent: use `Credentials.claude_oauth_token(token)` with a token from `claude setup-token`.
+
+## RunResult
+
+`status` (`succeeded | failed | timed_out | budget_exceeded | cancelled | auth_failed`), `error.kind`
+(`auth`, `model_unavailable`, `billing`, `budget`, `timeout`, `cancelled`, `harness_error`, `harness_crash`,
+`no_result`, `stream_overflow`, `phd_internal`), `result_text`, `cost_usd` with `cost_source`
+(`harness | estimated | unknown`), `usage`, `session_id`, `run_dir`.
+
 ## Tests
 
 ```bash

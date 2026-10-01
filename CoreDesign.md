@@ -506,6 +506,15 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 3. Codex block reason passthrough (`permissionDecision` JSON).
 4. Timeout / kill of `.cmd` process trees on Windows — not yet exercised.
 5. Claude auto-memory switch.
+6. `Credentials.openai_api_key` and the `Credentials.*_from_env()` constructors.
+7. claude restricted-mode "deny rules outside cwd".
+8. model catalogue cache per CLI version (today it is per `ModelCatalog` instance).
+9. `validate="probe"`.
+10. `cli_version` for codex and opencode (always `None` today).
+11. stripping non-prefixed provider keys (`*_API_KEY`, `GITHUB_TOKEN`) from the child environment.
+12. non-`PhdError` pre-launch errors (undecodable brief/identity files, `nan` `timeout_s`).
+13. run-dir pruning.
+14. resume cwd/model mismatch check.
 
 ---
 
