@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "echo": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${stack}/mcp/echo_server.py"],
+      "env": { "ECHO_PREFIX": "${env:ECHO_PREFIX}" }
+    }
+  }
+}

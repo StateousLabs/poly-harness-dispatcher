@@ -1,0 +1,5 @@
+{
+  "hooks": [
+    { "event": "pre_tool", "match": { "tool": "shell" }, "command": "python ${stack}/hooks/guard.py", "timeout_s": 10 }
+  ]
+}
