@@ -551,8 +551,20 @@ Claude-style `permissionDecision` JSON on stdout [verify].
 - Prompt-safety lesson for live tests: a trailing `.` after a shell command in a prompt was read
   as part of the command (`rm -rf ./x .`). Test commands go in code spans with nothing after.
 
+**Built-in harness skills — closed (2026-10-01).** A PHD agent's skills come only from its stack unless
+`Spec(harness_builtins=True)`. Default `False`; each adapter suppresses its harness's own skills:
+
+| Harness | Mechanism (verified) | Residual |
+|---|---|---|
+| claude 2.1.287 | `settings.json`: `disableBundledSkills: true`, `enabledPlugins` = the three `cc-plugin-*@builtin` set `false`, `permissions.deny` = `Skill(design)`, `Skill(doctor)`. Init event: 21 skills + 3 plugins -> 4 skills (stack's 2 + design, doctor), 0 plugins | `design` and `doctor` have no switch: they still list but cannot be invoked |
+| codex 0.147.0 | `config.toml`: `[skills.bundled] enabled = false` (found in the binary's `SkillsConfig`; accepted by `--strict-config`). Model lists 7 skills -> only the stack's 2; `skills/.system` is no longer installed. Path-based `skills.config` entries for `.system/*` were not needed | none |
+| opencode 1.18.18 | `customize-opencode` is hardcoded into `Skill.state` with no disable switch (`OPENCODE_DISABLE_*SKILLS` do not touch it). `permission.skill = {"customize-opencode": "deny"}` removes it from the model's list (`Skill.available` filters denied skills). Model lists 3 -> 2 | `opencode debug skill` still enumerates it (registry, not the model's view) |
+
+All three constants (`BUILTIN_PLUGINS`/`RESIDUAL_BUILTIN_SKILLS`, `BUILTIN_SKILLS`) carry the CLI version
+they were verified against; re-check them on CLI upgrades.
+
 **Still open:**
-1. Built-in harness skills: disable (codex `skills.config`, others [verify]) or accept and record.
+1. ~~Built-in harness skills~~ — closed, see "Built-in harness skills" above.
 2. OpenCode `session_start` / `stop` hook events; OpenCode structured output.
 3. Codex block reason passthrough (`permissionDecision` JSON).
 4. Timeout / kill of `.cmd` process trees on Windows — not yet exercised.

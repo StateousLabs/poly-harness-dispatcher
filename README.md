@@ -49,6 +49,9 @@ Every run is recorded under `~/.phd/runs/<run_id>/` (`run.json`, `result.json`,
 ## Defaults and safety
 
 - `project_config="ignore"`: the repo's `CLAUDE.md` / `AGENTS.md` / project skills are not loaded.
+- `harness_builtins=False`: the agent sees only its stack's skills. Claude's bundled skills and builtin plugins,
+  codex's `.system` skills and opencode's `customize-opencode` are suppressed (claude's `design` and `doctor` still
+  list but are denied). Pass `harness_builtins=True` to keep the harness defaults.
 - `autonomy="restricted"`; `autonomy="full"` bypasses every harness permission check and requires `unsafe=True`.
 - `timeout_s=1800` (covers writing the prompt too); `resumable=True` keeps the run home so `resume()` works.
 - `Dispatcher(spec).plan(inputs)` is a dry run: it writes the run home and returns the `MaterializedHome`
