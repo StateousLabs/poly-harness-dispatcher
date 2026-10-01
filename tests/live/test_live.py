@@ -19,7 +19,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 RUNS = ROOT / ".phd-test-runs"  # not under %TEMP%: codex refuses a temp CODEX_HOME
 MODELS = {"claude": os.environ.get("PHD_LIVE_CLAUDE_MODEL", "haiku"),
           "codex": os.environ.get("PHD_LIVE_CODEX_MODEL", "gpt-5.6-terra"),
-          "opencode": os.environ.get("PHD_LIVE_OPENCODE_MODEL", "opencode/big-pickle")}
+          "opencode": os.environ.get("PHD_LIVE_OPENCODE_MODEL", "opencode/space-bunny-free")}
 ALLOW_ECHO = {"claude": {"permissions": {"allow": ["Bash(echo:*)"]}}, "codex": {},
               "opencode": {"permission": {"bash": {"echo *": "allow"}}}}
 HARNESSES = ["claude", "codex", "opencode"]
