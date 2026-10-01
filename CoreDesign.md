@@ -187,13 +187,13 @@ src/phd/
   _util/             fs.py, toml.py, shell.py: stdlib-only helpers, no phd imports except errors
   spec/              what to run: Spec, Inputs, Credentials, Stack, HookDef, placeholders
   harnesses/         one sub-package per CLI
-    __init__.py        get_adapter() registry
+    __init__.py        get_adapter() registry, ModelCatalog, Outcome (public surface)
     base.py            Adapter / StreamParser protocols
     outcome.py         Outcome, classify_error, shared parser helpers
     catalog.py         ModelCatalog (dispatches to each harness's models.py)
     claude/ codex/ opencode/   adapter.py, parser.py, models.py each
   materialize/       the pure step: write a run's isolated home, run nothing
-    __init__.py        materialize()
+    __init__.py        materialize(adapter, spec, inputs, ...) and the package's public surface
     context.py         MaterializeContext, MaterializedHome, SECRET_ENV
     prompt.py          prompt assembly
     hooks/             translate.py (neutral -> native hook config), opencode_plugin.py,
@@ -202,16 +202,21 @@ src/phd/
   results/           model.py (RunResult, Usage, RunError, Event), ledger.py (LocalLedger, ResultSink), runs.py
 ```
 
-Dependency direction (lower depends on nothing above it):
+Dependency order (a package imports only from packages to its left):
 
 ```
-_util  <-  errors, constants  <-  spec, results  <-  materialize, harnesses  <-  execution  <-  phd/__init__
+errors, constants  <-  _util  <-  spec, results  <-  materialize  <-  harnesses  <-  execution  <-  phd/__init__
 ```
 
-`results` depends only on `_util` and `errors`, so `harnesses.outcome` can use `Usage` and `RunError`
-without reaching up. `materialize` and `harnesses` are mutually aware: adapters use
-`materialize.context` and `materialize.hooks`, and `materialize()` looks the adapter up through
-`harnesses.get_adapter` (imported inside the function to keep the import graph acyclic).
+`_util` depends on `errors` (shell.py raises `HarnessNotInstalled`) and on nothing else. `results` depends
+only on `_util` and `errors`, so `harnesses.outcome` can use `Usage` and `RunError` without reaching up.
+`materialize()` takes the adapter as its first argument instead of looking it up, so `materialize` never
+imports `harnesses` at runtime; the adapters import `materialize` (context and hooks), and `execution`
+wires the two together.
+
+Import rule: cross-package imports go through the sub-package's `__init__` (its `__all__`). Reach into a
+submodule only for names that are deliberately not exported (for example `results.model.decide_status`,
+`spec.placeholders.resolve`). Within a package, import the sibling module directly.
 
 Future sprints add sibling packages: `sandbox/` (isolated execution environments), `runner/` (the
 in-sandbox API), `stacks/` (local and remote stack sources) and `auth/`.
