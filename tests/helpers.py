@@ -1,5 +1,8 @@
+import json
 import os
 import time
+
+from conftest import STREAMS
 
 
 def pid_alive(pid: int) -> bool:
@@ -29,3 +32,10 @@ def wait_dead(pid: int, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.1)
     return False
+
+
+def feed_all(parser, name):
+    events = []
+    for line in (STREAMS / name).read_text(encoding="utf-8").splitlines():
+        events += parser.feed(json.loads(line))
+    return events, parser.outcome()
