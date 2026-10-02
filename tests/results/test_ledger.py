@@ -51,3 +51,18 @@ async def test_list_skips_corrupt_results(tmp_path):
         _, bad = ledger.allocate()
         (bad / "result.json").write_text(body, encoding="utf-8")
     assert [r.run_id for r in ledger.list()] == [rid]
+
+
+async def test_latest_for_session(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    ids = []
+    for started, sid in [("2026-10-01T10:00:00+00:00", "sid"), ("2026-10-01T12:00:00+00:00", "sid"),
+                         ("2026-10-01T11:00:00+00:00", "sid"), ("2026-10-01T13:00:00+00:00", "other")]:
+        rid, d = ledger.allocate()
+        r = result(d, rid, started=started)
+        r.session_id = sid
+        await ledger.put(r)
+        ids.append(rid)
+    assert ledger.latest_for_session("sid").run_id == ids[1]
+    assert ledger.latest_for_session("other").run_id == ids[3]
+    assert ledger.latest_for_session("missing") is None

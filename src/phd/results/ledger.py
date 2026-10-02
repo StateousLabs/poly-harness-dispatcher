@@ -131,3 +131,11 @@ class LocalLedger:
                 continue
             results.append(r)
         return sorted(results, key=lambda r: r.started_at)
+
+    def latest_for_session(self, session_id: str) -> RunResult | None:
+        """Return the most recently started finished run whose `session_id` matches, or `None`.
+
+        Failed runs count: a run that recorded a session id can be resumed whatever its status.
+        """
+        matches = [r for r in self.list() if r.session_id == session_id]
+        return matches[-1] if matches else None
