@@ -68,5 +68,13 @@ def robust_rmtree(path: Path, attempts: int = 5) -> None:
             time.sleep(0.2 * (attempt + 1))
 
 
+def remove_path(path: Path) -> None:
+    """Delete a file, symlink or directory tree; a missing path is fine."""
+    if path.is_dir() and not path.is_symlink():
+        robust_rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
 def is_within(path: Path, parent: Path) -> bool:
     return Path(path).resolve().is_relative_to(Path(parent).resolve())

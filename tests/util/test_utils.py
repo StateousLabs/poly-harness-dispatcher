@@ -109,3 +109,12 @@ def test_write_json_creates_parents_and_ensures_unicode(tmp_path):
     # Verify unicode was preserved (not escaped)
     content = json_path.read_text(encoding="utf-8")
     assert "café" in content
+
+
+def test_remove_path_handles_files_dirs_and_missing(tmp_path):
+    (tmp_path / "d" / "sub").mkdir(parents=True)
+    (tmp_path / "d" / "sub" / "f.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "f.txt").write_text("x", encoding="utf-8")
+    for name in ("d", "f.txt", "missing"):
+        _fs.remove_path(tmp_path / name)
+    assert list(tmp_path.iterdir()) == []

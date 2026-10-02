@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .._util.fs import remove_path
 from ..spec import Inputs, Spec
 from .context import MaterializeContext, MaterializedHome
 from .hooks import check_supported, claude_style_block, opencode_plugin, write_runtime
@@ -13,9 +14,20 @@ if TYPE_CHECKING:
     from ..harnesses import Adapter
 
 
-def materialize(adapter: "Adapter", spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path) -> MaterializedHome:
-    home = run_dir / "home"
-    home.mkdir(parents=True)
+def materialize(adapter: "Adapter", spec: Spec, inputs: Inputs, *, run_id: str, run_dir: Path,
+                home: Path | None = None) -> MaterializedHome:
+    """Write the run home for `spec` + `inputs` and return the launch description.
+
+    With `home=None` a fresh `<run_dir>/home` is created. With an existing `home` (a resumed session's), every
+    PHD-owned path in it (`stack/`, `phd/` and `adapter.owned_paths(home)`) is deleted and written again from
+    `spec`, so removed skills or hooks disappear; everything else (the harness's session data) is left alone.
+    """
+    if home is None:
+        home = run_dir / "home"
+        home.mkdir(parents=True)
+    else:
+        for path in [home / "stack", home / "phd", *adapter.owned_paths(home)]:
+            remove_path(path)
     stack_dir = home / "stack"  # read-only copy so ${stack} paths outlive the source stack
     shutil.copytree(spec.stack.root, stack_dir)
     prompt = assemble(spec.stack.identity, inputs, spec.cwd, spec.project_config)

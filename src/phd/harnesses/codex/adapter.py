@@ -93,6 +93,11 @@ class CodexAdapter:
         argv.append("-")  # prompt on stdin
         return argv, {"CODEX_HOME": str(home), **self.credential_env(spec, home)}
 
+    def owned_paths(self, home: Path) -> list[Path]:
+        """Everything `materialize` writes under `home`; the rest (sessions/, *.sqlite, logs) is codex's."""
+        return [home / "skills", home / "AGENTS.md", home / "config.toml", home / "hooks.json",
+                home / "output-schema.json", home / "auth.json"]
+
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
         if c.kind != "codex_auth_file":

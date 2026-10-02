@@ -61,6 +61,12 @@ class OpencodeAdapter:
             argv.append("--auto")
         return argv, env
 
+    def owned_paths(self, home: Path) -> list[Path]:
+        """Everything `materialize` writes under `home`; the rest (data/, state/, and whatever opencode installs
+        into config/) is opencode's."""
+        cfg_dir = home / "config"
+        return [cfg_dir / "skills", cfg_dir / "plugin" / "phd-hooks.js", cfg_dir / "opencode.json", home / "AGENTS.md"]
+
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
         if c.kind != "opencode_auth_file":

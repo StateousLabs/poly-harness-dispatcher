@@ -56,6 +56,10 @@ class ClaudeAdapter:
         env = {"CLAUDE_CONFIG_DIR": str(home), "DISABLE_AUTOUPDATER": "1", **self.credential_env(spec, home)}
         return argv, env
 
+    def owned_paths(self, home: Path) -> list[Path]:
+        """Everything `materialize` writes under `home`; the rest (projects/, sessions, .claude.json) is Claude's."""
+        return [home / "skills", home / "system-prompt.md", home / "mcp.json", home / "settings.json"]
+
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
         if c.kind == "claude_oauth_token":
