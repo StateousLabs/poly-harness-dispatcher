@@ -81,9 +81,11 @@ class Dispatcher:
         """Dry run: allocate a run directory and write the run home, but launch nothing.
 
         Writes the run home and `<run_dir>/run.json` exactly as `start` would. No `result.json` is
-        written, so the run never appears in `LocalLedger.list`. With `session_id` this is a dry run
-        of a resumed turn: the session's home is re-materialized from this spec (as `start` would do)
-        and `argv` carries the harness's resume flag.
+        written, so the run never appears in `LocalLedger.list`. With `session_id` this previews a
+        resumed turn without modifying the session: the session checks run, the session's rules are
+        applied and `argv` carries the harness's resume flag for that session, but the files are
+        written into this plan's own `<run_dir>/home`, never into the session's shared home (so `env`
+        points at the preview home, not the session's).
 
         Args:
             inputs: The task.
@@ -99,13 +101,14 @@ class Dispatcher:
             NotResumable: `session_id` cannot be continued (see `start`).
             UnsupportedFeature: `session_id` together with `inputs.rules`.
         """
-        return self._plan(inputs, session_id)[0]
+        return self._plan(inputs, session_id, dry_run=True)[0]
 
-    def _plan(self, inputs: Inputs, session_id: str | None) -> tuple[MaterializedHome, str, str | None]:
+    def _plan(self, inputs: Inputs, session_id: str | None, *,
+              dry_run: bool = False) -> tuple[MaterializedHome, str, str | None]:
         prev = self._find_session(inputs, session_id) if session_id is not None else None
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
-        home = Path(prev.home_dir) if prev else None
+        home = Path(prev.home_dir) if prev and not dry_run else None  # a dry run never touches the session
         rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # the session's rules
         m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
                         rules_text=rules_text)
@@ -127,18 +130,40 @@ class Dispatcher:
         prev = self.ledger.latest_for_session(session_id)
         if prev is None:
             raise NotResumable(f"no finished run with session {session_id!r} in {self.ledger.root}")
-        if not (self.ledger.root / prev.run_id / "run.json").is_file():
-            raise NotResumable(f"session {session_id!r}: run {prev.run_id} has no run.json (its rules are unknown)")
         if prev.harness != self.spec.harness:
             raise NotResumable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
                                f"this dispatcher runs {self.spec.harness!r}")
-        if not Path(prev.home_dir).is_dir():
-            raise NotResumable(f"session {session_id!r}: run home {prev.home_dir} no longer exists "
+        home = Path(prev.home_dir)
+        self._check_home_contained(session_id, home)
+        if not home.is_dir():
+            raise NotResumable(f"session {session_id!r}: run home {home} no longer exists "
                                "(resumable=False or cleaned up)")
+        self._check_no_links(session_id, home)
         if Path(prev.cwd) != self.spec.cwd:
             raise NotResumable(f"session {session_id!r} ran in cwd {prev.cwd}; this spec's cwd is {self.spec.cwd} "
                                "(harnesses key sessions by directory)")
+        if not (self.ledger.root / prev.run_id / "run.json").is_file():
+            raise NotResumable(f"session {session_id!r}: run {prev.run_id} has no run.json (its rules are unknown)")
         return prev
+
+    def _check_home_contained(self, session_id: str, home: Path) -> None:
+        """`home_dir` comes from a result.json; only accept `<ledger root>/<run_id>/home` of a run in this ledger,
+        since resuming deletes PHD-owned paths under it."""
+        if _is_link(home):
+            raise NotResumable(f"session {session_id!r}: run home {home} is a symlink or junction")
+        resolved = home.resolve()
+        if (resolved.name != "home" or resolved.parent.parent != self.ledger.root
+                or not (resolved.parent / "run.json").is_file()):
+            raise NotResumable(f"session {session_id!r}: run home {home} is not a run home in {self.ledger.root}")
+
+    def _check_no_links(self, session_id: str, home: Path) -> None:
+        """Refuse owned paths (or their parents inside the home) that are links, so no deletion leaves the home."""
+        for owned in [home / "stack", home / "phd", *self.adapter.owned_paths(home)]:
+            p = owned
+            while p != home:
+                if _is_link(p):
+                    raise NotResumable(f"session {session_id!r}: {p} is a symlink or junction")
+                p = p.parent
 
     async def start(self, inputs: Inputs, *, session_id: str | None = None) -> RunHandle:
         """Materialize and launch a run; return as soon as the process has started.
@@ -206,6 +231,10 @@ class Dispatcher:
                 "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
                 "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home),
                 "rules_text": m.rules_text}
+
+
+def _is_link(path: Path) -> bool:
+    return path.is_symlink() or path.is_junction()
 
 
 def _run_sync(coro):

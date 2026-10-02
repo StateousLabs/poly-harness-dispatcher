@@ -111,6 +111,29 @@ def test_write_json_creates_parents_and_ensures_unicode(tmp_path):
     assert "café" in content
 
 
+def test_remove_path_read_only_file(tmp_path):
+    import stat
+    f = tmp_path / "ro.json"
+    f.write_text("x", encoding="utf-8")
+    os.chmod(f, stat.S_IREAD)
+    _fs.remove_path(f)
+    assert not f.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows-only")
+def test_remove_path_removes_a_junction_not_its_target(tmp_path):
+    import _winapi
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_path / "home" / "skills"
+    link.parent.mkdir()
+    _winapi.CreateJunction(str(target), str(link))
+    assert link.is_junction()
+    _fs.remove_path(link)
+    assert not os.path.lexists(link) and (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
 def test_remove_path_handles_files_dirs_and_missing(tmp_path):
     (tmp_path / "d" / "sub").mkdir(parents=True)
     (tmp_path / "d" / "sub" / "f.txt").write_text("x", encoding="utf-8")

@@ -55,7 +55,8 @@ class MaterializedHome:
     Attributes:
         run_id: The allocated run id.
         run_dir: `<runs_root>/<run_id>`.
-        home: `<run_dir>/home`, the harness's isolated config home.
+        home: The harness's isolated config home: `<run_dir>/home` for a fresh run (and for
+            `plan`); on a resumed turn, the session's shared home.
         argv: The harness command line (argv[0] is the bare CLI name, resolved on PATH at launch).
         env: Variables PHD sets for the child (config home, credentials); excluded from `repr()`.
         stdin: The first user message.

@@ -90,7 +90,7 @@ sequenceDiagram
     U->>D: start(inputs, session_id=sid) / spawn(inputs, session_id=sid)
     D->>D: inputs.rules set? → UnsupportedFeature (nothing written)
     D->>L: latest_for_session(sid) → previous RunResult (latest started_at)
-    D->>D: found? same harness? home_dir exists? same cwd? (else NotResumable, nothing written)
+    D->>D: found? same harness? home inside this ledger, no links? exists? same cwd? run.json? (else NotResumable, nothing written)
     D->>L: allocate() → new run_id, run_dir (no home/ of its own)
     D->>M: materialize(..., home=previous.home_dir)
     M->>M: delete PHD-owned paths in the home, write them again from the new Spec
@@ -99,16 +99,18 @@ sequenceDiagram
     D->>D: launch in spec.cwd with the shared home, stdin = first message from inputs
 ```
 
-Checks, all made before anything is written:
+Checks, in this order, all made before anything is written:
 
 | Check | Why | If it fails |
 |---|---|---|
 | `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
 | a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status | `NotResumable` ("no finished run with session") |
 | that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
+| its `home_dir` is `<runs_root>/<run_id>/home` of a run in this ledger (resolved; the run dir has a `run.json`) and not a symlink or junction | `home_dir` is read from `result.json`, and resuming deletes PHD-owned paths under it | `NotResumable` ("is not a run home", "is a symlink or junction") |
 | its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
+| no PHD-owned path in the home (or a parent of one inside it) is a symlink or junction | deletion must never leave the home | `NotResumable` ("is a symlink or junction") |
 | its `cwd` is `spec.cwd` | claude keys sessions by working directory | `NotResumable` ("ran in cwd") |
-| its `run.json` exists | it carries the session's `rules_text` | `NotResumable` ("has no run.json") |
+| the session run's `run.json` exists | it carries the session's `rules_text` | `NotResumable` ("has no run.json") |
 
 Details:
 
@@ -130,8 +132,9 @@ Details:
   (`name@version`) differs from the previous run's, the result gets a warning; the turn still runs.
 - A resumed run never deletes the shared home, even if `Spec.resumable` is `False` (and its `resumable` is `True`
   whenever it has a session id). A fresh run with `resumable=False` still deletes its home, ending the chain.
-- `plan(inputs, session_id=...)` is a dry run of a resumed turn: it re-materializes the shared home the same way,
-  but launches nothing.
+- `plan(inputs, session_id=...)` previews a resumed turn without modifying the session: the checks run, the
+  session's rules are applied and `argv` carries the resume flag, but everything is written into the plan's own
+  `<run_dir>/home`; the shared home is never touched (so the preview's `env` points at the preview home).
 
 ### What a resumed turn reuses vs takes from the new Spec
 

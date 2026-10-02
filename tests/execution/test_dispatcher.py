@@ -178,9 +178,14 @@ def test_resume_needs_the_run_record(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     d = dispatcher(make_spec("claude"), tmp_path)
     first = d.spawn(inputs)
-    (Path(first.run_dir) / "run.json").unlink()
-    with pytest.raises(NotResumable, match="run.json"):
+    with pytest.raises(NotResumable, match="not a run home"):  # the home's own run dir must hold a run.json
+        (Path(first.run_dir) / "run.json").rename(Path(first.run_dir) / "run.json.bak")
         d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    (Path(first.run_dir) / "run.json.bak").rename(Path(first.run_dir) / "run.json")
+    second = d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    (Path(second.run_dir) / "run.json").unlink()  # the latest turn carries the session's rules_text
+    with pytest.raises(NotResumable, match="has no run.json"):
+        d.spawn(Inputs(msg="again"), session_id=first.session_id)
 
 
 def test_codex_resume_command(tmp_path, monkeypatch, make_spec, inputs, echo, workdir):
@@ -246,15 +251,122 @@ def test_resumed_run_never_deletes_the_shared_home(tmp_path, monkeypatch, make_s
     assert r.status is RunStatus.SUCCEEDED and Path(first.home_dir).is_dir() and r.resumable
 
 
-def test_plan_a_resumed_turn(tmp_path, monkeypatch, make_spec, inputs, echo):
+def _snapshot(root):
+    return sorted((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in Path(root).rglob("*"))
+
+
+def test_plan_a_resumed_turn_never_touches_the_session(tmp_path, monkeypatch, make_spec, inputs, echo):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     d = dispatcher(make_spec("claude"), tmp_path)
     first = d.spawn(inputs)
+    before = _snapshot(first.home_dir)
     m = d.plan(Inputs(msg="next"), session_id=first.session_id)
-    assert str(m.home) == first.home_dir and m.argv[-2:] == ["--resume", "sess-claude-1"]
-    assert m.stdin == "# Message\n\nnext\n" and len(echo()) == 1
+    assert _snapshot(first.home_dir) == before
+    assert m.home == m.run_dir / "home" and str(m.home) != first.home_dir
+    assert m.argv[-2:] == ["--resume", "sess-claude-1"] and m.stdin == "# Message\n\nnext\n" and len(echo()) == 1
+    assert "RULES-OK" in (m.home / "system-prompt.md").read_text(encoding="utf-8")  # session rules applied
     record = json.loads((m.run_dir / "run.json").read_text(encoding="utf-8"))
-    assert record["resumed_from"] == first.run_id and record["home"] == first.home_dir
+    assert record["resumed_from"] == first.run_id and record["session_id"] == "sess-claude-1"
+
+
+def _run_dirs(tmp_path):
+    return sorted((tmp_path / "runs").iterdir())
+
+
+def test_tampered_home_dir_is_refused(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "settings.json").write_text("mine", encoding="utf-8")
+    (decoy / "auth.json").write_text("secret", encoding="utf-8")
+    (decoy / "skills").mkdir()
+    result_path = Path(first.run_dir) / "result.json"
+    data = json.loads(result_path.read_text(encoding="utf-8")) | {"home_dir": str(decoy)}
+    result_path.write_text(json.dumps(data), encoding="utf-8")
+    before, decoy_before = _run_dirs(tmp_path), _snapshot(decoy)
+    with pytest.raises(NotResumable, match="not a run home"):
+        d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert _snapshot(decoy) == decoy_before and _run_dirs(tmp_path) == before
+    assert (decoy / "settings.json").read_text(encoding="utf-8") == "mine"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows-only")
+def test_junction_in_the_home_is_refused(tmp_path, monkeypatch, make_spec, inputs):
+    import _winapi
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    target = tmp_path / "precious"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    skills = Path(first.home_dir) / "skills"
+    shutil.rmtree(skills)
+    _winapi.CreateJunction(str(target), str(skills))
+    with pytest.raises(NotResumable, match="symlink or junction"):
+        d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_failed_run_with_a_session_is_resumable(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    monkeypatch.setenv("FAKE_EXIT", "3")
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    assert first.status is RunStatus.FAILED and first.session_id == "sess-claude-1"
+    monkeypatch.delenv("FAKE_EXIT")
+    r = d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert r.status is RunStatus.SUCCEEDED and r.resumed_from == first.run_id
+
+
+def test_refused_resumes_write_nothing(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    first = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    before, home_before = _run_dirs(tmp_path), _snapshot(first.home_dir)
+    with pytest.raises(NotResumable, match="belongs to"):
+        dispatcher(make_spec("opencode"), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    with pytest.raises(NotResumable, match="ran in cwd"):
+        dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    assert _run_dirs(tmp_path) == before and _snapshot(first.home_dir) == home_before
+    # a fresh resumable=False run reporting the same session id becomes its latest run, and deletes its home
+    gone = dispatcher(make_spec("claude", resumable=False), tmp_path).spawn(Inputs(msg="x"))
+    before = _run_dirs(tmp_path)
+    with pytest.raises(NotResumable, match="no longer exists"):
+        dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id=gone.session_id)
+    assert _run_dirs(tmp_path) == before
+
+
+def test_opencode_resume_argv(tmp_path, monkeypatch, make_spec, inputs, echo):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "opencode_ok.jsonl"))
+    d = dispatcher(make_spec("opencode"), tmp_path)
+    first = d.spawn(inputs)
+    d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert first.session_id and echo()[1]["argv"][-2:] == ["--session", first.session_id]
+
+
+def test_codex_auth_is_refreshed_on_resume(tmp_path, monkeypatch, make_spec, inputs, credentials):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "codex_ok.jsonl"))
+    d = dispatcher(make_spec("codex"), tmp_path)
+    first = d.spawn(inputs)
+    credentials["codex"].path.write_text('{"tokens": {"access_token": "rotated"}}', encoding="utf-8")
+    d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert "rotated" in (Path(first.home_dir) / "auth.json").read_text(encoding="utf-8")
+
+
+def test_read_only_owned_file_is_replaced(tmp_path, monkeypatch, make_spec, inputs):
+    import os
+    import stat
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    settings = Path(first.home_dir) / "settings.json"
+    os.chmod(settings, stat.S_IREAD)
+    spec = make_spec("claude", harness_config={"env": {"PHD_TEST": "2"}})
+    dispatcher(spec, tmp_path).spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert json.loads(settings.read_text(encoding="utf-8"))["env"] == {"PHD_TEST": "2"}
 
 
 def test_auth_failure_status(tmp_path, monkeypatch, make_spec, inputs):

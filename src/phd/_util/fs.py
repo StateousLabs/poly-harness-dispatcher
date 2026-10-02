@@ -69,11 +69,25 @@ def robust_rmtree(path: Path, attempts: int = 5) -> None:
 
 
 def remove_path(path: Path) -> None:
-    """Delete a file, symlink or directory tree; a missing path is fine."""
-    if path.is_dir() and not path.is_symlink():
+    """Delete a file, symlink, junction or directory tree; a missing path is fine.
+
+    A symlink or junction is removed as a link: its target is never touched. A read-only file is made
+    writable and deleted. Raises `OSError` if the path still exists afterwards."""
+    if path.is_symlink() or path.is_junction():
+        try:
+            path.unlink()
+        except (IsADirectoryError, PermissionError):
+            os.rmdir(path)  # a Windows junction or directory symlink is removed like an empty directory
+    elif path.is_dir():
         robust_rmtree(path)
     else:
-        path.unlink(missing_ok=True)
+        try:
+            path.unlink(missing_ok=True)
+        except PermissionError:
+            os.chmod(path, stat.S_IWRITE)
+            path.unlink(missing_ok=True)
+    if os.path.lexists(path):
+        raise OSError(f"could not remove {path}")
 
 
 def is_within(path: Path, parent: Path) -> bool:

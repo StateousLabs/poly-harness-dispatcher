@@ -15,14 +15,16 @@ Validates the spec against its harness (hooks, features, model, codex runs root)
 | `.plan(inputs, *, session_id=None) -> MaterializedHome` | dry run: write the run home and `run.json`, launch nothing |
 | `await .start(inputs, *, session_id=None) -> RunHandle` | materialize and launch; returns once the process has started |
 | `.spawn(inputs, *, session_id=None) -> RunResult` | blocking `start` + `wait`; `RuntimeError` inside a running event loop |
-
-`session_id` (a previous `RunResult.session_id`) continues that harness session: PHD finds the session's latest
-run in the ledger and re-materializes its home from this dispatcher's `Spec`, keeping the harness's session data.
-The session's original rules are re-applied on every turn; new `Inputs.rules` are not allowed then. See [Run lifecycle](../concepts/run-lifecycle.md#resume).
 | `.spec` | the `Spec` |
 | `.ledger` | the `LocalLedger` at `runs_root` |
 | `.sinks` | `[ledger, *sinks]` |
 | `.warnings` | pre-launch warnings, copied into every run |
+
+`session_id` (a previous `RunResult.session_id`) continues that harness session: PHD finds the session's latest
+run in the ledger and re-materializes its home from this dispatcher's `Spec`, keeping the harness's session data.
+The session's original rules are re-applied on every turn; new `Inputs.rules` are not allowed then. With `plan`,
+`session_id` previews the resumed turn in the plan's own run home without modifying the session. See
+[Run lifecycle](../concepts/run-lifecycle.md#resume).
 
 ### RunHandle
 
