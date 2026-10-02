@@ -69,7 +69,7 @@ sequenceDiagram
 
 | File | Written by | Contents |
 |---|---|---|
-| `run.json` | `Dispatcher` (plan / start) | `run_id`, `harness`, `model`, `cwd`, `argv`, `env` (values of names matching `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET`, `PASSWORD` replaced by `<redacted>`), `stdin` (the full first message), `warnings`, `session_id` (the session being resumed, else `null`), `resumed_from`, `home` |
+| `run.json` | `Dispatcher` (plan / start) | `run_id`, `harness`, `model`, `cwd`, `argv`, `env` (values of names matching `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET`, `PASSWORD` replaced by `<redacted>`), `stdin` (the full first message), `warnings`, `session_id` (the session being resumed, else `null`), `resumed_from`, `home`, `rules_text` (the session's rules block content, or `null`) |
 | `events.jsonl` | `RunHandle` | `{"run_id", "harness", "type", "data", "ts", "raw"}` per line ([events](results-and-events.md#events)) |
 | `stderr.log` | `HarnessProcess` | unfiltered stderr bytes |
 | `result.json` | `LocalLedger.put` | `RunResult.to_dict()` |
@@ -103,11 +103,12 @@ Checks, all made before anything is written:
 
 | Check | Why | If it fails |
 |---|---|---|
-| `inputs.rules` is `None` | rules are part of the system prompt, which the harness (claude) snapshots at session start | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
+| `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
 | a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status | `NotResumable` ("no finished run with session") |
 | that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
 | its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
 | its `cwd` is `spec.cwd` | claude keys sessions by working directory | `NotResumable` ("ran in cwd") |
+| its `run.json` exists | it carries the session's `rules_text` | `NotResumable` ("has no run.json") |
 
 Details:
 
@@ -117,6 +118,11 @@ Details:
   the latest run of the session.
 - The first message is built from `inputs` exactly as for a fresh run (`# Task brief` and/or `# Message`), so a
   resumed turn can carry a brief.
+- **Rules persist for the session's lifetime.** The fresh run that starts a session records its rules block as
+  `rules_text` in `run.json` (the stripped rules file text, or `null`), and every resumed turn copies it forward
+  into its own `run.json`. The system prompt of a resumed turn is the current stack's identity, then the
+  session's rules block, then project context per the new `Spec.project_config`, exactly as a fresh run lays it
+  out. So codex and opencode, which re-read `AGENTS.md` / `instructions` on every launch, behave like claude.
 - `argv` is this materialization's fresh argv plus the harness's resume flag (claude `--resume <sid>`, opencode
   `--session <sid>`; codex rebuilds `codex exec resume <sid> ...` from the fresh flags, without `-C`). Resume flags
   never accumulate along a chain.
@@ -131,14 +137,15 @@ Details:
 
 | Reused from the session | Taken from the new `Spec` (and `Inputs`) |
 |---|---|
-| the harness's session data in the home: claude `projects/`, `.claude.json` and anything else Claude writes; codex `sessions/`, `*.sqlite`, logs; opencode `data/`, `state/` and what it installs under `config/` | everything PHD writes: the stack copy (`home/stack/`), the hook runtime (`home/phd/`, incl. `shim_config.json`), skills, the system-prompt / `AGENTS.md` file (identity and project context), MCP config, `settings.json` / `config.toml` / `opencode.json` (autonomy, permissions, builtin suppression, merged `harness_config`), codex `hooks.json` and `output-schema.json`, opencode's hook plugin, credentials |
-| | the whole argv (model, autonomy flags, budget flag, schema) and env, built fresh |
+| the harness's session data in the home: claude `projects/`, `.claude.json` and anything else Claude writes; codex `sessions/`, `*.sqlite`, logs; opencode `data/`, `state/` and what it installs under `config/` | everything PHD writes: the stack copy (`home/stack/`), the hook runtime (`home/phd/`, incl. `shim_config.json`), skills, the system-prompt / `AGENTS.md` file (identity and project context; the rules block is the session's), MCP config, `settings.json` / `config.toml` / `opencode.json` (autonomy, permissions, builtin suppression, merged `harness_config`), codex `hooks.json` and `output-schema.json`, opencode's hook plugin, credentials |
+| the session's rules (`rules_text`, re-applied to the system prompt) | the whole argv (model, autonomy flags, budget flag, schema) and env, built fresh |
 | | `cwd` (must equal the session's), `timeout_s`, `budget_usd`, `secrets`, `runs_root`, sinks |
 
 PHD-owned directories (skills, `stack/`, `phd/`) are deleted and copied again, so a skill or hook removed from the
 stack disappears; PHD-owned files are overwritten or removed. Nothing else in the home is touched. Rules cannot be
-changed (or re-sent) on a resumed turn: the session keeps the system prompt it started with. What a harness does
-with a changed system-prompt file or `AGENTS.md` mid-session is up to the harness.
+changed on a resumed turn (start a new session for new rules); the session's rules are written back into the
+system prompt every time. A changed identity or project context does take effect in the rewritten file; how a
+harness treats a system prompt that changes mid-session is up to the harness.
 
 Hooks on a resumed turn log to the **new** run: `shim_config.json` is rewritten, so hooks receive the new
 `run_id` and `PHD_RUN_DIR`.

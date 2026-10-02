@@ -76,6 +76,11 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet
   (open item 5).
 - Run directories are never pruned (open item 13).
+- Concurrent resumes of one session are not guarded: two turns started at the same time with the same
+  `session_id` re-materialize the same home under each other, and the harness session itself is not locked.
+- `LocalLedger.latest_for_session` scans every `result.json` in the ledger on each resume; fine at current scale,
+  an index is needed later.
+- Rules files are stored in plain text as `rules_text` in each `run.json` of a session (secrets never are).
 
 ---
 

@@ -18,7 +18,7 @@ Validates the spec against its harness (hooks, features, model, codex runs root)
 
 `session_id` (a previous `RunResult.session_id`) continues that harness session: PHD finds the session's latest
 run in the ledger and re-materializes its home from this dispatcher's `Spec`, keeping the harness's session data.
-`Inputs.rules` is not allowed then. See [Run lifecycle](../concepts/run-lifecycle.md#resume).
+The session's original rules are re-applied on every turn; new `Inputs.rules` are not allowed then. See [Run lifecycle](../concepts/run-lifecycle.md#resume).
 | `.spec` | the `Spec` |
 | `.ledger` | the `LocalLedger` at `runs_root` |
 | `.sinks` | `[ledger, *sinks]` |

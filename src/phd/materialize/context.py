@@ -60,6 +60,7 @@ class MaterializedHome:
         env: Variables PHD sets for the child (config home, credentials); excluded from `repr()`.
         stdin: The first user message.
         warnings: Pre-launch and materialization warnings.
+        rules_text: The rules block in the system prompt (stripped rules file text), or `None`.
     """
 
     run_id: str
@@ -69,6 +70,7 @@ class MaterializedHome:
     env: dict[str, str] = field(repr=False)
     stdin: str
     warnings: list[str]
+    rules_text: str | None = None
 
     def redacted_env(self) -> dict[str, str]:
         """`env` with values of names matching TOKEN, KEY, AUTH_CONTENT, SECRET or PASSWORD replaced by `<redacted>`."""

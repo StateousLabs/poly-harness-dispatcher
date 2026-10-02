@@ -30,3 +30,8 @@ def test_msg_only(stack, workdir):
     assert p.user == "# Message\n\nhi\n"
     assert "## Project rules" not in p.system
 
+
+def test_session_rules_text_replaces_inputs_rules(stack, workdir):
+    p = assemble(stack.identity, Inputs(msg="hi"), workdir, "ignore", rules_text="  SESSION RULES  ")
+    assert p.system.endswith("## Project rules (binding)\n\nSESSION RULES\n") and p.rules == "SESSION RULES"
+    assert assemble(stack.identity, Inputs(msg="hi"), workdir, "ignore").rules is None

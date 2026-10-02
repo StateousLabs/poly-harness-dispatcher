@@ -73,17 +73,15 @@ is the harness's behaviour.
 ## Resumed turns
 
 A turn started with `session_id=` builds its first user message from `Inputs` exactly as a fresh run does
-(`# Task brief` and/or `# Message`; `EmptyTask` if both are missing). `Inputs.rules` is rejected with
-`UnsupportedFeature`: rules belong to the system prompt, which the session fixed when it started (claude snapshots
-it at session start).
+(`# Task brief` and/or `# Message`; `EmptyTask` if both are missing). New `Inputs.rules` are rejected with
+`UnsupportedFeature`: rules belong to the session and last for its lifetime.
 
 The earlier conversation comes from the harness session in the shared run home. The system-prompt file
-(claude `system-prompt.md`, codex and opencode `AGENTS.md`) is rewritten from the resuming `Spec` without rules:
-the identity and, with `project_config="instructions_only"`, the project context. Claude's argv re-passes
-`--append-system-prompt-file`; codex re-reads `$CODEX_HOME/AGENTS.md`; opencode re-reads `instructions` from its
-`opencode.json`. How much of a rewritten file a harness picks up mid-session is harness behaviour; the rules the
-session started with stay in its conversation (CoreDesign §14.2 verified identity and rules on a resumed turn for
-all three harnesses).
+(claude `system-prompt.md`, codex and opencode `AGENTS.md`) is rewritten in the same order as for a fresh run:
+the resuming stack's identity, then the **session's** rules block (the `rules_text` recorded in `run.json` when
+the session started and copied forward on every turn), then, with `project_config="instructions_only"`, the
+project context. Claude's argv re-passes `--append-system-prompt-file`; codex re-reads `$CODEX_HOME/AGENTS.md`;
+opencode re-reads `instructions` from its `opencode.json`; all three therefore see the rules on every turn.
 
 ## Inspecting it
 

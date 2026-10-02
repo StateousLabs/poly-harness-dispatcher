@@ -106,7 +106,9 @@ class Dispatcher:
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
         home = Path(prev.home_dir) if prev else None
-        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home)
+        rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # the session's rules
+        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
+                        rules_text=rules_text)
         warnings = list(self.warnings)
         if prev:
             m.argv = self.adapter.resume_argv(m.argv, session_id, self.spec)
@@ -125,6 +127,8 @@ class Dispatcher:
         prev = self.ledger.latest_for_session(session_id)
         if prev is None:
             raise NotResumable(f"no finished run with session {session_id!r} in {self.ledger.root}")
+        if not (self.ledger.root / prev.run_id / "run.json").is_file():
+            raise NotResumable(f"session {session_id!r}: run {prev.run_id} has no run.json (its rules are unknown)")
         if prev.harness != self.spec.harness:
             raise NotResumable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
                                f"this dispatcher runs {self.spec.harness!r}")
@@ -145,7 +149,9 @@ class Dispatcher:
         MCP servers, hooks, settings and credentials all come from the new spec, while the
         harness's session data in the home is kept. The run gets its own `run_id` and run
         directory; `RunResult.resumed_from` names the run the session was found in. The first
-        message is built from `inputs` as for a fresh run; `inputs.rules` is not allowed.
+        message is built from `inputs` as for a fresh run. The rules the session started with
+        (recorded as `rules_text` in each run's `run.json`) are re-applied to the system prompt on
+        every resumed turn; passing new `inputs.rules` is not allowed.
 
         Args:
             inputs: The task.
@@ -198,7 +204,8 @@ class Dispatcher:
     def _record(self, m: MaterializedHome, *, session_id: str | None, resumed_from: str | None) -> dict:
         return {"run_id": m.run_id, "harness": self.spec.harness, "model": self.spec.model,
                 "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
-                "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home)}
+                "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home),
+                "rules_text": m.rules_text}
 
 
 def _run_sync(coro):

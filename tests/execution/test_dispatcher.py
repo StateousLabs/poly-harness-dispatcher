@@ -136,6 +136,53 @@ def test_resume_other_harness_or_cwd(tmp_path, monkeypatch, make_spec, inputs):
         dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
 
 
+SYSTEM_FILE = {"claude": "system-prompt.md", "codex": "AGENTS.md", "opencode": "AGENTS.md"}
+OK_STREAM = {"claude": "claude_ok.jsonl", "codex": "codex_ok.jsonl", "opencode": "opencode_ok.jsonl"}
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "opencode"])
+def test_resume_reapplies_the_session_rules(harness, tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / OK_STREAM[harness]))
+    d = dispatcher(make_spec(harness), tmp_path)
+    first = d.spawn(inputs)
+    system_file = Path(first.home_dir) / SYSTEM_FILE[harness]
+    system_file.write_text("stale", encoding="utf-8")
+    d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    system = system_file.read_text(encoding="utf-8")
+    assert "HELPER-IDENTITY-OK" in system and "## Project rules (binding)" in system and "RULES-OK" in system
+
+
+def test_rules_text_is_carried_along_the_chain(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    second = d.spawn(Inputs(msg="two"), session_id=first.session_id)
+    third = d.spawn(Inputs(msg="three"), session_id=first.session_id)
+    expected = inputs.rules.read_text(encoding="utf-8").strip()
+    for r in (first, second, third):
+        assert d.ledger.read_record(r.run_id)["rules_text"] == expected
+    assert third.resumed_from == second.run_id
+
+
+def test_resume_of_a_session_without_rules_adds_none(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(Inputs(msg="first"))
+    second = d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    assert "## Project rules" not in (Path(first.home_dir) / "system-prompt.md").read_text(encoding="utf-8")
+    assert d.ledger.read_record(first.run_id)["rules_text"] is None
+    assert d.ledger.read_record(second.run_id)["rules_text"] is None
+
+
+def test_resume_needs_the_run_record(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    (Path(first.run_dir) / "run.json").unlink()
+    with pytest.raises(NotResumable, match="run.json"):
+        d.spawn(Inputs(msg="next"), session_id=first.session_id)
+
+
 def test_codex_resume_command(tmp_path, monkeypatch, make_spec, inputs, echo, workdir):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "codex_ok.jsonl"))
     d = dispatcher(make_spec("codex"), tmp_path)

@@ -55,13 +55,17 @@ def test_self_check_is_hermetic(harness, poisoned_cwd):
 
 @pytest.mark.parametrize("harness", HARNESSES)
 def test_resume_recalls_context(harness, poisoned_cwd):
+    """The resumed turn remembers the conversation and still follows the session's rules (RULES-OK)."""
     d = dispatcher(harness, poisoned_cwd)
-    first = d.spawn(Inputs(msg="Remember this code word for later: ZEBRA-42. Reply with just OK."))
+    first = d.spawn(Inputs(msg="Remember this code word for later: ZEBRA-42. Reply briefly.",
+                           rules=FIXTURES / "inputs" / "RULES.md"))
     assert first.status is RunStatus.SUCCEEDED, first.error
-    second = d.spawn(Inputs(msg="What was the code word I asked you to remember? Reply with just the word."),
+    second = d.spawn(Inputs(msg="What was the code word I asked you to remember? Reply briefly."),
                      session_id=first.session_id)
     assert second.status is RunStatus.SUCCEEDED, second.error
-    assert "ZEBRA-42" in (second.result_text or "")
+    text = second.result_text or ""
+    assert "ZEBRA-42" in text, text
+    assert "RULES-OK" in text, text
     assert second.session_id == first.session_id and second.resumed_from == first.run_id
 
 
