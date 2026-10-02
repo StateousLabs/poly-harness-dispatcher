@@ -10,7 +10,7 @@ def list(**filters) -> builtins.list[RunResult]:  # noqa: A001 - mirrors CoreDes
     """List finished runs in the default ledger (`~/.phd/runs`), oldest first.
 
     Args:
-        **filters: `harness=`, `stack=`, `since=`, as for `LocalLedger.list`.
+        **filters (Any): `harness=`, `stack=`, `since=`, as for `LocalLedger.list`.
 
     Example:
         ```python

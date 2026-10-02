@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local working notes (plans, specs) — not part of the repo
 docs/superpowers/
+
+# MkDocs build output
+site/
