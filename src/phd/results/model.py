@@ -8,6 +8,13 @@ from typing import Any
 
 
 class RunStatus(StrEnum):
+    """Overall outcome of a run. Derived from `RunResult.error`.
+
+    `SUCCEEDED` when there is no error; `CANCELLED`, `TIMED_OUT`, `BUDGET_EXCEEDED` and
+    `AUTH_FAILED` for error kinds `cancelled`, `timeout`, `budget` and `auth`; `FAILED` for
+    every other error kind. Members compare equal to their string values.
+    """
+
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
@@ -18,12 +25,23 @@ class RunStatus(StrEnum):
 
 @dataclass
 class Usage:
+    """Token counts for a run, normalized across harnesses.
+
+    Attributes:
+        input_tokens: All input tokens, *including* cached ones (claude and opencode add cache
+            reads and cache writes to the uncached count).
+        cached_input_tokens: Input tokens served from cache (cache reads).
+        output_tokens: Output tokens.
+        reasoning_tokens: Reasoning / thinking tokens where the harness reports them.
+    """
+
     input_tokens: int = 0  # includes cached input
     cached_input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
 
     def add(self, other: Usage) -> None:
+        """Add `other`'s counts to this one in place."""
         self.input_tokens += other.input_tokens
         self.cached_input_tokens += other.cached_input_tokens
         self.output_tokens += other.output_tokens
@@ -32,6 +50,15 @@ class Usage:
 
 @dataclass
 class RunError:
+    """Why a run did not succeed.
+
+    Attributes:
+        kind: One of `cancelled`, `timeout`, `budget`, `stream_overflow`, `phd_internal`,
+            `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`,
+            `no_result`. See `docs/concepts/results-and-events.md` for precedence.
+        message: Human-readable detail (harness message, or exit code plus scrubbed stderr tail).
+    """
+
     kind: str  # auth | model_unavailable | billing | budget | timeout | cancelled | harness_error | harness_crash | no_result | phd_internal
     message: str
 
@@ -46,6 +73,19 @@ def decide_status(error: RunError | None) -> RunStatus:
 
 @dataclass(frozen=True)
 class Event:
+    """One normalized event from a run, as yielded by `RunHandle.events` and stored in `events.jsonl`.
+
+    Attributes:
+        run_id: The run that produced it.
+        harness: The harness name.
+        type: `run.started`, `message`, `tool_call`, `tool_result`, `usage`, `log` or
+            `run.finished`.
+        data: Type-specific payload (for example `{"text": ...}` for `message`).
+        ts: Unix timestamp (seconds) when PHD emitted the event.
+        raw: The harness JSON line the event came from; `None` for PHD's own events
+            (`run.started`, `run.finished`, and `log` events for non-JSON stdout lines).
+    """
+
     run_id: str
     harness: str
     type: str  # run.started | message | tool_call | tool_result | usage | log | run.finished
@@ -54,11 +94,59 @@ class Event:
     raw: dict | None = None
 
     def to_dict(self) -> dict:
+        """Return the event as a JSON-ready dict (the `events.jsonl` line format)."""
         return asdict(self)
 
 
 @dataclass
 class RunResult:
+    """The normalized outcome of one run, written to `<run_dir>/result.json`.
+
+    Produced for every launched run, whatever happened; a failure is described by `status` and
+    `error`, never raised. Field-by-field reference: `docs/concepts/results-and-events.md`.
+
+    Attributes:
+        run_id: `YYYYmmdd-HHMMSS-<6 hex>`.
+        harness: Harness name.
+        model: `Spec.model`.
+        stack: `"<name>@<version>"`.
+        stack_hash: `Stack.content_hash()` taken when the run was planned (a resumed run keeps
+            the original's).
+        status: Overall outcome.
+        exit_code: Harness exit code, or `None` if unknown.
+        error: Why the run did not succeed, or `None`.
+        result_text: The agent's final text answer, if any.
+        structured_output: The structured answer when `Spec.output_schema` is set (from the
+            harness, else parsed from `result_text` as JSON when possible).
+        cost_usd: Cost reported by the harness, or `None`.
+        cost_source: `"harness"` (claude when it reported `total_cost_usd`; opencode always)
+            or `"unknown"` (codex; claude without a cost; PHD-internal failures). The value
+            `"estimated"` is reserved and never produced today.
+        usage: Token counts.
+        num_turns: Turns reported (claude) or counted (codex `turn.completed`, opencode
+            `step_finish`).
+        duration_ms: Wall-clock time from launch to result.
+        session_id: Harness session/thread id, needed for resume.
+        resumable: `True` when the run home was kept and a session id is known.
+        resumed_from: The previous run id for a resumed run.
+        run_dir: The run directory.
+        home_dir: The run home (shared with the original run on resume).
+        cwd: The agent's working directory.
+        project_config: `Spec.project_config`.
+        autonomy: `Spec.autonomy`.
+        unsafe: `Spec.unsafe`.
+        credential_kind: `Credentials.kind` (never the secret).
+        started_at: ISO 8601 UTC timestamp.
+        finished_at: ISO 8601 UTC timestamp.
+        cli_version: Harness version (claude only today; `None` for codex and opencode).
+        sandbox: Always `None` (no sandbox layer yet).
+        warnings: Pre-launch and materialization warnings, plus sink or cleanup failures.
+        raw_final: The harness's final JSON object (claude `result` line, last codex
+            `turn.completed`, last opencode `step_finish`).
+        events_path: Path of `events.jsonl`.
+        stderr_path: Path of `stderr.log`.
+    """
+
     run_id: str
     harness: str
     model: str
@@ -94,12 +182,14 @@ class RunResult:
     stderr_path: str = ""
 
     def to_dict(self) -> dict:
+        """Return a JSON-ready dict (the `result.json` format); `status` becomes its string."""
         d = asdict(self)
         d["status"] = str(self.status)
         return d
 
     @classmethod
     def from_dict(cls, data: dict) -> RunResult:
+        """Rebuild a `RunResult` from `to_dict()` output (for example a parsed `result.json`)."""
         d = dict(data)
         d["status"] = RunStatus(d["status"])
         d["usage"] = Usage(**d["usage"])

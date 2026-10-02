@@ -28,11 +28,40 @@ def _run_cli(argv: list[str]) -> str:
 
 
 class ModelCatalog:
+    """Checks that a model name exists for a harness before launch.
+
+    Sources: codex runs `codex debug models` (JSON slugs); opencode runs `opencode models`
+    (`provider/model` lines); claude has no catalogue command, so PHD uses built-in aliases
+    (`opus`, `sonnet`, `haiku`, `fable`) and known ids, and accepts any other `claude-*` id with a
+    warning. Loaded lists are cached per instance. A catalogue proves only that a model exists;
+    whether the account may use it shows up after launch as `error.kind="model_unavailable"`.
+
+    Example:
+        ```python
+        cat = ModelCatalog()
+        cat.validate("claude", "sonnet")          # [] (no warnings)
+        cat.models("opencode")                    # runs `opencode models`
+        ```
+    """
+
     def __init__(self, runner: Runner | None = None):
+        """Create an empty catalogue; nothing is loaded until first use.
+
+        Args:
+            runner: Function that runs a CLI argv and returns its stdout. Defaults to a
+                subprocess call with a 60 s timeout; inject one in tests.
+        """
         self._run = runner or _run_cli
         self._cache: dict[str, list[str]] = {}
 
     def models(self, harness: str) -> list[str]:
+        """Return (and cache) the known model names for `harness`.
+
+        Raises:
+            UnknownHarness: `harness` is not supported.
+            HarnessNotInstalled: The CLI is not on PATH (codex / opencode).
+            RuntimeError: The catalogue command failed.
+        """
         if harness not in self._cache:
             self._cache[harness] = self._load(harness)
         return self._cache[harness]
@@ -45,7 +74,23 @@ class ModelCatalog:
         return loader(self._run)
 
     def validate(self, harness: str, model: str) -> list[str]:
-        """Raise ModelNotSupported for an unknown model; otherwise return warnings."""
+        """Check `model` for `harness`; return warnings, raise if it is unknown.
+
+        For codex and opencode, a catalogue that cannot be loaded (CLI missing, command failing,
+        unparsable output, timeout) yields a warning instead of an error.
+
+        Args:
+            harness: Harness name.
+            model: Model name as it would go in `Spec.model`. For claude a context suffix such
+                as `[1m]` is ignored when matching.
+
+        Returns:
+            Warnings (empty when the model is known).
+
+        Raises:
+            ModelNotSupported: The model is not in the catalogue (carries `supported` and a
+                closest-match `hint`).
+        """
         static_check = _STATIC_CHECKS.get(harness)
         if static_check is not None:
             warnings = static_check(model)

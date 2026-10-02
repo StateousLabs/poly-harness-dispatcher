@@ -50,6 +50,18 @@ class MaterializeContext:
 
 @dataclass
 class MaterializedHome:
+    """A written run home, ready to launch (returned by `Dispatcher.plan`).
+
+    Attributes:
+        run_id: The allocated run id.
+        run_dir: `<runs_root>/<run_id>`.
+        home: `<run_dir>/home`, the harness's isolated config home.
+        argv: The harness command line (argv[0] is the bare CLI name, resolved on PATH at launch).
+        env: Variables PHD sets for the child (config home, credentials); excluded from `repr()`.
+        stdin: The first user message.
+        warnings: Pre-launch and materialization warnings.
+    """
+
     run_id: str
     run_dir: Path
     home: Path
@@ -59,4 +71,5 @@ class MaterializedHome:
     warnings: list[str]
 
     def redacted_env(self) -> dict[str, str]:
+        """`env` with values of names matching TOKEN, KEY, AUTH_CONTENT, SECRET or PASSWORD replaced by `<redacted>`."""
         return {k: (REDACTED if SECRET_ENV.search(k) else v) for k, v in self.env.items()}

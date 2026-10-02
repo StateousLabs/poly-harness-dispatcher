@@ -18,9 +18,53 @@ from .handle import RunHandle
 
 
 class Dispatcher:
+    """Runs agents described by one `Spec`: dry runs, fresh runs and resumes.
+
+    Errors that can be detected before launch are raised as `PhdError` subclasses. Anything that
+    goes wrong after the harness starts is returned as data in `RunResult` (`status`, `error`);
+    `spawn`, `resume` and `RunHandle.wait` never raise for a failed run.
+
+    Every run allocates `<runs_root>/<run_id>/` and writes `run.json` there before launch; the
+    result is written to `result.json` and then handed to each extra sink.
+
+    Attributes:
+        spec: The spec this dispatcher runs.
+        ledger: The `LocalLedger` at `runs_root`; always the first sink.
+        sinks: `[ledger, *sinks]`.
+        warnings: Pre-launch warnings (adapter checks and model catalogue); copied into every
+            run's `warnings`.
+
+    Example:
+        ```python
+        d = Dispatcher(spec)
+        result = d.spawn(Inputs(brief="task.md"))          # blocking
+        again = d.resume(result, "now fix the failing test")
+        ```
+    """
+
     def __init__(self, spec: Spec, *, runs_root: str | Path | None = None, sinks: Sequence[ResultSink] = (),
                  catalog: ModelCatalog | None = None, validate_model: bool = True,
                  executables: dict[str, list[str]] | None = None, allow_temp_runs_root: bool = False):
+        """Validate the spec against its harness and prepare the ledger.
+
+        Args:
+            spec: The run description.
+            runs_root: Ledger directory. Defaults to `~/.phd/runs`.
+            sinks: Extra `ResultSink`s that receive every `RunResult` after the local ledger.
+            catalog: Model catalogue to validate against. Defaults to a fresh `ModelCatalog`
+                (which runs `codex debug models` / `opencode models` once).
+            validate_model: Set `False` to skip model validation entirely.
+            executables: Per-harness argv prefix replacing the CLI name, for example
+                `{"claude": ["/opt/claude/bin/claude"]}`. Skips the PATH lookup.
+            allow_temp_runs_root: Allow a codex `runs_root` under the system temp dir.
+
+        Raises:
+            HookUnsupported: A stack hook cannot be expressed for this harness.
+            UnsupportedFeature: The spec uses a feature this harness lacks (opencode
+                `output_schema`).
+            ModelNotSupported: `spec.model` is not in the harness catalogue.
+            InvalidRunsRoot: codex with a `runs_root` under the system temp dir.
+        """
         self.spec = spec
         self.adapter = get_adapter(spec.harness)
         self.ledger = LocalLedger(runs_root)
@@ -35,6 +79,22 @@ class Dispatcher:
 
     # ---- fresh runs
     def plan(self, inputs: Inputs) -> MaterializedHome:
+        """Dry run: allocate a run directory and write the run home, but launch nothing.
+
+        Writes `<run_dir>/home/` and `<run_dir>/run.json` exactly as `start` would. No
+        `result.json` is written, so the run never appears in `LocalLedger.list`.
+
+        Args:
+            inputs: The task.
+
+        Returns:
+            The `MaterializedHome`: `run_id`, `run_dir`, `home`, `argv`, `env` (use
+            `redacted_env()` to print it), `stdin` (the first user message) and `warnings`.
+
+        Raises:
+            MissingCredentials: A credential file cannot be read.
+            MissingSecret: A placeholder has no value in `Spec.secrets`.
+        """
         return self._plan(inputs)[0]
 
     def _plan(self, inputs: Inputs) -> tuple[MaterializedHome, str]:
@@ -46,10 +106,44 @@ class Dispatcher:
         return m, stack_hash
 
     async def start(self, inputs: Inputs) -> RunHandle:
+        """Materialize and launch a run; return as soon as the process has started.
+
+        Args:
+            inputs: The task.
+
+        Returns:
+            A `RunHandle` to stream events from, wait on, or cancel.
+
+        Raises:
+            HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
+            MissingCredentials: A credential file cannot be read.
+            MissingSecret: A placeholder has no value in `Spec.secrets`.
+
+        Example:
+            ```python
+            handle = await d.start(inputs)
+            async for ev in handle.events():
+                print(ev.type, ev.data)
+            result = await handle.wait()
+            ```
+        """
         m, stack_hash = self._plan(inputs)
         return await RunHandle.launch(self, m, resumed_from=None, stack_hash=stack_hash)
 
     def spawn(self, inputs: Inputs) -> RunResult:
+        """Blocking wrapper: `start(inputs)` then `wait()`.
+
+        Args:
+            inputs: The task.
+
+        Returns:
+            The finished `RunResult` (check `status` and `error`).
+
+        Raises:
+            RuntimeError: Called while an event loop is running (for example in Jupyter); use
+                `await start(...)` there.
+            PhdError: Any pre-launch error listed for `start`.
+        """
         return _run_sync(self._spawn(inputs))
 
     async def _spawn(self, inputs: Inputs) -> RunResult:
@@ -57,6 +151,25 @@ class Dispatcher:
 
     # ---- resume
     async def start_resume(self, previous: RunResult | str, msg: str) -> RunHandle:
+        """Continue a previous run's session with a new message.
+
+        The resumed run gets a new `run_id` and run directory but reuses the previous run's
+        home (and so the harness session), its recorded argv and environment, with fresh
+        credentials. Identity and rules come from the session; only `msg` is sent.
+
+        Args:
+            previous: A `RunResult` or a run id in this dispatcher's ledger.
+            msg: The next user message (must not be blank).
+
+        Returns:
+            A `RunHandle` for the resumed run (`resumed_from` is set).
+
+        Raises:
+            NotResumable: Unknown run id; different harness; no session id; run home gone
+                (`resumable=False` or deleted); missing `run.json`.
+            EmptyTask: `msg` is blank.
+            HarnessNotInstalled: The harness CLI is not on PATH.
+        """
         if isinstance(previous, RunResult):
             prev = previous
         else:
@@ -82,6 +195,12 @@ class Dispatcher:
         return await RunHandle.launch(self, m, resumed_from=prev.run_id, stack_hash=prev.stack_hash)
 
     def resume(self, previous: RunResult | str, msg: str) -> RunResult:
+        """Blocking wrapper: `start_resume(previous, msg)` then `wait()`.
+
+        Raises:
+            RuntimeError: Called while an event loop is running.
+            NotResumable: See `start_resume`.
+        """
         return _run_sync(self._resume(previous, msg))
 
     async def _resume(self, previous: RunResult | str, msg: str) -> RunResult:

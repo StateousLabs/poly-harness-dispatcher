@@ -23,6 +23,17 @@ if TYPE_CHECKING:
 
 
 class RunHandle:
+    """One live run. Created by `Dispatcher.start` / `Dispatcher.start_resume`, not directly.
+
+    A background task reads the harness's stdout, turns each line into `Event`s (also appended to
+    `events.jsonl`), builds the `RunResult` when the process exits, and hands it to every sink.
+
+    Attributes:
+        run_id: This run's id.
+        resumed_from: The previous run's id for a resumed run, else `None`.
+        materialized: The `MaterializedHome` that was launched.
+    """
+
     def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None, stack_hash: str):
         self._d = dispatcher
         self._stack_hash = stack_hash
@@ -50,15 +61,30 @@ class RunHandle:
         return handle
 
     async def events(self) -> AsyncIterator[Event]:
+        """Yield normalized events until the run finishes (the last one is `run.finished`).
+
+        Events go through a single queue: each event is delivered to exactly one iterator, so
+        use one consumer. Iterating again after the run has finished yields nothing; read
+        `events.jsonl` (`RunResult.events_path`) for the full record.
+        """
         while (event := await self._queue.get()) is not None:
             yield event
         self._queue.put_nowait(None)  # leave the sentinel for any other / later iterator
 
     async def wait(self) -> RunResult:
+        """Wait for the run to finish and return its `RunResult`. Never raises for a failed run.
+
+        Cancelling the awaiting task does not stop the run (the wait is shielded); use `cancel`.
+        """
         await asyncio.shield(self._task)
         return self._result
 
     async def cancel(self) -> RunResult:
+        """Kill the harness process tree and return the result.
+
+        A run still in progress finishes with status `cancelled`. On a run that has already
+        finished this just returns the existing result.
+        """
         self._cancelled = True
         self._proc.kill_tree()
         return await self.wait()

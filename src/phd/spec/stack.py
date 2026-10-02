@@ -15,17 +15,51 @@ from ..errors import HookUnsupported, StackIncompatible, StackInvalid
 
 @dataclass(frozen=True)
 class HookDef:
+    """One neutral hook from `hooks/hooks.json`.
+
+    Attributes:
+        event: `"session_start"`, `"pre_tool"`, `"post_tool"` or `"stop"`.
+        command: A shell command line. May contain `${stack}` (the run's copy of the stack,
+            shell-quoted) and `${env:NAME}` (from `Spec.secrets`).
+        tool: Neutral tool to match (`"shell"`, `"read"`, `"write"`, `"edit"`, `"web_fetch"`,
+            `"web_search"`, `"mcp:<server>[/<tool>]"`), from the JSON `match.tool`; `None`
+            matches every tool.
+        timeout_s: Seconds the hook command may run. Default 30.
+    """
+
     event: str
     command: str
     tool: str | None = None
     timeout_s: float = 30.0
 
     def as_dict(self) -> dict:
+        """Return the hook as a plain dict with keys `event`, `command`, `tool`, `timeout_s`."""
         return {"event": self.event, "command": self.command, "tool": self.tool, "timeout_s": self.timeout_s}
 
 
 @dataclass(frozen=True)
 class Stack:
+    """A harness-neutral agent: one identity plus skills, MCP servers and hooks.
+
+    Load it from a `config/` directory with `Stack.load`. A stack is read-only: every run copies
+    it into its own run home (`home/stack/`) and builds the harness config from it, so many runs
+    can share one stack. Layout and validation rules: `docs/concepts/stacks.md`.
+
+    Attributes:
+        root: Absolute path of the stack directory.
+        name: `stack.json` `name`.
+        version: `stack.json` `version`.
+        description: `stack.json` `description` (empty if absent).
+        harnesses: `stack.json` `harnesses` compatibility list, or `None` for any harness.
+        default_models: `stack.json` `default_models` (harness -> model). Informational only:
+            PHD never reads it; `Spec.model` is always required.
+        agent_name: File stem of the single `agents/*.md` file.
+        identity: Text of that file; becomes the start of the system prompt.
+        skills: Skill directories under `skills/` (each has a `SKILL.md`), sorted by name.
+        mcp_servers: `.mcp.json` `mcpServers`, unresolved (placeholders intact).
+        hooks: Parsed `hooks/hooks.json` entries.
+    """
+
     root: Path
     name: str
     version: str
@@ -40,10 +74,30 @@ class Stack:
 
     @property
     def ref(self) -> str:
+        """`"<name>@<version>"`; recorded as `RunResult.stack`."""
         return f"{self.name}@{self.version}"
 
     @classmethod
     def load(cls, root: str | Path) -> Stack:
+        """Load and validate a stack directory.
+
+        Args:
+            root: The stack directory (`~` is expanded). Only directories are supported.
+
+        Returns:
+            The loaded stack.
+
+        Raises:
+            StackInvalid: Missing or malformed `stack.json`; not exactly one `agents/*.md`; a
+                skill folder without `SKILL.md`; malformed `.mcp.json` or `hooks/hooks.json`.
+            HookUnsupported: A hook names an event outside the neutral set.
+
+        Example:
+            ```python
+            stack = Stack.load("tests/fixtures/stack")
+            stack.ref            # 'fixture-helper@0.1.0'
+            ```
+        """
         root = Path(root).expanduser().resolve()
         meta = _read_json(root / "stack.json", required=True)
         for key in ("name", "version"):
@@ -97,18 +151,18 @@ class Stack:
                    skills=tuple(skills), mcp_servers=mcp, hooks=hooks)
 
     def check_harness(self, harness: str) -> None:
+        """Raise `StackIncompatible` if `harnesses` is set and excludes `harness`."""
         if self.harnesses is not None and harness not in self.harnesses:
             raise StackIncompatible(f"stack {self.ref} supports {list(self.harnesses)}, not {harness!r}")
 
     def content_hash(self) -> str:
-        """Compute SHA256 hash of all stack files, skipping cache and hidden directories.
+        """Return a SHA-256 over every file in the stack, as `"sha256:<hex>"`.
 
-        Excludes (relative to stack root):
-        - Any directory component starting with "." (e.g., .git; .mcp.json file is hashed)
-        - Any directory component named "__pycache__"
-        - Any *.pyc files
-
-        Uses raw bytes (no line-ending normalization).
+        Files are visited in sorted order; each contributes its POSIX relative path and raw bytes
+        (no line-ending normalization). Skipped, relative to the stack root: files under any
+        directory whose name starts with `.` (so `.git/` is skipped but the `.mcp.json` file is
+        hashed), files under `__pycache__/`, and `*.pyc` files. The dispatcher computes it at
+        plan time and records it as `RunResult.stack_hash`.
         """
         digest = hashlib.sha256()
         for path in sorted(p for p in self.root.rglob("*") if p.is_file()):
