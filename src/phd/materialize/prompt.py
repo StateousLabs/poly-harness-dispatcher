@@ -4,7 +4,6 @@ prompt; brief + msg form the first user message, delivered on stdin."""
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..errors import EmptyTask
 from ..spec import Inputs
 
 PROJECT_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
@@ -32,9 +31,3 @@ def assemble(identity: str, inputs: Inputs, cwd: Path, project_config: str) -> P
     if inputs.msg and inputs.msg.strip():
         user.append("# Message\n\n" + inputs.msg.strip())
     return Prompt(system="\n\n".join(system) + "\n", user="\n\n".join(user) + "\n")
-
-
-def resume_message(msg: str) -> str:
-    if not msg or not msg.strip():
-        raise EmptyTask("resume needs a non-empty msg")
-    return "# Message\n\n" + msg.strip() + "\n"

@@ -8,21 +8,20 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .._util.fs import is_within
-from ..constants import REDACTED
-from ..errors import InvalidRunsRoot, NotResumable
+from ..errors import InvalidRunsRoot, NotResumable, UnsupportedFeature
 from ..harnesses import ModelCatalog, get_adapter
-from ..materialize import MaterializedHome, materialize, resume_message
+from ..materialize import MaterializedHome, materialize
 from ..results import LocalLedger, ResultSink, RunResult
 from ..spec import Inputs, Spec
 from .handle import RunHandle
 
 
 class Dispatcher:
-    """Runs agents described by one `Spec`: dry runs, fresh runs and resumes.
+    """Runs agents described by one `Spec`: dry runs, fresh runs and resumed sessions.
 
     Errors that can be detected before launch are raised as `PhdError` subclasses. Anything that
     goes wrong after the harness starts is returned as data in `RunResult` (`status`, `error`);
-    `spawn`, `resume` and `RunHandle.wait` never raise for a failed run.
+    `spawn` and `RunHandle.wait` never raise for a failed run.
 
     Every run allocates `<runs_root>/<run_id>/` and writes `run.json` there before launch; the
     result is written to `result.json` and then handed to each extra sink.
@@ -38,7 +37,7 @@ class Dispatcher:
         ```python
         d = Dispatcher(spec)
         result = d.spawn(Inputs(brief="task.md"))          # blocking
-        again = d.resume(result, "now fix the failing test")
+        again = d.spawn(Inputs(msg="now fix the failing test"), session_id=result.session_id)
         ```
     """
 
@@ -77,15 +76,18 @@ class Dispatcher:
         if spec.harness == "codex" and not allow_temp_runs_root and is_within(self.ledger.root, temp):
             raise InvalidRunsRoot(f"codex refuses a CODEX_HOME under the system temp dir; choose a runs_root outside {temp}")
 
-    # ---- fresh runs
-    def plan(self, inputs: Inputs) -> MaterializedHome:
+    # ---- runs (fresh or resumed)
+    def plan(self, inputs: Inputs, *, session_id: str | None = None) -> MaterializedHome:
         """Dry run: allocate a run directory and write the run home, but launch nothing.
 
-        Writes `<run_dir>/home/` and `<run_dir>/run.json` exactly as `start` would. No
-        `result.json` is written, so the run never appears in `LocalLedger.list`.
+        Writes the run home and `<run_dir>/run.json` exactly as `start` would. No `result.json` is
+        written, so the run never appears in `LocalLedger.list`. With `session_id` this is a dry run
+        of a resumed turn: the session's home is re-materialized from this spec (as `start` would do)
+        and `argv` carries the harness's resume flag.
 
         Args:
             inputs: The task.
+            session_id: Plan a turn that continues this harness session (see `start`).
 
         Returns:
             The `MaterializedHome`: `run_id`, `run_dir`, `home`, `argv`, `env` (use
@@ -94,22 +96,60 @@ class Dispatcher:
         Raises:
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
+            NotResumable: `session_id` cannot be continued (see `start`).
+            UnsupportedFeature: `session_id` together with `inputs.rules`.
         """
-        return self._plan(inputs)[0]
+        return self._plan(inputs, session_id)[0]
 
-    def _plan(self, inputs: Inputs) -> tuple[MaterializedHome, str]:
+    def _plan(self, inputs: Inputs, session_id: str | None) -> tuple[MaterializedHome, str, str | None]:
+        prev = self._find_session(inputs, session_id) if session_id is not None else None
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
-        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir)
-        m.warnings[:0] = self.warnings
-        self.ledger.write_record(run_dir, self._record(m, base_argv=m.argv, resumed_from=None))
-        return m, stack_hash
+        home = Path(prev.home_dir) if prev else None
+        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home)
+        warnings = list(self.warnings)
+        if prev:
+            m.argv = self.adapter.resume_argv(m.argv, session_id, self.spec)
+            if prev.stack != self.spec.stack.ref:
+                warnings.append(f"session {session_id} ran stack {prev.stack}; this turn runs {self.spec.stack.ref}")
+        m.warnings[:0] = warnings
+        resumed_from = prev.run_id if prev else None
+        self.ledger.write_record(run_dir, self._record(m, session_id=session_id, resumed_from=resumed_from))
+        return m, stack_hash, resumed_from
 
-    async def start(self, inputs: Inputs) -> RunHandle:
+    def _find_session(self, inputs: Inputs, session_id: str) -> RunResult:
+        """The latest finished run of `session_id`, checked to be continuable by this spec; writes nothing."""
+        if inputs.rules is not None:
+            raise UnsupportedFeature("rules cannot be passed when resuming a session; "
+                                     "they are part of the session's system prompt")
+        prev = self.ledger.latest_for_session(session_id)
+        if prev is None:
+            raise NotResumable(f"no finished run with session {session_id!r} in {self.ledger.root}")
+        if prev.harness != self.spec.harness:
+            raise NotResumable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
+                               f"this dispatcher runs {self.spec.harness!r}")
+        if not Path(prev.home_dir).is_dir():
+            raise NotResumable(f"session {session_id!r}: run home {prev.home_dir} no longer exists "
+                               "(resumable=False or cleaned up)")
+        if Path(prev.cwd) != self.spec.cwd:
+            raise NotResumable(f"session {session_id!r} ran in cwd {prev.cwd}; this spec's cwd is {self.spec.cwd} "
+                               "(harnesses key sessions by directory)")
+        return prev
+
+    async def start(self, inputs: Inputs, *, session_id: str | None = None) -> RunHandle:
         """Materialize and launch a run; return as soon as the process has started.
+
+        With `session_id`, the run continues that harness session (a value from a previous
+        `RunResult.session_id`). PHD finds the latest finished run of the session in this
+        dispatcher's ledger and re-materializes its home from **this** spec: skills, identity,
+        MCP servers, hooks, settings and credentials all come from the new spec, while the
+        harness's session data in the home is kept. The run gets its own `run_id` and run
+        directory; `RunResult.resumed_from` names the run the session was found in. The first
+        message is built from `inputs` as for a fresh run; `inputs.rules` is not allowed.
 
         Args:
             inputs: The task.
+            session_id: Continue this harness session instead of starting a new one.
 
         Returns:
             A `RunHandle` to stream events from, wait on, or cancel.
@@ -118,6 +158,10 @@ class Dispatcher:
             HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
+            NotResumable: No finished run has `session_id`; it belongs to another harness; its
+                home no longer exists; or it ran in a different `cwd`.
+            UnsupportedFeature: `session_id` together with `inputs.rules` (rules are part of the
+                session's system prompt).
 
         Example:
             ```python
@@ -125,16 +169,18 @@ class Dispatcher:
             async for ev in handle.events():
                 print(ev.type, ev.data)
             result = await handle.wait()
+            nxt = await (await d.start(Inputs(msg="now fix it"), session_id=result.session_id)).wait()
             ```
         """
-        m, stack_hash = self._plan(inputs)
-        return await RunHandle.launch(self, m, resumed_from=None, stack_hash=stack_hash)
+        m, stack_hash, resumed_from = self._plan(inputs, session_id)
+        return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash)
 
-    def spawn(self, inputs: Inputs) -> RunResult:
-        """Blocking wrapper: `start(inputs)` then `wait()`.
+    def spawn(self, inputs: Inputs, *, session_id: str | None = None) -> RunResult:
+        """Blocking wrapper: `start(inputs, session_id=...)` then `wait()`.
 
         Args:
             inputs: The task.
+            session_id: Continue this harness session (see `start`).
 
         Returns:
             The finished `RunResult` (check `status` and `error`).
@@ -144,75 +190,15 @@ class Dispatcher:
                 `await start(...)` there.
             PhdError: Any pre-launch error listed for `start`.
         """
-        return _run_sync(self._spawn(inputs))
+        return _run_sync(self._spawn(inputs, session_id))
 
-    async def _spawn(self, inputs: Inputs) -> RunResult:
-        return await (await self.start(inputs)).wait()
+    async def _spawn(self, inputs: Inputs, session_id: str | None) -> RunResult:
+        return await (await self.start(inputs, session_id=session_id)).wait()
 
-    # ---- resume
-    async def start_resume(self, previous: RunResult | str, msg: str) -> RunHandle:
-        """Continue a previous run's session with a new message.
-
-        The resumed run gets a new `run_id` and run directory but reuses the previous run's
-        home (and so the harness session), its recorded argv and environment, with fresh
-        credentials. Only `msg` is sent: the conversation comes from the harness session, and identity and
-        rules from the files and flags still in the reused home (claude re-passes
-        `--append-system-prompt-file`; codex and opencode re-read their `AGENTS.md`). Flags and config files
-        (autonomy, project_config, permissions, budget flag, schema) are the original run's.
-
-        Args:
-            previous: A `RunResult` or a run id in this dispatcher's ledger.
-            msg: The next user message (must not be blank).
-
-        Returns:
-            A `RunHandle` for the resumed run (`resumed_from` is set).
-
-        Raises:
-            NotResumable: Unknown run id; different harness; no session id; run home gone
-                (`resumable=False` or deleted); missing `run.json`.
-            EmptyTask: `msg` is blank.
-            HarnessNotInstalled: The harness CLI is not on PATH.
-        """
-        if isinstance(previous, RunResult):
-            prev = previous
-        else:
-            try:
-                prev = self.ledger.get(previous)
-            except KeyError:
-                raise NotResumable(f"no finished run {previous!r} in {self.ledger.root}") from None
-        if prev.harness != self.spec.harness:
-            raise NotResumable(f"run {prev.run_id} used {prev.harness!r}; this dispatcher runs {self.spec.harness!r}")
-        if not prev.session_id:
-            raise NotResumable(f"run {prev.run_id} has no session id (status {prev.status})")
-        home = Path(prev.home_dir)
-        if not home.is_dir():
-            raise NotResumable(f"run home {home} no longer exists (resumable=False or cleaned up)")
-        record = self.ledger.read_record(prev.run_id)
-        stdin = resume_message(msg)
-        run_id, run_dir = self.ledger.allocate()
-        env = {k: v for k, v in record["env"].items() if v != REDACTED} | self.adapter.credential_env(self.spec, home)
-        argv = self.adapter.resume_argv(record["base_argv"], prev.session_id, self.spec)
-        m = MaterializedHome(run_id=run_id, run_dir=run_dir, home=home, argv=argv, env=env,
-                             stdin=stdin, warnings=list(self.warnings))
-        self.ledger.write_record(run_dir, self._record(m, base_argv=record["base_argv"], resumed_from=prev.run_id))
-        return await RunHandle.launch(self, m, resumed_from=prev.run_id, stack_hash=prev.stack_hash)
-
-    def resume(self, previous: RunResult | str, msg: str) -> RunResult:
-        """Blocking wrapper: `start_resume(previous, msg)` then `wait()`.
-
-        Raises:
-            RuntimeError: Called while an event loop is running.
-            NotResumable: See `start_resume`.
-        """
-        return _run_sync(self._resume(previous, msg))
-
-    async def _resume(self, previous: RunResult | str, msg: str) -> RunResult:
-        return await (await self.start_resume(previous, msg)).wait()
-
-    def _record(self, m: MaterializedHome, *, base_argv: list[str], resumed_from: str | None) -> dict:
+    def _record(self, m: MaterializedHome, *, session_id: str | None, resumed_from: str | None) -> dict:
         return {"run_id": m.run_id, "harness": self.spec.harness, "model": self.spec.model,
-                "cwd": str(self.spec.cwd), "argv": m.argv, "base_argv": base_argv, "env": m.redacted_env(),
-                "stdin": m.stdin, "warnings": m.warnings, "resumed_from": resumed_from, "home": str(m.home)}
+                "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
+                "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home)}
 
 
 def _run_sync(coro):
@@ -221,5 +207,4 @@ def _run_sync(coro):
     except RuntimeError:
         return asyncio.run(coro)
     coro.close()
-    raise RuntimeError("spawn()/resume() cannot run inside an event loop; use `await dispatcher.start(...)` "
-                       "or `await dispatcher.start_resume(...)` instead")
+    raise RuntimeError("spawn() cannot run inside an event loop; use `await dispatcher.start(...)` instead")

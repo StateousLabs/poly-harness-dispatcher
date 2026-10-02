@@ -105,11 +105,11 @@ class CodexAdapter:
         write_private(home / "auth.json", c.path.read_text(encoding="utf-8"))
         return {}
 
-    def resume_argv(self, base_argv: list[str], session_id: str, spec: Spec) -> list[str]:
-        kept = [a for a in base_argv if a in RESUME_FLAGS]
-        if "--output-schema" in base_argv:
-            i = base_argv.index("--output-schema")
-            kept += base_argv[i:i + 2]
+    def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
+        kept = [a for a in fresh_argv if a in RESUME_FLAGS]
+        if "--output-schema" in fresh_argv:
+            i = fresh_argv.index("--output-schema")
+            kept += fresh_argv[i:i + 2]
         # `exec resume` has no -C; the launcher always runs in spec.cwd
         return ["codex", "exec", "resume", session_id, *kept, "-m", spec.model, "-"]
 

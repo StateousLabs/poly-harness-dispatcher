@@ -58,7 +58,8 @@ def test_resume_recalls_context(harness, poisoned_cwd):
     d = dispatcher(harness, poisoned_cwd)
     first = d.spawn(Inputs(msg="Remember this code word for later: ZEBRA-42. Reply with just OK."))
     assert first.status is RunStatus.SUCCEEDED, first.error
-    second = d.resume(first, "What was the code word I asked you to remember? Reply with just the word.")
+    second = d.spawn(Inputs(msg="What was the code word I asked you to remember? Reply with just the word."),
+                     session_id=first.session_id)
     assert second.status is RunStatus.SUCCEEDED, second.error
     assert "ZEBRA-42" in (second.result_text or "")
     assert second.session_id == first.session_id and second.resumed_from == first.run_id

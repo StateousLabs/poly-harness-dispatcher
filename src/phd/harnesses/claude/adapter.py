@@ -70,8 +70,8 @@ class ClaudeAdapter:
             return {"CLAUDE_CODE_OAUTH_TOKEN": c.claude_access_token()}
         raise MissingCredentials(f"claude cannot use credentials of kind {c.kind!r}")
 
-    def resume_argv(self, base_argv: list[str], session_id: str, spec: Spec) -> list[str]:
-        return [*base_argv, "--resume", session_id]
+    def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
+        return [*fresh_argv, "--resume", session_id]
 
     def parser(self) -> ClaudeParser:
         return ClaudeParser()

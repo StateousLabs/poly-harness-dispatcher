@@ -73,8 +73,8 @@ class OpencodeAdapter:
             raise MissingCredentials(f"opencode cannot use credentials of kind {c.kind!r}")
         return {"OPENCODE_AUTH_CONTENT": c.opencode_auth_content()}
 
-    def resume_argv(self, base_argv: list[str], session_id: str, spec: Spec) -> list[str]:
-        return [*base_argv, "--session", session_id]
+    def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
+        return [*fresh_argv, "--session", session_id]
 
     def parser(self) -> OpencodeParser:
         return OpencodeParser()

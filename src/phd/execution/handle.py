@@ -23,14 +23,14 @@ if TYPE_CHECKING:
 
 
 class RunHandle:
-    """One live run. Created by `Dispatcher.start` / `Dispatcher.start_resume`, not directly.
+    """One live run. Created by `Dispatcher.start`, not directly.
 
     A background task reads the harness's stdout, turns each line into `Event`s (also appended to
     `events.jsonl`), builds the `RunResult` when the process exits, and hands it to every sink.
 
     Attributes:
         run_id: This run's id.
-        resumed_from: The previous run's id for a resumed run, else `None`.
+        resumed_from: For a resumed session, the run the session was found in; else `None`.
         materialized: The `MaterializedHome` that was launched.
     """
 
@@ -160,7 +160,7 @@ class RunHandle:
                 result = self._minimal_result(e)
                 result.exit_code = exit_code
             self._emit(events_file, "run.finished", {"status": str(result.status)})
-        if not spec.resumable and self.resumed_from is None:
+        if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
             try:
                 robust_rmtree(m.home)
             except OSError as e:
@@ -228,7 +228,8 @@ class RunHandle:
             result_text=o.result_text, structured_output=structured, cost_usd=o.cost_usd,
             cost_source=o.cost_source, usage=o.usage, num_turns=o.num_turns,
             duration_ms=int((time.monotonic() - self._t0) * 1000), session_id=o.session_id,
-            resumable=spec.resumable and o.session_id is not None, resumed_from=self.resumed_from,
+            resumable=(spec.resumable or self.resumed_from is not None) and o.session_id is not None,
+            resumed_from=self.resumed_from,
             run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd), project_config=spec.project_config,
             autonomy=spec.autonomy, unsafe=spec.unsafe, credential_kind=spec.credentials.kind,
             started_at=self._started_at.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),

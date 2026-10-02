@@ -8,7 +8,7 @@ from .._util.fs import remove_path
 from ..spec import Inputs, Spec
 from .context import MaterializeContext, MaterializedHome
 from .hooks import check_supported, claude_style_block, opencode_plugin, write_runtime
-from .prompt import Prompt, assemble, resume_message
+from .prompt import Prompt, assemble
 
 if TYPE_CHECKING:
     from ..harnesses import Adapter
@@ -38,4 +38,4 @@ def materialize(adapter: "Adapter", spec: Spec, inputs: Inputs, *, run_id: str, 
 
 
 __all__ = ["MaterializeContext", "MaterializedHome", "Prompt", "assemble", "check_supported", "claude_style_block",
-           "materialize", "opencode_plugin", "resume_message", "write_runtime"]
+           "materialize", "opencode_plugin", "write_runtime"]

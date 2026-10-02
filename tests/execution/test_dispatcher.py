@@ -1,14 +1,16 @@
 import asyncio
 import json
+import shutil
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 from conftest import FAKE_HARNESS, STREAMS
 from helpers import wait_dead
-from phd import Dispatcher, Inputs, RunStatus
-from phd.errors import InvalidRunsRoot, NotResumable
+from phd import Dispatcher, Inputs, RunStatus, Stack
+from phd.errors import InvalidRunsRoot, NotResumable, UnsupportedFeature
 
 FAKE = [sys.executable, str(FAKE_HARNESS)]
 
@@ -74,24 +76,70 @@ def test_non_json_stdout_becomes_log_event(tmp_path, monkeypatch, make_spec, inp
     assert logs[0]["data"]["text"] == "Reading additional input from stdin..."
 
 
-def test_resume_reuses_home_and_session(tmp_path, monkeypatch, make_spec, inputs, echo):
+def test_resume_by_session_id(tmp_path, monkeypatch, make_spec, inputs, echo):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     d = dispatcher(make_spec("claude"), tmp_path)
     first = d.spawn(inputs)
-    second = d.resume(first.run_id, "now fix the test")
-    third = d.resume(second, "and again")
+    second = d.spawn(Inputs(msg="now fix the test"), session_id=first.session_id)
+    third = asyncio.run(_start_and_wait(d, Inputs(msg="and again"), session_id="sess-claude-1"))
     calls = echo()
     assert calls[1]["argv"][-2:] == ["--resume", "sess-claude-1"]
     assert calls[2]["argv"].count("--resume") == 1
     assert calls[1]["stdin"] == "# Message\n\nnow fix the test\n"
-    assert second.home_dir == first.home_dir and second.resumed_from == first.run_id
-    assert third.resumed_from == second.run_id and second.run_id != first.run_id
+    assert calls[1]["env"]["CLAUDE_CONFIG_DIR"] == first.home_dir
+    assert second.home_dir == first.home_dir == third.home_dir
+    assert second.resumed_from == first.run_id and third.resumed_from == second.run_id  # latest run of the session
+    assert len({first.run_id, second.run_id, third.run_id}) == 3 and second.run_dir != first.run_dir
+    record = json.loads((tmp_path / "runs" / second.run_id / "run.json").read_text(encoding="utf-8"))
+    assert record["session_id"] == "sess-claude-1" and record["resumed_from"] == first.run_id
+    assert "base_argv" not in record
+
+
+async def _start_and_wait(d, inputs, **kw):
+    return await (await d.start(inputs, **kw)).wait()
+
+
+def test_resume_with_brief_only(tmp_path, monkeypatch, make_spec, inputs, echo):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    r = d.spawn(Inputs(brief=inputs.brief), session_id=first.session_id)
+    assert r.status is RunStatus.SUCCEEDED and echo()[1]["stdin"].startswith("# Task brief")
+
+
+def test_resume_rejects_rules_before_writing(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    before = sorted((tmp_path / "runs").iterdir())
+    home_files = sorted((str(p), p.stat().st_mtime_ns) for p in Path(first.home_dir).rglob("*"))
+    with pytest.raises(UnsupportedFeature, match="rules cannot be passed when resuming"):
+        d.spawn(inputs, session_id=first.session_id)
+    assert sorted((tmp_path / "runs").iterdir()) == before
+    assert sorted((str(p), p.stat().st_mtime_ns) for p in Path(first.home_dir).rglob("*")) == home_files
+
+
+def test_resume_unknown_session(tmp_path, make_spec):
+    with pytest.raises(NotResumable, match="no-such-session"):
+        dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id="no-such-session")
+    assert not (tmp_path / "runs").exists() or not list((tmp_path / "runs").iterdir())
+
+
+def test_resume_other_harness_or_cwd(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    first = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    with pytest.raises(NotResumable, match="'claude'"):
+        dispatcher(make_spec("opencode"), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    with pytest.raises(NotResumable, match="cwd"):
+        dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
 
 
 def test_codex_resume_command(tmp_path, monkeypatch, make_spec, inputs, echo, workdir):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "codex_ok.jsonl"))
     d = dispatcher(make_spec("codex"), tmp_path)
-    d.resume(d.spawn(inputs), "continue")
+    d.spawn(Inputs(msg="continue"), session_id=d.spawn(inputs).session_id)
     resumed = echo()[1]
     assert resumed["argv"][:3] == ["exec", "resume", "01a0f55a-d4f3-7d43-943f-8708f4dfa0cf"]
     assert "-C" not in resumed["argv"] and resumed["cwd"] == str(workdir)
@@ -102,10 +150,64 @@ def test_not_resumable_without_home(tmp_path, monkeypatch, make_spec, inputs):
     d = dispatcher(make_spec("claude", resumable=False), tmp_path)
     r = d.spawn(inputs)
     assert not r.resumable
-    from pathlib import Path
     assert not Path(r.home_dir).exists() and (Path(r.run_dir) / "result.json").is_file()
     with pytest.raises(NotResumable, match="no longer exists"):
-        d.resume(r, "more")
+        d.spawn(Inputs(msg="more"), session_id=r.session_id)
+
+
+def test_resume_applies_the_new_spec(tmp_path, monkeypatch, make_spec, inputs, echo, stack):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    first = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    home = Path(first.home_dir)
+    (home / "projects" / "p").mkdir(parents=True)
+    (home / "projects" / "p" / "session.jsonl").write_text("history", encoding="utf-8")
+    assert (home / "skills" / "demo-minimal").is_dir()
+
+    slim = tmp_path / "slim-stack"
+    shutil.copytree(stack.root, slim)
+    shutil.rmtree(slim / "skills" / "demo-minimal")
+    meta = json.loads((slim / "stack.json").read_text(encoding="utf-8")) | {"version": "0.2.0"}
+    (slim / "stack.json").write_text(json.dumps(meta), encoding="utf-8")
+    spec = make_spec("claude", stack=Stack.load(slim), autonomy="full", unsafe=True,
+                     harness_config={"env": {"PHD_TEST": "1"}})
+    r = dispatcher(spec, tmp_path).spawn(Inputs(msg="next"), session_id=first.session_id)
+
+    argv = echo()[1]["argv"]
+    assert "--dangerously-skip-permissions" in argv and "--permission-mode" not in argv
+    assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["env"] == {"PHD_TEST": "1"}
+    assert (home / "projects" / "p" / "session.jsonl").read_text(encoding="utf-8") == "history"
+    assert not (home / "skills" / "demo-minimal").exists() and (home / "skills" / "demo-notes").is_dir()
+    assert r.stack == "fixture-helper@0.2.0" and r.stack_hash == Stack.load(slim).content_hash()
+    assert r.stack_hash != first.stack_hash
+    assert any("fixture-helper@0.1.0" in w and "fixture-helper@0.2.0" in w for w in r.warnings)
+
+
+def test_resume_hooks_log_to_the_new_run(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    r = d.spawn(Inputs(msg="next"), session_id=first.session_id)
+    shim_config = json.loads((Path(first.home_dir) / "phd" / "shim_config.json").read_text(encoding="utf-8"))
+    assert shim_config == {"run_id": r.run_id, "run_dir": r.run_dir}
+
+
+def test_resumed_run_never_deletes_the_shared_home(tmp_path, monkeypatch, make_spec, inputs):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    first = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
+    r = dispatcher(make_spec("claude", resumable=False), tmp_path).spawn(Inputs(msg="next"),
+                                                                          session_id=first.session_id)
+    assert r.status is RunStatus.SUCCEEDED and Path(first.home_dir).is_dir() and r.resumable
+
+
+def test_plan_a_resumed_turn(tmp_path, monkeypatch, make_spec, inputs, echo):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = d.spawn(inputs)
+    m = d.plan(Inputs(msg="next"), session_id=first.session_id)
+    assert str(m.home) == first.home_dir and m.argv[-2:] == ["--resume", "sess-claude-1"]
+    assert m.stdin == "# Message\n\nnext\n" and len(echo()) == 1
+    record = json.loads((m.run_dir / "run.json").read_text(encoding="utf-8"))
+    assert record["resumed_from"] == first.run_id and record["home"] == first.home_dir
 
 
 def test_auth_failure_status(tmp_path, monkeypatch, make_spec, inputs):
@@ -195,11 +297,6 @@ async def _drain(handle):
     return [ev async for ev in handle.events()]
 
 
-async def test_resume_unknown_run_is_not_resumable(tmp_path, make_spec):
-    with pytest.raises(NotResumable, match="no-such-run"):
-        await dispatcher(make_spec("claude"), tmp_path).start_resume("no-such-run", "hi")
-
-
 def test_home_cleanup_failure_is_a_warning(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
 
@@ -225,8 +322,6 @@ async def test_stack_hash_pinned_at_plan_time(tmp_path, monkeypatch, make_spec, 
     monkeypatch.setattr(Stack, "content_hash", boom)
     r = await handle.wait()
     assert r.status is RunStatus.SUCCEEDED and r.stack_hash.startswith("sha256:")
-    resumed = await (await d.start_resume(r, "again")).wait()
-    assert resumed.stack_hash == r.stack_hash
 
 
 async def test_build_result_failure_still_yields_result(tmp_path, monkeypatch, make_spec, inputs):

@@ -1,7 +1,4 @@
-import pytest
-
-from phd.errors import EmptyTask
-from phd.materialize.prompt import assemble, resume_message
+from phd.materialize.prompt import assemble
 from phd.spec import Inputs
 
 
@@ -33,8 +30,3 @@ def test_msg_only(stack, workdir):
     assert p.user == "# Message\n\nhi\n"
     assert "## Project rules" not in p.system
 
-
-def test_resume_message():
-    assert resume_message("  fix the test ") == "# Message\n\nfix the test\n"
-    with pytest.raises(EmptyTask):
-        resume_message(" ")
