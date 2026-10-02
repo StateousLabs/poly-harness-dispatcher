@@ -10,24 +10,24 @@ All inherit from `phd.PhdError`; each message names the file, field or value inv
 | Error | Raised by | Cause | Fix |
 |---|---|---|---|
 | `UnknownHarness` | `Spec`, `Credentials.from_host`, `ModelCatalog` | harness not `claude`, `codex` or `opencode` | fix the name |
-| `HarnessNotInstalled` | `start` / `spawn` / `resume`, `ModelCatalog.models` | the CLI is not on `PATH` | install it, fix `PATH`, or pass `Dispatcher(executables={"claude": ["C:/path/claude.exe"]})` |
+| `HarnessNotInstalled` | `start` / `spawn`, `ModelCatalog.models` | the CLI is not on `PATH` | install it, fix `PATH`, or pass `Dispatcher(executables={"claude": ["C:/path/claude.exe"]})` |
 | `CwdNotFound` | `Spec` | `cwd` is not an existing directory | create it or fix the path |
 | `InputNotFound` | `Inputs` | `brief` or `rules` is not a file (relative paths resolve against the Python process's current directory) | use an absolute path |
-| `EmptyTask` | `Inputs`, `resume` | no `brief` and blank `msg`; or blank resume `msg` | give a brief or a message |
+| `EmptyTask` | `Inputs` | no `brief` and blank `msg` | give a brief or a message |
 | `StackInvalid` | `Stack.load` | malformed stack (missing `stack.json`, not exactly one `agents/*.md`, skill without `SKILL.md`, bad `.mcp.json` / `hooks.json`) | see [Stacks: validation errors](concepts/stacks.md#validation-errors) |
 | `StackIncompatible` | `Spec` | `stack.json` `harnesses` excludes `Spec.harness` | pick a listed harness or extend the list |
 | `HookUnsupported` | `Stack.load`, `Dispatcher` | unknown hook event; event or tool not expressible for this harness (opencode: only `pre_tool`/`post_tool`; codex: only tool `shell`; `web_search` / `mcp:` only on claude) | change the hook or the harness ([Hooks](concepts/hooks.md)) |
 | `MissingSecret` | `Spec` (also during materialize) | the stack uses `${env:NAME}` and `Spec.secrets` has no `NAME` | add `secrets={"NAME": "..."}`; host env vars are not consulted |
-| `MissingCredentials` | `Credentials.*`, `Spec`, `plan` / `start` / `resume` | auth file missing or unreadable, no `claudeAiOauth.accessToken`, missing opencode provider, credentials for another harness, unsupported kind | log in with the CLI (`claude auth login`, `codex login`, `opencode auth login`), or use `Credentials.claude_oauth_token`; on macOS see [Getting started](getting-started.md#2-authenticate-each-harness) |
+| `MissingCredentials` | `Credentials.*`, `Spec`, `plan` / `start` / `spawn` | auth file missing or unreadable, no `claudeAiOauth.accessToken`, missing opencode provider, credentials for another harness, unsupported kind | log in with the CLI (`claude auth login`, `codex login`, `opencode auth login`), or use `Credentials.claude_oauth_token`; on macOS see [Getting started](getting-started.md#2-authenticate-each-harness) |
 | `UnsafeAutonomy` | `Spec` | `autonomy="full"` without `unsafe=True` | pass `unsafe=True` if you accept no isolation, or use `restricted` |
-| `UnsupportedFeature` | `Dispatcher` | `output_schema` with opencode | drop `output_schema` or use claude / codex |
+| `UnsupportedFeature` | `Dispatcher`; `plan` / `start` / `spawn` with `session_id` | `output_schema` with opencode; `Inputs.rules` on a resumed turn ("rules cannot be passed when resuming a session": rules are part of the session's system prompt) | drop `output_schema` or use claude / codex; resume without `rules` (start a new session to change them) |
 | `InvalidSpec` | `Spec` | blank `model`; bad `project_config` / `autonomy`; non-bool `harness_builtins`; `timeout_s <= 0`; `budget_usd <= 0` | fix the value |
 | `InvalidRunsRoot` | `Dispatcher` | codex with `runs_root` under the system temp directory | use a `runs_root` outside `%TEMP%` / `/tmp` (the default `~/.phd/runs` is fine) |
-| `NotResumable` | `start_resume` / `resume` | unknown run id, other harness, no session id, run home deleted (`resumable=False`), no `run.json` in this dispatcher's ledger | resume with the same harness and `runs_root`; keep `resumable=True` |
+| `NotResumable` | `plan` / `start` / `spawn` with `session_id` | no finished run with that session in this dispatcher's ledger ("no finished run with session"); the session belongs to another harness ("belongs to"); its run home was deleted, e.g. `resumable=False` ("no longer exists"); the session ran in another `cwd` ("ran in cwd") | resume with the same harness, `runs_root` and `cwd`; keep `resumable=True` on the run that starts the session |
 | `ModelNotSupported` | `Dispatcher` | model not in the harness catalogue; `.hint` holds the closest match, `.supported` the list | use a listed model, or `validate_model=False` to skip the check |
 
-`RuntimeError: spawn()/resume() cannot run inside an event loop` (not a `PhdError`): you called the blocking API
-from Jupyter or async code. Use `await d.start(...)` / `await d.start_resume(...)`.
+`RuntimeError: spawn() cannot run inside an event loop` (not a `PhdError`): you called the blocking API
+from Jupyter or async code. Use `await d.start(...)` (with `session_id=` to resume).
 
 ## Failed runs (`RunResult.error.kind`)
 

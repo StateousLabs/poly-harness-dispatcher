@@ -12,11 +12,13 @@ Validates the spec against its harness (hooks, features, model, codex runs root)
 
 | Member | Purpose |
 |---|---|
-| `.plan(inputs) -> MaterializedHome` | dry run: write the run home and `run.json`, launch nothing |
-| `await .start(inputs) -> RunHandle` | materialize and launch; returns once the process has started |
-| `.spawn(inputs) -> RunResult` | blocking `start` + `wait`; `RuntimeError` inside a running event loop |
-| `await .start_resume(previous, msg) -> RunHandle` | continue a previous run's session (`previous` = `RunResult` or run id) |
-| `.resume(previous, msg) -> RunResult` | blocking `start_resume` + `wait` |
+| `.plan(inputs, *, session_id=None) -> MaterializedHome` | dry run: write the run home and `run.json`, launch nothing |
+| `await .start(inputs, *, session_id=None) -> RunHandle` | materialize and launch; returns once the process has started |
+| `.spawn(inputs, *, session_id=None) -> RunResult` | blocking `start` + `wait`; `RuntimeError` inside a running event loop |
+
+`session_id` (a previous `RunResult.session_id`) continues that harness session: PHD finds the session's latest
+run in the ledger and re-materializes its home from this dispatcher's `Spec`, keeping the harness's session data.
+`Inputs.rules` is not allowed then. See [Run lifecycle](../concepts/run-lifecycle.md#resume).
 | `.spec` | the `Spec` |
 | `.ledger` | the `LocalLedger` at `runs_root` |
 | `.sinks` | `[ledger, *sinks]` |
@@ -24,7 +26,7 @@ Validates the spec against its harness (hooks, features, model, codex runs root)
 
 ### RunHandle
 
-Returned by `start` / `start_resume`; not constructed directly.
+Returned by `start`; not constructed directly.
 
 | Member | Purpose |
 |---|---|
@@ -32,7 +34,7 @@ Returned by `start` / `start_resume`; not constructed directly.
 | `await .wait() -> RunResult` | the result; never raises for a failed run |
 | `await .cancel() -> RunResult` | kill the process tree; status `cancelled` if still running |
 | `.run_id` | this run's id |
-| `.resumed_from` | previous run id, or `None` |
+| `.resumed_from` | for a resumed session, the run it was found in; else `None` |
 | `.materialized` | the launched `MaterializedHome` |
 
 ### MaterializedHome

@@ -59,7 +59,8 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 | the harness process environment | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `OPENCODE_AUTH_CONTENT` |
 | `events.jsonl`, `stderr.log`, `result_text` | whatever the harness prints, unfiltered: if the agent echoes a secret it is recorded |
 
-The run home is deleted after the run only with `resumable=False`. Otherwise these files stay under `runs_root`
+The run home is deleted after the run only with `resumable=False` (and never by a resumed turn, which shares the
+session's home). Otherwise these files stay under `runs_root`
 until you delete them; PHD does not prune run directories (open item 13).
 
 Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets` values and
@@ -75,9 +76,6 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet
   (open item 5).
 - Run directories are never pruned (open item 13).
-- **Resume replays the original configuration.** Autonomy flags, `project_config` mechanisms, permissions, budget
-  and schema flags come from the original run, while `RunResult.autonomy` / `project_config` / `unsafe` record the
-  resuming `Spec` ([what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads)).
 
 ---
 

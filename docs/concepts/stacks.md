@@ -171,7 +171,8 @@ Every message names the offending file.
 ## `content_hash`
 
 `Stack.content_hash()` returns `"sha256:<hex>"` over the stack directory. The dispatcher calls it when a run is
-planned and records it as `RunResult.stack_hash` (a resumed run keeps the original run's hash).
+planned and records it as `RunResult.stack_hash` (a resumed turn re-materializes the home, so it records the hash
+of its own `Spec.stack`).
 
 Rules:
 

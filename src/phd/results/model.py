@@ -110,8 +110,8 @@ class RunResult:
         harness: Harness name.
         model: `Spec.model`.
         stack: `"<name>@<version>"`.
-        stack_hash: `Stack.content_hash()` taken when the run was planned (a resumed run keeps
-            the original's).
+        stack_hash: `Stack.content_hash()` of this run's stack, taken when the run was planned
+            (also for a resumed turn, whose home is re-materialized).
         status: Overall outcome.
         exit_code: Harness exit code, or `None` if unknown.
         error: Why the run did not succeed, or `None`.
@@ -126,11 +126,12 @@ class RunResult:
         num_turns: Turns reported (claude) or counted (codex `turn.completed`, opencode
             `step_finish`).
         duration_ms: Wall-clock time from launch to result.
-        session_id: Harness session/thread id, needed for resume.
-        resumable: `True` when the run home was kept and a session id is known.
-        resumed_from: The previous run id for a resumed run.
+        session_id: Harness session/thread id; pass it as `start(..., session_id=)` to resume.
+        resumable: `True` when the run home was kept and a session id is known (a resumed
+            turn never deletes the shared home).
+        resumed_from: For a turn started with `session_id`, the run the session was found in.
         run_dir: The run directory.
-        home_dir: The run home (shared with the original run on resume).
+        home_dir: The run home (for a resumed turn, the session's shared home).
         cwd: The agent's working directory.
         project_config: `Spec.project_config`.
         autonomy: `Spec.autonomy`.

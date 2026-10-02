@@ -29,9 +29,9 @@ src/phd/
     ledger.py          LocalLedger, ResultSink
     runs.py            list() / get() over the default ledger
   materialize/       the pure step: write a run home, run nothing
-    __init__.py        materialize(adapter, spec, inputs, *, run_id, run_dir)
+    __init__.py        materialize(adapter, spec, inputs, *, run_id, run_dir, home=None)
     context.py         MaterializeContext (handed to adapters), MaterializedHome (returned)
-    prompt.py          assemble(), resume_message()
+    prompt.py          assemble()
     hooks/             translate.py, opencode_plugin.py, runtime.py, shim.py (copied into each home)
   harnesses/         one sub-package per CLI
     __init__.py        get_adapter() registry, ModelCatalog, Outcome

@@ -27,7 +27,7 @@ stack compatibility, secrets.
 | `timeout_s` | `float` | `1800.0` | `> 0` (`InvalidSpec`) | wall-clock limit from process start; on expiry the tree is killed, status `timed_out` |
 | `budget_usd` | `float or None` | `None` | `> 0` when set (`InvalidSpec`) | claude `--max-budget-usd` + PHD check; opencode PHD check; codex warning only. See [combinations](combinations.md#budget-enforcement) |
 | `output_schema` | `dict or None` | `None` | opencode: `UnsupportedFeature` at `Dispatcher(...)` | claude `--json-schema '<json>'`; codex `--output-schema home/output-schema.json` |
-| `resumable` | `bool` | `True` | none | `False`: the run home is deleted after the result is built, so the run cannot be resumed |
+| `resumable` | `bool` | `True` | none | `False`: the run home is deleted after the result is built, so the session cannot be resumed (a resumed turn never deletes the shared home) |
 | `harness_builtins` | `bool` | `False` | must be a real `bool` (`InvalidSpec`) | `False` suppresses the harness's bundled skills/plugins; see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) |
 
 ### harness_config
@@ -90,7 +90,7 @@ A frozen dataclass; validated in its constructor.
 |---|---|---|---|---|
 | `brief` | `Path or None` (str accepted) | `None` | expanded (`~`) and resolved to an absolute path; must be a file (`InputNotFound`) | `# Task brief` block of the first user message |
 | `msg` | `str or None` | `None` | none on its own | `# Message` block, after the brief |
-| `rules` | `Path or None` (str accepted) | `None` | as `brief` (`InputNotFound`) | `## Project rules (binding)` block of the system prompt |
+| `rules` | `Path or None` (str accepted) | `None` | as `brief` (`InputNotFound`) | `## Project rules (binding)` block of the system prompt; not allowed on a resumed turn (`UnsupportedFeature`) |
 
 At least one of `brief` and a non-blank `msg` is required (`EmptyTask`). Relative paths resolve against the
 **Python process's current directory**, not `Spec.cwd`. File contents are read when the run is materialized

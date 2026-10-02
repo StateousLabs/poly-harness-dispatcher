@@ -17,17 +17,17 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `HarnessNotInstalled` | the CLI is not on `PATH` at launch or for the catalogue |
 | `CwdNotFound` | `Spec.cwd` is not a directory |
 | `InputNotFound` | `Inputs.brief` / `Inputs.rules` is not a file |
-| `EmptyTask` | no brief and no non-blank msg; blank resume msg |
+| `EmptyTask` | no brief and no non-blank msg |
 | `StackInvalid` | malformed stack directory |
 | `StackIncompatible` | stack's `harnesses` excludes `Spec.harness` |
 | `HookUnsupported` | non-neutral hook event, or event/tool not expressible for the harness |
 | `MissingSecret` | `${env:NAME}` without `Spec.secrets["NAME"]` |
 | `MissingCredentials` | credentials missing, unreadable, for another harness, or of an unusable kind |
 | `UnsafeAutonomy` | `autonomy="full"` without `unsafe=True` |
-| `UnsupportedFeature` | feature unsupported by the harness (opencode `output_schema`) |
+| `UnsupportedFeature` | feature unsupported by the harness (opencode `output_schema`); `Inputs.rules` on a resumed turn |
 | `InvalidSpec` | invalid `Spec` field value |
 | `InvalidRunsRoot` | codex `runs_root` under the system temp dir |
-| `NotResumable` | a resume target cannot be continued |
+| `NotResumable` | a `session_id` cannot be continued (no run has it, other harness, home gone, other `cwd`) |
 | `ModelNotSupported(harness, model, supported, hint=None)` | model not in the catalogue; attributes `harness`, `model`, `supported`, `hint` |
 
 ```python

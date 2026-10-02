@@ -99,6 +99,8 @@ Tool names in the payload are mapped back to neutral names: claude/codex `Bash` 
 (for example claude `Glob`).
 
 Environment: whatever the harness gives the hook process, plus `PHD_RUN_DIR` (the run directory) and `PHD_RUN_ID`.
+On a resumed turn these are the **new** run's: `shim_config.json` is rewritten when the home is re-materialized,
+so hooks log into the resumed run's directory, not the one that started the session.
 The command runs through the system shell (`shell=True`: `cmd.exe` on Windows, `/bin/sh` on POSIX). The shim
 copies your command's stdout and stderr to its own. For claude/codex the harness reads that stdout, so a hook can
 emit harness-native JSON (not portable across harnesses). The opencode plugin ignores stdout.
@@ -179,8 +181,9 @@ The shim receives the neutral payload already shaped by the plugin and passes it
 - codex: only `shell` can be matched; the block reason is not shown to the agent.
 - Unmapped native tools reach hooks under their native names, so a hook without `match` sees harness-specific
   names for them.
-- The hook configuration embeds the absolute path of the Python interpreter that created the run. If that
-  environment is removed, hooks of a later resume cannot start; the harness then handles a failed hook command its own way (for claude and codex usually as a non-blocking error, so `pre_tool` guards fail open).
+- The hook configuration embeds the absolute path of the Python interpreter that materialized the run (a resumed
+  turn rewrites it with the resuming interpreter). If that environment is removed while a harness still holds the
+  config, hooks cannot start; the harness then handles a failed hook command its own way (for claude and codex usually as a non-blocking error, so `pre_tool` guards fail open).
 - Hook commands run on the host with the harness's environment; they are not sandboxed.
 
 ---

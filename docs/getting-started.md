@@ -79,11 +79,12 @@ print(result.result_text)
 if result.error:
     print(result.error.kind, result.error.message, "->", result.stderr_path)
 
-followup = d.resume(result, "Which of those skills has a scripts/ folder?")
+followup = d.spawn(Inputs(msg="Which of those skills has a scripts/ folder?"), session_id=result.session_id)
 print(followup.status, followup.result_text)
 ```
 
-`spawn()` and `resume()` block. A failed run does not raise: check `result.status` and `result.error`
+`spawn()` blocks. Passing `session_id=` continues that harness session with the same (or a changed) `Spec`;
+`Inputs.rules` cannot be passed on a resumed turn ([Resume](concepts/run-lifecycle.md#resume)). A failed run does not raise: check `result.status` and `result.error`
 ([Results and events](concepts/results-and-events.md)). Problems PHD can detect before launch raise a `PhdError`
 subclass ([Troubleshooting](troubleshooting.md)).
 
@@ -102,7 +103,7 @@ uv sync --extra dev --extra examples
 # open examples/quickstart.ipynb and select the project's .venv kernel
 ```
 
-Jupyter already runs an event loop, so `spawn()` / `resume()` raise `RuntimeError` there. Use the async API:
+Jupyter already runs an event loop, so `spawn()` raises `RuntimeError` there. Use the async API:
 
 ```python
 handle = await dispatcher.start(inputs)
@@ -110,7 +111,7 @@ async for ev in handle.events():
     print(ev.type, ev.data)
 result = await handle.wait()
 
-followup = await (await dispatcher.start_resume(result, "next message")).wait()
+followup = await (await dispatcher.start(Inputs(msg="next message"), session_id=result.session_id)).wait()
 ```
 
 After updating PHD (`git pull`), restart the kernel: a running kernel keeps the old imported modules.

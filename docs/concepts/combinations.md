@@ -57,21 +57,25 @@ Enforcement is after the fact: the step that crosses the budget has already been
 | Harness | Mechanism | `structured_output` comes from |
 |---|---|---|
 | claude | `--json-schema '<schema JSON>'` | the `structured_output` key of claude's `result` line; else `result_text` parsed as JSON |
-| codex | schema written to `home/output-schema.json`, `--output-schema <path>` (kept on resume) | `result_text` parsed as JSON (left `None` if not JSON) |
+| codex | schema written to `home/output-schema.json`, `--output-schema <path>` (also on resume, from the resuming `Spec`) | `result_text` parsed as JSON (left `None` if not JSON) |
 | opencode | not supported | `UnsupportedFeature` at `Dispatcher(...)` |
 
 PHD does not validate the answer against the schema.
 
 ## resumable × resume
 
-| `Spec.resumable` | Session id reported | `RunResult.resumable` | Home after the run | `resume(...)` |
-|---|---|---|---|---|
-| `True` (default) | yes | `True` | kept | works |
-| `True` | no (for example crash before init) | `False` | kept | `NotResumable` ("has no session id") |
-| `False` | any | `False` | deleted (a failure to delete becomes a warning) | `NotResumable` ("no longer exists") |
-| any, on a resumed run | yes | `Spec.resumable` | never deleted by a resumed run | works (resumes the same home) |
+Resuming means `start(inputs, session_id=result.session_id)` / `spawn(..., session_id=...)`.
 
-Resume is same-harness only; other `NotResumable` causes: [Run lifecycle](run-lifecycle.md#resume).
+| Run | `Spec.resumable` | Session id reported | `RunResult.resumable` | Home after the run | Resuming its session |
+|---|---|---|---|---|---|
+| fresh | `True` (default) | yes | `True` | kept | works |
+| fresh | `True` | no (for example crash before init) | `False` | kept | nothing to resume (`session_id` is `None`) |
+| fresh | `False` | any | `False` | deleted (a failure to delete becomes a warning) | `NotResumable` ("no longer exists"): the chain ends |
+| resumed turn | any | yes | `True` | never deleted by a resumed turn | works (same shared home) |
+| any | any | yes, but the run failed | as above | as above | works: status does not matter, only the session id |
+
+Resume also requires the same harness and `cwd`, and rejects `Inputs.rules` (`UnsupportedFeature`); all causes:
+[Run lifecycle](run-lifecycle.md#resume).
 
 ## Credential kind × harness
 
@@ -97,7 +101,7 @@ Resume is same-harness only; other `NotResumable` causes: [Run lifecycle](run-li
 | `Spec(...)` | `UnknownHarness`, `InvalidSpec`, `CwdNotFound`, `UnsafeAutonomy`, `MissingCredentials`, `StackIncompatible`, `MissingSecret` |
 | `Dispatcher(spec, ...)` | `HookUnsupported`, `UnsupportedFeature`, `ModelNotSupported`, `InvalidRunsRoot` |
 | `plan()` / `start()` / `spawn()` | `MissingCredentials` (credential file unreadable), `MissingSecret`; `start`/`spawn` also `HarnessNotInstalled`; `spawn` inside an event loop: `RuntimeError` |
-| `start_resume()` / `resume()` | `NotResumable`, `EmptyTask`, `MissingCredentials`, `HarnessNotInstalled`; `resume` inside an event loop: `RuntimeError` |
+| the same with `session_id=` | additionally `NotResumable` (unknown session, other harness, home gone, other `cwd`) and `UnsupportedFeature` (`Inputs.rules` given) |
 | `ModelCatalog.models()` | `UnknownHarness`, `HarnessNotInstalled`, `RuntimeError` |
 
 Returned as data (`RunResult.status` / `error.kind`), never raised: `cancelled`, `timeout`, `budget`,

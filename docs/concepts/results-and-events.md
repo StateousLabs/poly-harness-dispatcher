@@ -4,7 +4,7 @@ This page documents every `RunResult` field, `RunStatus`, the error kinds and th
 and their payloads per harness, `cost_source`, and the ledger, `ResultSink` and `phd.runs`.
 
 Rule: **errors before launch are raised** (`PhdError`); **outcomes after launch are data**. Every launched run
-produces a `RunResult`, and `spawn()`, `resume()` and `RunHandle.wait()` do not raise for a failed run. The one
+produces a `RunResult`, and `spawn()` and `RunHandle.wait()` do not raise for a failed run. The one
 exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-a-run-ends)).
 
 ## RunResult
@@ -15,7 +15,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `harness` | `str` | `claude`, `codex`, `opencode` |
 | `model` | `str` | `Spec.model` of the dispatcher that ran it |
 | `stack` | `str` | `"<name>@<version>"` |
-| `stack_hash` | `str` | `Stack.content_hash()` taken at plan time; copied from the previous run on resume |
+| `stack_hash` | `str` | `Stack.content_hash()` of this run's `Spec.stack`, taken at plan time (also on a resumed turn, whose home is re-materialized) |
 | `status` | `RunStatus` | derived from `error` ([below](#runstatus)) |
 | `exit_code` | `int` or `None` | harness exit code (`None` only if PHD failed before it was known) |
 | `error` | `RunError` or `None` | `kind` + `message` ([below](#error-kinds-and-precedence)) |
@@ -27,10 +27,10 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `num_turns` | `int` or `None` | claude: reported; codex: count of `turn.completed`; opencode: count of `step_finish` |
 | `duration_ms` | `int` | from launch to result (monotonic clock) |
 | `session_id` | `str` or `None` | claude `session_id`; codex `thread_id`; opencode `sessionID` |
-| `resumable` | `bool` | `Spec.resumable` and a session id is known (`False` after the home was deleted) |
-| `resumed_from` | `str` or `None` | run id this run continued |
+| `resumable` | `bool` | a session id is known and the home is kept: `Spec.resumable` for a fresh run (`False` after the home was deleted); always kept on a resumed turn |
+| `resumed_from` | `str` or `None` | for a turn started with `session_id=`, the run the session was found in (the latest run of that session) |
 | `run_dir` | `str` | `<runs_root>/<run_id>` |
-| `home_dir` | `str` | the run home (the original run's home for resumed runs) |
+| `home_dir` | `str` | the run home (for a resumed turn, the session's shared home) |
 | `cwd` | `str` | absolute working directory |
 | `project_config`, `autonomy`, `unsafe` | `str`, `str`, `bool` | copied from the `Spec` |
 | `credential_kind` | `str` | `Credentials.kind`; never the secret |

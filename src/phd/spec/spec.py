@@ -88,7 +88,8 @@ class Spec:
             (a warning is added).
         output_schema: JSON Schema for a structured final answer (claude `--json-schema`, codex
             `--output-schema`). opencode raises `UnsupportedFeature`.
-        resumable: Keep the run home after the run so `Dispatcher.resume` works. `False`
+        resumable: Keep the run home after the run so its session can be resumed
+            (`Dispatcher.start(..., session_id=)`). `False`
             deletes it once the result is built.
         harness_builtins: Keep the harness's own bundled skills and plugins. Default `False`
             suppresses them so the agent sees only its stack's skills.

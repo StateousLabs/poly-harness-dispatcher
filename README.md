@@ -36,10 +36,11 @@ spec = Spec(
 d = Dispatcher(spec)
 result = d.spawn(Inputs(msg="List the names of your skills."))
 print(result.status, result.cost_usd, result.result_text)
-followup = d.resume(result, "Which one has a scripts/ folder?")
+followup = d.spawn(Inputs(msg="Which one has a scripts/ folder?"), session_id=result.session_id)
 ```
 
-`spawn()` / `resume()` block; in Jupyter or async code use `await d.start(inputs)`, then
+`session_id=` continues that harness session (the home is re-materialized from the current spec).
+`spawn()` blocks; in Jupyter or async code use `await d.start(inputs)`, then
 `async for ev in handle.events()` and `await handle.wait()` (see `examples/quickstart.ipynb`). A failed run does
 not raise: check `result.status` and `result.error`. Problems detectable before launch raise a `PhdError`.
 

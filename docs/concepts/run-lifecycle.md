@@ -17,7 +17,7 @@ sequenceDiagram
     participant H as RunHandle (pump task)
     U->>D: Dispatcher(spec, ...)
     D->>D: adapter.validate(spec), ModelCatalog.validate, codex temp-dir check
-    U->>D: start(inputs) / spawn(inputs)
+    U->>D: start(inputs) / spawn(inputs)  (session_id: see Resume)
     D->>D: stack.content_hash()
     D->>L: allocate() → run_id, run_dir
     D->>M: materialize(adapter, spec, inputs, run_id, run_dir)
@@ -45,8 +45,8 @@ sequenceDiagram
 | # | Step | Code | Can raise (pre-launch) |
 |---|---|---|---|
 | 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, output_schema, warnings), model catalogue, codex temp `runs_root` | `execution/dispatcher.py` | `HookUnsupported`, `UnsupportedFeature`, `ModelNotSupported`, `InvalidRunsRoot` |
-| 2 | **Plan**: hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `OSError` |
-| 3 | **Materialize**: create `home/`, copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
+| 2 | **Plan**: with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
+| 3 | **Materialize**: create `home/` (or, [resuming](#resume), clear the PHD-owned paths of the session's home), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
 | 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background | `RunHandle.launch`, `execution/process.py` | `HarnessNotInstalled` |
 | 5 | **Stream / parse**: read stdout line by line; non-JSON lines become `log` events; JSON objects go to the harness parser, which yields normalized events and accumulates the outcome; stderr is copied to `stderr.log` | `RunHandle._consume` | never (data) |
 | 6 | **Result**: decide the error (precedence below), build `RunResult`, emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result` | never (data) |
@@ -63,12 +63,13 @@ sequenceDiagram
   events.jsonl                 one normalized Event per line
   stderr.log                   the harness's stderr, raw
   result.json                  the RunResult, written after the run
-  home/                        the isolated config home (absent for resumed runs and after resumable=False)
+  home/                        the isolated config home (absent for resumed turns, which use the session's
+                               home, and after resumable=False)
 ```
 
 | File | Written by | Contents |
 |---|---|---|
-| `run.json` | `Dispatcher` (plan / start / start_resume) | `run_id`, `harness`, `model`, `cwd`, `argv`, `base_argv` (the fresh-run argv, used to build resume commands), `env` (values of names matching `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET`, `PASSWORD` replaced by `<redacted>`), `stdin` (the full first message), `warnings`, `resumed_from`, `home` |
+| `run.json` | `Dispatcher` (plan / start) | `run_id`, `harness`, `model`, `cwd`, `argv`, `env` (values of names matching `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET`, `PASSWORD` replaced by `<redacted>`), `stdin` (the full first message), `warnings`, `session_id` (the session being resumed, else `null`), `resumed_from`, `home` |
 | `events.jsonl` | `RunHandle` | `{"run_id", "harness", "type", "data", "ts", "raw"}` per line ([events](results-and-events.md#events)) |
 | `stderr.log` | `HarnessProcess` | unfiltered stderr bytes |
 | `result.json` | `LocalLedger.put` | `RunResult.to_dict()` |
@@ -77,63 +78,70 @@ sequenceDiagram
 
 ## Resume
 
+A run continues a harness session when `start`, `spawn` or `plan` get `session_id=` (a value from a previous
+`RunResult.session_id`). Everything except the harness's own session data comes from the **new** `Spec`.
+
 ```mermaid
 sequenceDiagram
     participant U as caller
     participant D as Dispatcher
     participant L as LocalLedger
-    U->>D: resume(previous, msg) / start_resume(previous, msg)
-    D->>L: previous is a run id? get(run_id) (KeyError → NotResumable)
-    D->>D: same harness? session_id set? previous home_dir exists?
-    D->>L: read_record(previous.run_id) → base_argv, env
-    D->>L: allocate() → new run_id, run_dir (no home/)
-    D->>D: env = recorded env without <redacted> values + fresh credential env
-    D->>D: argv = adapter.resume_argv(base_argv, session_id, spec)
-    D->>L: write run.json (resumed_from = previous.run_id)
-    D->>D: launch in spec.cwd with the previous home, stdin = resume message (msg only)
+    participant M as materialize + adapter
+    U->>D: start(inputs, session_id=sid) / spawn(inputs, session_id=sid)
+    D->>D: inputs.rules set? → UnsupportedFeature (nothing written)
+    D->>L: latest_for_session(sid) → previous RunResult (latest started_at)
+    D->>D: found? same harness? home_dir exists? same cwd? (else NotResumable, nothing written)
+    D->>L: allocate() → new run_id, run_dir (no home/ of its own)
+    D->>M: materialize(..., home=previous.home_dir)
+    M->>M: delete PHD-owned paths in the home, write them again from the new Spec
+    D->>D: argv = adapter.resume_argv(fresh argv, sid, spec); stack changed? → warning
+    D->>L: write run.json (session_id, resumed_from = previous.run_id)
+    D->>D: launch in spec.cwd with the shared home, stdin = first message from inputs
 ```
 
-What must persist for a resume to work:
+Checks, all made before anything is written:
 
-| Needed | Why | If missing |
+| Check | Why | If it fails |
 |---|---|---|
-| the previous run's `home/` | holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens with `resumable=False` |
-| the previous run's `run.json` in **this** dispatcher's ledger | provides `base_argv` and `env` | `NotResumable` ("no run record") |
-| `session_id` on the previous result | the harness resume flag needs it | `NotResumable` ("has no session id") |
-| same harness | sessions are harness-specific | `NotResumable` |
-| `result.json`, when passing a run id | to load the previous `RunResult` | `NotResumable` ("no finished run") |
+| `inputs.rules` is `None` | rules are part of the system prompt, which the harness (claude) snapshots at session start | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
+| a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status | `NotResumable` ("no finished run with session") |
+| that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
+| its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
+| its `cwd` is `spec.cwd` | claude keys sessions by working directory | `NotResumable` ("ran in cwd") |
 
 Details:
 
-- Each resume gets a **new** `run_id` and run directory (`run.json`, `events.jsonl`, `stderr.log`,
-  `result.json`) but **no** `home/`; `RunResult.home_dir` points to the original home, and `resumed_from` to the
-  run it continued. Chains work: resuming a resumed run reuses the same home and the original `base_argv`, so
-  resume flags never accumulate.
-- `stack_hash` is copied from the previous result; the stack copy in the home is not refreshed.
+- Each resumed turn gets a **new** `run_id` and run directory (`run.json`, `events.jsonl`, `stderr.log`,
+  `result.json`) but **no** `home/` of its own: `RunResult.home_dir` is the shared home, and `resumed_from` is
+  the run the session was found in (for a chain, the previous turn). Chains work because the lookup always takes
+  the latest run of the session.
+- The first message is built from `inputs` exactly as for a fresh run (`# Task brief` and/or `# Message`), so a
+  resumed turn can carry a brief.
+- `argv` is this materialization's fresh argv plus the harness's resume flag (claude `--resume <sid>`, opencode
+  `--session <sid>`; codex rebuilds `codex exec resume <sid> ...` from the fresh flags, without `-C`). Resume flags
+  never accumulate along a chain.
+- `stack_hash` is the hash of the stack in the new `Spec` (the home's stack copy is replaced). If the stack ref
+  (`name@version`) differs from the previous run's, the result gets a warning; the turn still runs.
+- A resumed run never deletes the shared home, even if `Spec.resumable` is `False` (and its `resumable` is `True`
+  whenever it has a session id). A fresh run with `resumable=False` still deletes its home, ending the chain.
+- `plan(inputs, session_id=...)` is a dry run of a resumed turn: it re-materializes the shared home the same way,
+  but launches nothing.
 
-### What resume reuses vs re-reads
+### What a resumed turn reuses vs takes from the new Spec
 
-A resume is mostly a replay of the **original** run's configuration. Only a few things come from the resuming
-dispatcher's `Spec`.
-
-| Comes from the **original** run (reused) | Comes from the **resuming** `Spec` (re-read) |
+| Reused from the session | Taken from the new `Spec` (and `Inputs`) |
 |---|---|
-| everything in the run home: system prompt file (identity, rules, project context), skills, MCP config (with the original `secrets` resolved in), hook config and hook runtime | credentials (fresh claude token, fresh codex `auth.json` copy, fresh `OPENCODE_AUTH_CONTENT`) |
-| claude: the recorded argv, so `--model`, `--setting-sources`, `--permission-mode` / `--dangerously-skip-permissions`, `--max-budget-usd`, `--json-schema` | `cwd` (the process working directory) |
-| claude: `settings.json` (permissions, builtin suppression, merged `harness_config`) | `timeout_s` |
-| codex: `config.toml` (`sandbox_mode`, `approval_policy`, `project_doc_max_bytes`, MCP, skill disabling, merged `harness_config`) and the kept flags (`--ignore-rules`, `--output-schema <path>`, ...) | PHD's budget check (`budget_usd`) |
-| opencode: the recorded argv (`-m`, `--dir <original cwd>`, `--auto`) and `opencode.json` (permissions) | codex only: `-m <Spec.model>` |
-| the recorded environment (non-secret values), e.g. `OPENCODE_DISABLE_PROJECT_CONFIG`, config-home variables | the JSON fallback for `structured_output` (`Spec.output_schema`), secret scrubbing (`Spec.secrets`) |
-| `stack_hash` | `runs_root`, sinks, `Dispatcher.warnings` |
+| the harness's session data in the home: claude `projects/`, `.claude.json` and anything else Claude writes; codex `sessions/`, `*.sqlite`, logs; opencode `data/`, `state/` and what it installs under `config/` | everything PHD writes: the stack copy (`home/stack/`), the hook runtime (`home/phd/`, incl. `shim_config.json`), skills, the system-prompt / `AGENTS.md` file (identity and project context), MCP config, `settings.json` / `config.toml` / `opencode.json` (autonomy, permissions, builtin suppression, merged `harness_config`), codex `hooks.json` and `output-schema.json`, opencode's hook plugin, credentials |
+| | the whole argv (model, autonomy flags, budget flag, schema) and env, built fresh |
+| | `cwd` (must equal the session's), `timeout_s`, `budget_usd`, `secrets`, `runs_root`, sinks |
 
-So `autonomy`, `project_config`, `harness_builtins`, `harness_config`, `output_schema` (claude/codex flags) and,
-for claude and opencode, `model` cannot be changed by resuming with a different `Spec`. Yet `RunResult.model`,
-`autonomy`, `project_config`, `unsafe`, `credential_kind` and `cwd` record the **resuming** `Spec`, so they can
-disagree with what actually ran. PHD does not check that the resuming spec matches the original (CoreDesign §14.2,
-open item 14). For opencode, `--dir` keeps the original `cwd` even if the process runs in a different one.
-- A resumed run never deletes the home, even if `Spec.resumable` is `False`.
-- Hook runtime files are not rewritten, so hooks in a resumed run receive the **original** run's `run_id` and
-  `PHD_RUN_DIR`.
+PHD-owned directories (skills, `stack/`, `phd/`) are deleted and copied again, so a skill or hook removed from the
+stack disappears; PHD-owned files are overwritten or removed. Nothing else in the home is touched. Rules cannot be
+changed (or re-sent) on a resumed turn: the session keeps the system prompt it started with. What a harness does
+with a changed system-prompt file or `AGENTS.md` mid-session is up to the harness.
+
+Hooks on a resumed turn log to the **new** run: `shim_config.json` is rewritten, so hooks receive the new
+`run_id` and `PHD_RUN_DIR`.
 
 ## How a run ends
 

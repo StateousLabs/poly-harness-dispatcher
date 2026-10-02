@@ -19,6 +19,9 @@ Common to all three:
 - `argv[0]` is resolved on `PATH` at launch (`.cmd` / `.bat` shims on Windows run as `COMSPEC /c <shim> ...`),
   unless `Dispatcher(executables={harness: [...]})` overrides it.
 - With hooks, `home/phd/` holds `hook_shim.py`, `hooks.resolved.json` and `shim_config.json` ([Hooks](hooks.md)).
+- Each adapter declares the paths it writes (`owned_paths`). Resuming a session re-materializes the same home: those
+  paths plus `stack/` and `phd/` are deleted and written again from the resuming `Spec`; everything else in the
+  home is the harness's and is left alone ([Resume](run-lifecycle.md#resume)).
 
 ## claude
 
@@ -67,7 +70,7 @@ claude -p --output-format stream-json --verbose --model <model>
 `--strict-mcp-config` ignores every other MCP source. **Hooks:** `settings.json` `hooks`
 ([Hooks](hooks.md#per-harness-translation)).
 
-**Resume:** the original argv plus `--resume <session_id>`, same `CLAUDE_CONFIG_DIR`. Everything else (flags, config files, permissions) is the original run's; see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
+**Resume:** the home is re-materialized from the resuming `Spec`, and the argv is that fresh argv plus `--resume <session_id>`, same `CLAUDE_CONFIG_DIR` (sessions live under `projects/`, which PHD never touches); see [what a resumed turn reuses](run-lifecycle.md#what-a-resumed-turn-reuses-vs-takes-from-the-new-spec).
 
 **Stream and result:** JSONL. `system/init` gives `session_id` and `claude_code_version` (`cli_version`); the
 last `type == "result"` line gives `result` (`result_text`), `total_cost_usd`, `usage`, `num_turns`,
@@ -117,7 +120,7 @@ codex exec --json --strict-config --skip-git-repo-check -C <cwd> -m <model>
 ```
 
 **Environment set:** `CODEX_HOME=<home>` only. **Credentials:** `codex_auth_file` is copied to `home/auth.json`
-(also on every resume).
+(again on every resume).
 
 **`config.toml`** (before `harness_config`):
 
@@ -141,10 +144,11 @@ MCP tool calls. `--strict-config` makes unknown config keys fail, so a typo in `
 **Identity and rules:** `home/AGENTS.md`. **Skills:** `home/skills/`. **Hooks:** `home/hooks.json` in Claude's
 schema; `--dangerously-bypass-hook-trust` because PHD authored them.
 
-**Resume:** `codex exec resume <session_id>`, then the flags kept from the original argv (`--json`,
+**Resume:** `codex exec resume <session_id>`, then the flags kept from the fresh argv (`--json`,
 `--strict-config`, `--skip-git-repo-check`, `--ignore-rules`, `--dangerously-bypass-hook-trust`, and
 `--output-schema <path>` when present), then `-m <model> -`. There is no `-C`: the working directory comes from
-the process (`Spec.cwd`). `-m` uses the resuming dispatcher's `Spec.model`; `config.toml` (sandbox, approvals, MCP) is the original run's. see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
+the process (`Spec.cwd`). All of it, and `config.toml` (sandbox, approvals, MCP), comes from the resuming `Spec`,
+re-materialized into the same `CODEX_HOME` (`sessions/` and `*.sqlite` are kept); see [what a resumed turn reuses](run-lifecycle.md#what-a-resumed-turn-reuses-vs-takes-from-the-new-spec).
 
 **Stream and result:** JSONL. `thread.started.thread_id` is the session id; the last completed `agent_message`
 item is `result_text`; each `turn.completed` adds `usage` and counts a turn (and clears an earlier error);
@@ -220,7 +224,7 @@ opencode run --format json -m <provider/model> --dir <cwd> [--auto]     (--auto 
 **Hooks:** a generated plugin `config/plugin/phd-hooks.js` (only `pre_tool` and `post_tool`;
 [Hooks](hooks.md#opencode-plugin)).
 
-**Resume:** the original argv plus `--session <session_id>`, same `XDG_DATA_HOME`. Everything else (flags, config files, permissions) is the original run's; see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
+**Resume:** the home is re-materialized from the resuming `Spec`, and the argv is that fresh argv plus `--session <session_id>`, same `XDG_DATA_HOME` (`data/`, which PHD never touches); see [what a resumed turn reuses](run-lifecycle.md#what-a-resumed-turn-reuses-vs-takes-from-the-new-spec).
 
 **Stream and result:** JSON events. `sessionID` (first seen) is the session id; the last `text` part is
 `result_text`; each `step_finish` adds tokens and `cost` and counts a turn; a non-retryable `error` sets the error

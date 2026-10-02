@@ -3,7 +3,7 @@
 This page describes exactly what PHD puts into the system prompt and the first user message, in what order, how
 `project_config` changes it, and what a resumed run sends.
 
-The code is `src/phd/materialize/prompt.py` (`assemble`, `resume_message`).
+The code is `src/phd/materialize/prompt.py` (`assemble`).
 
 ## Two channels
 
@@ -70,21 +70,20 @@ focus on tests
 With `full`, the repo's instructions are not duplicated by PHD; how the harness combines them with the identity
 is the harness's behaviour.
 
-## Resume message
+## Resumed turns
 
-A resumed run sends only:
+A turn started with `session_id=` builds its first user message from `Inputs` exactly as a fresh run does
+(`# Task brief` and/or `# Message`; `EmptyTask` if both are missing). `Inputs.rules` is rejected with
+`UnsupportedFeature`: rules belong to the system prompt, which the session fixed when it started (claude snapshots
+it at session start).
 
-```text
-# Message
-
-<msg, stripped>
-```
-
-The earlier conversation comes from the harness session in the reused run home. The identity and rules come from
-the files still in that home: claude's recorded argv re-passes `--append-system-prompt-file <home>/system-prompt.md`;
-codex re-reads `$CODEX_HOME/AGENTS.md`; opencode re-reads `instructions` from its `opencode.json` (identity and
-rules on the resumed turn verified for all three harnesses in CoreDesign §14.2). A blank `msg` raises `EmptyTask`. The system-prompt file is not
-rewritten on resume.
+The earlier conversation comes from the harness session in the shared run home. The system-prompt file
+(claude `system-prompt.md`, codex and opencode `AGENTS.md`) is rewritten from the resuming `Spec` without rules:
+the identity and, with `project_config="instructions_only"`, the project context. Claude's argv re-passes
+`--append-system-prompt-file`; codex re-reads `$CODEX_HOME/AGENTS.md`; opencode re-reads `instructions` from its
+`opencode.json`. How much of a rewritten file a harness picks up mid-session is harness behaviour; the rules the
+session started with stay in its conversation (CoreDesign §14.2 verified identity and rules on a resumed turn for
+all three harnesses).
 
 ## Inspecting it
 

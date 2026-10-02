@@ -27,7 +27,7 @@ class InputNotFound(PhdError):
 
 
 class EmptyTask(PhdError):
-    """`Inputs` has neither a brief nor a non-blank msg, or a resume msg is blank."""
+    """`Inputs` has neither a brief nor a non-blank msg."""
 
 
 class StackInvalid(PhdError):
@@ -55,7 +55,7 @@ class UnsafeAutonomy(PhdError):
 
 
 class UnsupportedFeature(PhdError):
-    """The spec uses a feature the harness does not support (opencode `output_schema`)."""
+    """A feature is not supported here: opencode `output_schema`, or `Inputs.rules` on a resumed turn."""
 
 
 class InvalidSpec(PhdError):
@@ -67,7 +67,7 @@ class InvalidRunsRoot(PhdError):
 
 
 class NotResumable(PhdError):
-    """A resume target cannot be continued: unknown run, other harness, no session, or no home."""
+    """A `session_id` cannot be continued: no run has it, other harness, run home gone, or other `cwd`."""
 
 
 class ModelNotSupported(PhdError):
