@@ -67,7 +67,7 @@ claude -p --output-format stream-json --verbose --model <model>
 `--strict-mcp-config` ignores every other MCP source. **Hooks:** `settings.json` `hooks`
 ([Hooks](hooks.md#per-harness-translation)).
 
-**Resume:** the original argv plus `--resume <session_id>`, same `CLAUDE_CONFIG_DIR`.
+**Resume:** the original argv plus `--resume <session_id>`, same `CLAUDE_CONFIG_DIR`. Everything else (flags, config files, permissions) is the original run's; see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
 
 **Stream and result:** JSONL. `system/init` gives `session_id` and `claude_code_version` (`cli_version`); the
 last `type == "result"` line gives `result` (`result_text`), `total_cost_usd`, `usage`, `num_turns`,
@@ -144,7 +144,7 @@ schema; `--dangerously-bypass-hook-trust` because PHD authored them.
 **Resume:** `codex exec resume <session_id>`, then the flags kept from the original argv (`--json`,
 `--strict-config`, `--skip-git-repo-check`, `--ignore-rules`, `--dangerously-bypass-hook-trust`, and
 `--output-schema <path>` when present), then `-m <model> -`. There is no `-C`: the working directory comes from
-the process (`Spec.cwd`). `-m` uses the resuming dispatcher's `Spec.model`.
+the process (`Spec.cwd`). `-m` uses the resuming dispatcher's `Spec.model`; `config.toml` (sandbox, approvals, MCP) is the original run's. see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
 
 **Stream and result:** JSONL. `thread.started.thread_id` is the session id; the last completed `agent_message`
 item is `result_text`; each `turn.completed` adds `usage` and counts a turn (and clears an earlier error);
@@ -220,7 +220,7 @@ opencode run --format json -m <provider/model> --dir <cwd> [--auto]     (--auto 
 **Hooks:** a generated plugin `config/plugin/phd-hooks.js` (only `pre_tool` and `post_tool`;
 [Hooks](hooks.md#opencode-plugin)).
 
-**Resume:** the original argv plus `--session <session_id>`, same `XDG_DATA_HOME`.
+**Resume:** the original argv plus `--session <session_id>`, same `XDG_DATA_HOME`. Everything else (flags, config files, permissions) is the original run's; see [what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads).
 
 **Stream and result:** JSON events. `sessionID` (first seen) is the session id; the last `text` part is
 `result_text`; each `step_finish` adds tokens and `cost` and counts a turn; a non-retryable `error` sets the error

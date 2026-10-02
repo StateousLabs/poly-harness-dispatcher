@@ -164,7 +164,8 @@ Every message names the offending file.
 | Part | Read at | Consequence of editing the stack afterwards |
 |---|---|---|
 | `stack.json`, identity text, `.mcp.json`, `hooks.json` | `Stack.load` | not picked up until you load again |
-| skill folders, all other files | each `plan` / `start` (copied into the run home) | picked up by the next run |
+| the **list** of skill folders | `Stack.load` | a newly added or removed skill folder needs a new `Stack.load` |
+| contents of the known skill folders, all other files | each `plan` / `start` (copied into the run home) | picked up by the next run |
 | `content_hash()` | each `plan` / `start` | reflects the files at plan time |
 
 ## `content_hash`

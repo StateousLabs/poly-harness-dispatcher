@@ -155,7 +155,10 @@ class Dispatcher:
 
         The resumed run gets a new `run_id` and run directory but reuses the previous run's
         home (and so the harness session), its recorded argv and environment, with fresh
-        credentials. Identity and rules come from the session; only `msg` is sent.
+        credentials. Only `msg` is sent: the conversation comes from the harness session, and identity and
+        rules from the files and flags still in the reused home (claude re-passes
+        `--append-system-prompt-file`; codex and opencode re-read their `AGENTS.md`). Flags and config files
+        (autonomy, project_config, permissions, budget flag, schema) are the original run's.
 
         Args:
             previous: A `RunResult` or a run id in this dispatcher's ledger.

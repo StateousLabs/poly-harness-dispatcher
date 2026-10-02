@@ -75,6 +75,15 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet
   (open item 5).
 - Run directories are never pruned (open item 13).
+- **Misconfigured `pre_tool` guards fail open.** A missing or misspelled hook command (the shell exits 1 or
+  127) or a crashing guard script (exit 1) maps to exit 1, which does not block in claude or codex. Only exit 2
+  from the guard itself, or a shim-level failure, blocks ([Hooks: exit codes](hooks.md#exit-codes)).
+- **Hook timeouts are usually the harness's.** For claude and codex the harness's own hook timeout
+  (`ceil(timeout_s)`) normally fires before the shim's, so a slow `pre_tool` hook gets the harness's timeout
+  behaviour rather than PHD's exit-2 block; only opencode gets PHD's block ([timeout caveat](hooks.md#timeout-caveat)).
+- **Resume replays the original configuration.** Autonomy flags, `project_config` mechanisms, permissions, budget
+  and schema flags come from the original run, while `RunResult.autonomy` / `project_config` / `unsafe` record the
+  resuming `Spec` ([what resume reuses](run-lifecycle.md#what-resume-reuses-vs-re-reads)).
 
 ---
 

@@ -31,7 +31,7 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `ModelNotSupported(harness, model, supported, hint=None)` | model not in the catalogue; attributes `harness`, `model`, `supported`, `hint` |
 
 ```python
-from phd import ModelNotSupported, PhdError
+from phd import Dispatcher, ModelNotSupported, PhdError
 
 try:
     d = Dispatcher(spec)

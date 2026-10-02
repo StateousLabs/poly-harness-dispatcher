@@ -53,6 +53,9 @@ A package imports only from packages to its left:
 errors, constants  <-  _util  <-  spec, results  <-  materialize  <-  harnesses  <-  execution  <-  phd/__init__
 ```
 
+Simplified diagram of the main edges (it omits, for example, `harnesses` → `_util`, `execution` → `_util` and
+the many imports of `constants`); the rule above is authoritative.
+
 ```mermaid
 flowchart RL
     init["phd/__init__"] --> execution

@@ -33,7 +33,7 @@ injects it into each run's own environment or config home. Two styles:
 |---|---|---|
 | claude | `claude auth login`, then `Credentials.from_host("claude")` (= `claude_host_login()`, reads `~/.claude/.credentials.json`) | `Credentials.claude_oauth_token(token)` with a token from `claude setup-token` (preferred), or `Credentials.anthropic_api_key(key)` |
 | codex | `codex login`, then `Credentials.from_host("codex")` (= `codex_auth_file()`, `~/.codex/auth.json`) | none (only the auth file kind exists) |
-| opencode | `opencode auth login`, then `Credentials.from_host("opencode")` (= `opencode_auth_file()`, `~/.local/share/opencode/auth.json`) | none; pass `providers=[...]` to copy only some provider entries |
+| opencode | `opencode auth login`, then `Credentials.from_host("opencode")` (= `opencode_auth_file()`, `~/.local/share/opencode/auth.json`) | none; to copy only some provider entries use `Credentials.opencode_auth_file(providers=[...])` (`from_host` takes no `providers`) |
 
 > **macOS keychain caveat.** On macOS Claude Code keeps its login in the Keychain, so
 > `~/.claude/.credentials.json` does not exist and `Credentials.from_host("claude")` raises

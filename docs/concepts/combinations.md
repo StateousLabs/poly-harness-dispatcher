@@ -16,7 +16,7 @@ Cells show what PHD sets; what the harness then permits is the harness's own beh
 | claude | `full` | `--setting-sources user,project,local --permission-mode acceptEdits` | `--setting-sources user,project,local --dangerously-skip-permissions` |
 | codex | `ignore` | `sandbox_mode="workspace-write"`, `project_doc_max_bytes=0`, `--ignore-rules`, repo `.agents/skills` disabled | `sandbox_mode="danger-full-access"` + the same suppression |
 | codex | `instructions_only` | as `ignore` + repo files in `AGENTS.md` | as `ignore` + repo files |
-| codex | `full` | `sandbox_mode="workspace-write"`, no suppression | `sandbox_mode="danger-full-access"`, no suppression |
+| codex | `full` | `sandbox_mode="workspace-write"`, no repo-level suppression (the user's `~/.agents/skills` stay disabled) | `sandbox_mode="danger-full-access"`, no repo-level suppression (user skills stay disabled) |
 | opencode | `ignore` | `OPENCODE_DISABLE_PROJECT_CONFIG=1`; permission `edit: allow, bash: {"*": deny}, external_directory: deny` | `OPENCODE_DISABLE_PROJECT_CONFIG=1`; permission `{"*": allow}`; `--auto` |
 | opencode | `instructions_only` | as `ignore` + repo files in `AGENTS.md` | as `ignore` + repo files |
 | opencode | `full` | no `OPENCODE_DISABLE_PROJECT_CONFIG`; restricted permission | no `OPENCODE_DISABLE_PROJECT_CONFIG`; `{"*": allow}`, `--auto` |
@@ -40,7 +40,7 @@ codex always gets `approval_policy = "never"`. What that means in practice under
 | opencode | `permission.skill.customize-opencode = "deny"` | opencode defaults |
 
 Independent of `harness_builtins`: the host's user-level skills never load (claude/opencode: separate config home
-and env flags; codex: foreign `SKILL.md` files disabled in `config.toml`).
+and env flags; codex: the user's `~/.agents/skills/*/SKILL.md` disabled in `config.toml` for every `project_config`, repo-level `.agents/skills` too unless `project_config="full"`).
 
 ## Budget enforcement
 

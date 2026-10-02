@@ -57,7 +57,7 @@ Other symptoms:
 | `harness_config key '...' conflicts with a PHD-owned value` warning | your scalar was ignored; PHD keeps its own ([merge rules](concepts/spec-and-inputs.md#harness_config)) |
 | codex run fails right after start with a config error | `--strict-config` rejects unknown keys; check `harness_config` |
 | a hook never fires | the generated matcher in `home/settings.json` / `home/hooks.json` / `home/config/plugin/phd-hooks.js`; the resolved command in `home/phd/hooks.resolved.json`; run that command by hand with a sample payload on stdin |
-| a hook should block but does not | it must exit **2**; a crashing hook script exits 1, which does not block ([exit codes](concepts/hooks.md#exit-codes)) |
+| a hook should block but does not | it must exit **2**; a crashing hook script or a misspelled command exits 1 (or 127), which does not block ([exit codes](concepts/hooks.md#exit-codes)) |
 | `could not load the <harness> model catalogue` warning | the catalogue command failed; the model was not checked |
 | run directories pile up | PHD never prunes `runs_root`; delete old `<run_id>/` folders yourself |
 

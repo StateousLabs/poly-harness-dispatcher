@@ -109,13 +109,28 @@ Details:
   `result.json`) but **no** `home/`; `RunResult.home_dir` points to the original home, and `resumed_from` to the
   run it continued. Chains work: resuming a resumed run reuses the same home and the original `base_argv`, so
   resume flags never accumulate.
-- Credentials are re-read from the resuming dispatcher's `Spec` (a fresh claude access token, a fresh codex
-  `auth.json` copy, fresh `OPENCODE_AUTH_CONTENT`).
-- `cwd` comes from the resuming dispatcher's `Spec`. For claude and opencode the model is the one in the recorded
-  argv; codex gets `-m <Spec.model>` of the resuming dispatcher. `RunResult.model` records the resuming
-  `Spec.model` either way. PHD does not check that cwd or model match the original (CoreDesign §14.2, open
-  item 14).
 - `stack_hash` is copied from the previous result; the stack copy in the home is not refreshed.
+
+### What resume reuses vs re-reads
+
+A resume is mostly a replay of the **original** run's configuration. Only a few things come from the resuming
+dispatcher's `Spec`.
+
+| Comes from the **original** run (reused) | Comes from the **resuming** `Spec` (re-read) |
+|---|---|
+| everything in the run home: system prompt file (identity, rules, project context), skills, MCP config (with the original `secrets` resolved in), hook config and hook runtime | credentials (fresh claude token, fresh codex `auth.json` copy, fresh `OPENCODE_AUTH_CONTENT`) |
+| claude: the recorded argv, so `--model`, `--setting-sources`, `--permission-mode` / `--dangerously-skip-permissions`, `--max-budget-usd`, `--json-schema` | `cwd` (the process working directory) |
+| claude: `settings.json` (permissions, builtin suppression, merged `harness_config`) | `timeout_s` |
+| codex: `config.toml` (`sandbox_mode`, `approval_policy`, `project_doc_max_bytes`, MCP, skill disabling, merged `harness_config`) and the kept flags (`--ignore-rules`, `--output-schema <path>`, ...) | PHD's budget check (`budget_usd`) |
+| opencode: the recorded argv (`-m`, `--dir <original cwd>`, `--auto`) and `opencode.json` (permissions) | codex only: `-m <Spec.model>` |
+| the recorded environment (non-secret values), e.g. `OPENCODE_DISABLE_PROJECT_CONFIG`, config-home variables | the JSON fallback for `structured_output` (`Spec.output_schema`), secret scrubbing (`Spec.secrets`) |
+| `stack_hash` | `runs_root`, sinks, `Dispatcher.warnings` |
+
+So `autonomy`, `project_config`, `harness_builtins`, `harness_config`, `output_schema` (claude/codex flags) and,
+for claude and opencode, `model` cannot be changed by resuming with a different `Spec`. Yet `RunResult.model`,
+`autonomy`, `project_config`, `unsafe`, `credential_kind` and `cwd` record the **resuming** `Spec`, so they can
+disagree with what actually ran. PHD does not check that the resuming spec matches the original (CoreDesign §14.2,
+open item 14). For opencode, `--dir` keeps the original `cwd` even if the process runs in a different one.
 - A resumed run never deletes the home, even if `Spec.resumable` is `False`.
 - Hook runtime files are not rewritten, so hooks in a resumed run receive the **original** run's `run_id` and
   `PHD_RUN_DIR`.

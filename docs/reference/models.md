@@ -8,7 +8,7 @@ This page is the API reference for `ModelCatalog`, the pre-launch model check th
 
 | Member | Purpose |
 |---|---|
-| `.models(harness) -> list[str]` | known model names (runs the catalogue command once per instance) |
+| `.models(harness) -> list[str]` | known model names: codex/opencode run their catalogue command once per instance; claude has no catalogue command and returns PHD's static list |
 | `.validate(harness, model) -> list[str]` | warnings if acceptable; raises `ModelNotSupported` if unknown |
 
 Sources:

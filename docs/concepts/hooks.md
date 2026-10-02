@@ -65,8 +65,8 @@ names are unknown, so they are rejected rather than guessed.
 - `command` = the Python interpreter running PHD (`sys.executable`), the shim path, the harness name and the hook's
   index. Arguments are quoted only when they contain whitespace or `& | < > ^ ( )`. For codex on Windows, if the
   command starts with a quote, it is wrapped in one more pair of quotes (cmd.exe `/C` strips one pair).
-- `timeout` = `ceil(timeout_s)` seconds (the harness's own limit); the shim applies `timeout_s` to your command
-  too.
+- `timeout` = `ceil(timeout_s)` seconds (the harness's own limit); the shim applies the same `timeout_s` to your
+  command. See the [timeout caveat](#timeout-caveat) below.
 
 **opencode** gets a generated plugin; see [below](#opencode-plugin).
 
@@ -125,18 +125,37 @@ What the shim returns to the harness:
 | your command exits 0 | 0 (allow) | 0 |
 | your command exits 2 | **2 (block; stderr is the reason)** | 1 |
 | your command exits with any other code | 1 | 1 |
-| your command times out (`timeout_s`) | 2 | 1 |
-| your command cannot be started, or the shim fails unexpectedly | 2 | 1 |
+| your command is missing or misspelled (the shell starts but cannot find it) | the shell's own exit code (usually 1 from `cmd.exe`, 127 from `/bin/sh`) → **1, does not block** | 1 |
+| your hook script crashes (a Python traceback exits 1) | **1, does not block** | 1 |
+| your command times out (`timeout_s`) inside the shim | 2 (but see the [timeout caveat](#timeout-caveat)) | 1 |
+| the shell itself cannot be spawned, or the shim fails unexpectedly | 2 | 1 |
 | stdin is not valid JSON / not an object | 2 | 1 |
 | shim arguments invalid, `hooks.resolved.json` or `shim_config.json` unreadable | 2 | 2 |
 
-Two rules follow from this:
+The command runs with `shell=True`, so a command that does not exist does **not** raise in the shim: the shell
+starts fine and exits with its own "not found" code, which the shim maps to 1.
 
-- **`pre_tool` is fail-closed for shim-level failures.** A hook that times out or cannot run blocks the tool.
-  But a hook script that itself crashes usually exits 1 (a Python traceback does), and exit 1 does **not** block
-  in claude or codex (it is a non-blocking error). Exit with 2 explicitly to block.
+Rules that follow from this:
+
+- **`pre_tool` is fail-closed only for shim-level failures:** bad shim arguments, unreadable shim config or hook
+  list, an invalid payload, a shell that cannot be spawned, an unexpected shim error, and a timeout that the shim
+  itself detects.
 - **Outside `pre_tool`, 2 becomes 1.** A claude `Stop` hook exiting 2 would make the agent continue, so a neutral
   `stop` hook cannot do that. The exception is the last row, where the shim returns 2 before it knows the event.
+
+> **Warning: a misconfigured `pre_tool` guard fails open.** A typo in the command, a missing interpreter, or a
+> guard script that crashes all produce exit 1, which claude and codex treat as a non-blocking error: the tool
+> runs. The guard script itself must exit **2** to block. Test a guard by running its resolved command from
+> `home/phd/hooks.resolved.json` by hand with a sample payload on stdin and checking the exit code.
+
+### Timeout caveat
+
+For claude and codex the native hook entry carries `"timeout": ceil(timeout_s)` and the shim applies the same
+`timeout_s` to your command. The harness's timer starts first (it includes starting the shim), so on a slow hook
+the harness usually kills the shim before the shim's own timeout fires and returns 2. The outcome is then the
+harness's own hook-timeout behaviour, not PHD's exit-2 block. For opencode the plugin runs the shim with
+`Bun.spawnSync` and no timeout of its own, so the shim's timeout applies and a timed-out `pre_tool` hook gets
+exit 2 (block).
 
 How each harness treats 1 vs 2 is the harness's behaviour; PHD only guarantees the mapping above. On codex a
 blocked call is reported as "rejected: blocked by policy" without your reason.
@@ -161,7 +180,7 @@ The shim receives the neutral payload already shaped by the plugin and passes it
 - Unmapped native tools reach hooks under their native names, so a hook without `match` sees harness-specific
   names for them.
 - The hook configuration embeds the absolute path of the Python interpreter that created the run. If that
-  environment is removed, hooks of a later resume fail (and fail closed on `pre_tool`).
+  environment is removed, hooks of a later resume cannot start; the harness then handles a failed hook command its own way (for claude and codex usually as a non-blocking error, so `pre_tool` guards fail open).
 - Hook commands run on the host with the harness's environment; they are not sandboxed.
 
 ---

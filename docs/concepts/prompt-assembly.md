@@ -80,8 +80,10 @@ A resumed run sends only:
 <msg, stripped>
 ```
 
-The identity, rules and earlier conversation come from the harness session in the reused run home (verified for
-all three harnesses in CoreDesign §14.2). A blank `msg` raises `EmptyTask`. The system-prompt file is not
+The earlier conversation comes from the harness session in the reused run home. The identity and rules come from
+the files still in that home: claude's recorded argv re-passes `--append-system-prompt-file <home>/system-prompt.md`;
+codex re-reads `$CODEX_HOME/AGENTS.md`; opencode re-reads `instructions` from its `opencode.json` (identity and
+rules on the resumed turn verified for all three harnesses in CoreDesign §14.2). A blank `msg` raises `EmptyTask`. The system-prompt file is not
 rewritten on resume.
 
 ## Inspecting it
