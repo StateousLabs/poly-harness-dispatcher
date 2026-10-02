@@ -57,7 +57,7 @@ names are unknown, so they are rejected rather than guessed.
 {"PreToolUse": [{"matcher": "Bash|PowerShell",
                  "hooks": [{"type": "command",
                             "command": "C:/path/python.exe C:/runs/<id>/home/phd/hook_shim.py claude 0",
-                            "timeout": 10}]}]}
+                            "timeout": 20}]}]}
 ```
 
 - claude: under `hooks` in `home/settings.json`. codex: `home/hooks.json` as `{"hooks": {...}}`, and the run gets
@@ -65,8 +65,8 @@ names are unknown, so they are rejected rather than guessed.
 - `command` = the Python interpreter running PHD (`sys.executable`), the shim path, the harness name and the hook's
   index. Arguments are quoted only when they contain whitespace or `& | < > ^ ( )`. For codex on Windows, if the
   command starts with a quote, it is wrapped in one more pair of quotes (cmd.exe `/C` strips one pair).
-- `timeout` = `ceil(timeout_s)` seconds (the harness's own limit); the shim applies the same `timeout_s` to your
-  command. See the [timeout caveat](#timeout-caveat) below.
+- `timeout` = `ceil(timeout_s) + 10` seconds (the harness's own limit, padded by `HOOK_TIMEOUT_MARGIN_S`); the shim
+  applies plain `timeout_s` to your command, so the shim times out first. See the [timeout caveat](#timeout-caveat) below.
 
 **opencode** gets a generated plugin; see [below](#opencode-plugin).
 
@@ -124,38 +124,38 @@ What the shim returns to the harness:
 |---|---|---|
 | your command exits 0 | 0 (allow) | 0 |
 | your command exits 2 | **2 (block; stderr is the reason)** | 1 |
-| your command exits with any other code | 1 | 1 |
-| your command is missing or misspelled (the shell starts but cannot find it) | the shell's own exit code (usually 1 from `cmd.exe`, 127 from `/bin/sh`) → **1, does not block** | 1 |
-| your hook script crashes (a Python traceback exits 1) | **1, does not block** | 1 |
-| your command times out (`timeout_s`) inside the shim | 2 (but see the [timeout caveat](#timeout-caveat)) | 1 |
+| your command exits with any other code | **2 (block)**; stderr is prefixed `PHD hook blocked the tool: guard exited <code> (pre_tool hooks fail closed)` | 1 |
+| your command is missing or misspelled (the shell starts but cannot find it) | the shell's own exit code (usually 1 from `cmd.exe`, 127 from `/bin/sh`) → **2 (block)**, with the prefix above | 1 |
+| your hook script crashes (a Python traceback exits 1) | **2 (block)**, with the prefix above | 1 |
+| your command times out (`timeout_s`) inside the shim | 2 (the shim times out before the harness does, see the [timeout caveat](#timeout-caveat)) | 1 |
 | the shell itself cannot be spawned, or the shim fails unexpectedly | 2 | 1 |
 | stdin is not valid JSON / not an object | 2 | 1 |
 | shim arguments invalid, `hooks.resolved.json` or `shim_config.json` unreadable | 2 | 2 |
 
 The command runs with `shell=True`, so a command that does not exist does **not** raise in the shim: the shell
-starts fine and exits with its own "not found" code, which the shim maps to 1.
+starts fine and exits with its own "not found" code. For `pre_tool` the shim maps that, like any non-zero exit, to 2.
 
 Rules that follow from this:
 
-- **`pre_tool` is fail-closed only for shim-level failures:** bad shim arguments, unreadable shim config or hook
-  list, an invalid payload, a shell that cannot be spawned, an unexpected shim error, and a timeout that the shim
-  itself detects.
+- **`pre_tool` is fail-closed.** Any non-zero exit of your command blocks the tool (exit 2), as do bad shim
+  arguments, unreadable shim config or hook list, an invalid payload, a shell that cannot be spawned, an
+  unexpected shim error, and a timeout. A typo in the command or a crashing guard blocks rather than letting the
+  tool run. Only exit 2 is a deliberate block; any other non-zero code also gets the reason prefix on stderr.
 - **Outside `pre_tool`, 2 becomes 1.** A claude `Stop` hook exiting 2 would make the agent continue, so a neutral
   `stop` hook cannot do that. The exception is the last row, where the shim returns 2 before it knows the event.
 
-> **Warning: a misconfigured `pre_tool` guard fails open.** A typo in the command, a missing interpreter, or a
-> guard script that crashes all produce exit 1, which claude and codex treat as a non-blocking error: the tool
-> runs. The guard script itself must exit **2** to block. Test a guard by running its resolved command from
-> `home/phd/hooks.resolved.json` by hand with a sample payload on stdin and checking the exit code.
+> **Note:** because `pre_tool` fails closed, a misconfigured guard blocks every matching tool call. Test a guard
+> by running its resolved command from `home/phd/hooks.resolved.json` by hand with a sample payload on stdin and
+> checking the exit code.
 
 ### Timeout caveat
 
-For claude and codex the native hook entry carries `"timeout": ceil(timeout_s)` and the shim applies the same
-`timeout_s` to your command. The harness's timer starts first (it includes starting the shim), so on a slow hook
-the harness usually kills the shim before the shim's own timeout fires and returns 2. The outcome is then the
-harness's own hook-timeout behaviour, not PHD's exit-2 block. For opencode the plugin runs the shim with
-`Bun.spawnSync` and no timeout of its own, so the shim's timeout applies and a timed-out `pre_tool` hook gets
-exit 2 (block).
+For claude and codex the native hook entry carries `"timeout": ceil(timeout_s) + 10` (`HOOK_TIMEOUT_MARGIN_S` in
+`translate.py`) while the shim applies plain `timeout_s` to your command. The harness's timer starts first (it
+includes starting the shim), so the margin makes sure the shim's own timeout fires first and PHD's fail-closed
+exit 2 runs instead of the harness's own timeout behaviour. A hook that hangs for `timeout_s` therefore blocks
+after about `timeout_s`, not `timeout_s + 10`. For opencode the plugin runs the shim with `Bun.spawnSync` and no
+timeout of its own, so the shim's timeout applies there too.
 
 How each harness treats 1 vs 2 is the harness's behaviour; PHD only guarantees the mapping above. On codex a
 blocked call is reported as "rejected: blocked by policy" without your reason.

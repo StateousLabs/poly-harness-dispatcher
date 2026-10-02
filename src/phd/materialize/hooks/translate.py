@@ -24,6 +24,11 @@ NATIVE_TOOLS = {
     "opencode": {"shell": "bash", "read": "read", "write": "write", "edit": "edit", "web_fetch": "webfetch"},
 }
 
+# The harness's hook timer starts before Python even starts, so a native timeout equal to the shim's own
+# subprocess timeout lets the harness kill the shim first (its own, possibly fail-open, timeout behaviour).
+# The native timeout is padded by this margin so the shim times out first and PHD's fail-closed exit 2 runs.
+HOOK_TIMEOUT_MARGIN_S = 10
+
 
 def native_tool(harness: str, tool: str) -> str:
     if tool.startswith("mcp:") and harness == "claude":
@@ -65,7 +70,7 @@ def claude_style_block(harness: str, hooks: list[dict], shim: Path) -> dict:
     block: dict[str, list] = {}
     for index, hook in enumerate(hooks):
         entry: dict = {"hooks": [{"type": "command", "command": _hook_command(shim, harness, index),
-                                  "timeout": int(math.ceil(hook["timeout_s"]))}]}
+                                  "timeout": int(math.ceil(hook["timeout_s"])) + HOOK_TIMEOUT_MARGIN_S}]}
         if hook.get("tool"):
             matcher = native_tool(harness, hook["tool"])
             # For claude, edit also matches MultiEdit (the shim translates MultiEdit to edit)

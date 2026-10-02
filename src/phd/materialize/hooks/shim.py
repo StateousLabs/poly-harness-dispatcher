@@ -3,7 +3,7 @@
     python hook_shim.py <claude|codex|neutral> <hook_index>
 
 It translates the harness's hook payload into the neutral PHD event (CoreDesign §10), runs the
-stack's hook command with that event on stdin, and relays the result: exit 2 blocks, 0 allows.
+stack's hook command with that event on stdin, and relays the result: exit 2 blocks, 0 allows; for pre_tool any non-zero exit blocks (fail closed).
 Standard library only — it runs under the host's Python, outside the phd package."""
 
 import json
@@ -83,9 +83,17 @@ def main(argv: list[str]) -> int:
             return error_code
 
         sys.stdout.write(proc.stdout)
+        if event_type == "pre_tool":
+            # pre_tool fails closed: any non-zero exit blocks (a missing command or a crashing guard must not
+            # let the tool run). Only exit 2 is a deliberate block, so only other codes get the reason prefix.
+            if proc.returncode != 0 and proc.returncode != 2:
+                sys.stderr.write(f"PHD hook blocked the tool: guard exited {proc.returncode} "
+                                 f"(pre_tool hooks fail closed)\n")
+            sys.stderr.write(proc.stderr)
+            return 0 if proc.returncode == 0 else 2
         sys.stderr.write(proc.stderr)
-        # exit 2 blocks only before a tool runs; elsewhere (e.g. a claude Stop hook) it would keep the agent going
-        return {0: 0, 2: 2 if event_type == "pre_tool" else 1}.get(proc.returncode, 1)
+        # elsewhere exit 2 would e.g. keep a claude Stop hook's agent going, so every non-zero maps to 1
+        return 0 if proc.returncode == 0 else 1
     except Exception as e:
         error_code = 2 if event_type == "pre_tool" else 1
         sys.stderr.write(f"PHD hook shim error: {e}\n")

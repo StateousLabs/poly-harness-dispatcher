@@ -46,7 +46,11 @@ def test_claude_style_block(tmp_path, monkeypatch):
     entry = block["PreToolUse"][0]
     assert entry["matcher"] == "Bash"
     assert entry["hooks"][0]["type"] == "command"
-    assert entry["hooks"][0]["timeout"] == 10 and isinstance(entry["hooks"][0]["timeout"], int)
+    # native timeout = ceil(timeout_s) + margin, so the shim's own timeout (fail-closed) fires first
+    assert entry["hooks"][0]["timeout"] == 10 + translate.HOOK_TIMEOUT_MARGIN_S == 20
+    assert isinstance(entry["hooks"][0]["timeout"], int)
+    frac = hooks.claude_style_block("claude", [{"event": "pre_tool", "tool": "shell", "command": "c", "timeout_s": 2.5}], shim)
+    assert frac["PreToolUse"][0]["hooks"][0]["timeout"] == 3 + translate.HOOK_TIMEOUT_MARGIN_S
     assert entry["hooks"][0]["command"] == translate._shim_command(shim, "codex", 0)
 
 
@@ -248,3 +252,35 @@ def test_shim_non_pre_tool_exit_2_maps_to_1(tmp_path):
     result = subprocess.run([sys.executable, str(shim), "claude", "0"], text=True, capture_output=True,
                             input=json.dumps({"hook_event_name": "Stop"}))
     assert result.returncode == 1
+
+
+def _run_shim(tmp_path, event, command):
+    shim = hooks.write_runtime(tmp_path / "home", run_id="r", run_dir=tmp_path,
+                               hooks=[{"event": event, "tool": None, "command": command, "timeout_s": 10}])
+    return subprocess.run([sys.executable, str(shim), "claude", "0"], text=True, capture_output=True,
+                          input=json.dumps({"tool_name": "Bash"}))
+
+
+def test_shim_pre_tool_missing_command_fails_closed(tmp_path):
+    result = _run_shim(tmp_path, "pre_tool", "phd-no-such-command-xyz")
+    assert result.returncode == 2
+    assert "PHD hook blocked the tool: guard exited" in result.stderr
+    assert "pre_tool hooks fail closed" in result.stderr
+
+
+def test_shim_pre_tool_guard_exit_1_fails_closed(tmp_path):
+    cmd = f"{Path(sys.executable).as_posix()} -c \"import sys; sys.exit(1)\""
+    result = _run_shim(tmp_path, "pre_tool", cmd)
+    assert result.returncode == 2
+    assert "guard exited 1 (pre_tool hooks fail closed)" in result.stderr
+
+
+def test_shim_pre_tool_guard_exit_2_has_no_fail_closed_prefix(tmp_path):
+    cmd = f"{Path(sys.executable).as_posix()} -c \"import sys; sys.exit(2)\""
+    result = _run_shim(tmp_path, "pre_tool", cmd)
+    assert result.returncode == 2 and "fail closed" not in result.stderr
+
+
+def test_shim_post_tool_exit_1_stays_1(tmp_path):
+    cmd = f"{Path(sys.executable).as_posix()} -c \"import sys; sys.exit(1)\""
+    assert _run_shim(tmp_path, "post_tool", cmd).returncode == 1
