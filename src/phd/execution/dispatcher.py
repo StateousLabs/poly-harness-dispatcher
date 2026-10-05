@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .._util.fs import is_within, robust_rmtree
-from ..errors import InvalidRunsRoot, NotResumable, UnsupportedFeature
+from ..errors import InvalidRunsRoot, NotResumable, StackNotFound, UnsupportedFeature
 from ..harnesses import ModelCatalog, get_adapter
 from ..materialize import MaterializedHome, materialize
 from ..results import LocalLedger, ResultSink, RunResult
@@ -100,12 +100,16 @@ class Dispatcher:
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
             NotResumable: `session_id` cannot be continued (see `start`).
+            StackNotFound: The stack's folder no longer exists (removed from the store).
             UnsupportedFeature: `session_id` together with `inputs.rules`.
         """
         return self._plan(inputs, session_id, dry_run=True)[0]
 
     def _plan(self, inputs: Inputs, session_id: str | None, *,
               dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None]:
+        if not self.spec.stack.root.is_dir():
+            raise StackNotFound(f"stack {self.spec.stack.ref}: {self.spec.stack.root} no longer exists "
+                                "(removed from the store?)")
         prev = self._find_session(inputs, session_id) if session_id is not None else None
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
@@ -206,6 +210,7 @@ class Dispatcher:
 
         Raises:
             HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
+            StackNotFound: The stack's folder no longer exists (removed from the store).
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
             NotResumable: No finished run has `session_id`; it belongs to another harness; its
