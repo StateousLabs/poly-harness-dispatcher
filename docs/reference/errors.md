@@ -19,6 +19,9 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `InputNotFound` | `Inputs.brief` / `Inputs.rules` is not a file |
 | `EmptyTask` | no brief and no non-blank msg |
 | `StackInvalid` | malformed stack directory |
+| `StackFetchError` | a stack source cannot be read or downloaded, or its archive is unusable or unsafe |
+| `StackConflict` | the store has this `name@version` with different content (pass `replace=True`) |
+| `StackNotFound` | no stored stack matches the reference, or a stack's folder no longer exists |
 | `StackIncompatible` | stack's `harnesses` excludes `Spec.harness` |
 | `HookUnsupported` | non-neutral hook event, or event/tool not expressible for the harness |
 | `MissingSecret` | `${env:NAME}` without `Spec.secrets["NAME"]` |
@@ -58,6 +61,12 @@ Rendered from the docstrings (MkDocs site only).
 ::: phd.EmptyTask
 
 ::: phd.StackInvalid
+
+::: phd.StackFetchError
+
+::: phd.StackConflict
+
+::: phd.StackNotFound
 
 ::: phd.StackIncompatible
 

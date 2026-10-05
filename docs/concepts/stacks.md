@@ -19,8 +19,20 @@ config/                      any directory name
   ...                        anything else (MCP server code, data); copied with the stack
 ```
 
-Only a directory is accepted (`Stack.load` does not read tarballs; see
-[Architecture: planned stack resolver](../architecture.md#roadmap-components)).
+Only a directory is accepted (`Stack.load` does not read tarballs). To build a stack from several sources (URLs,
+archives, extra skills, MCP servers or hooks) use `phd.stacks`; see [Stack resolver](stack-resolver.md).
+
+## Composing stacks
+
+`phd.stacks.compose(...)` or a `stack.toml` builds this layout from a base stack plus individual components, each
+from a local path or an `https://` URL, and keeps the result in a local store:
+
+```python
+import phd.stacks as stacks
+stack = stacks.resolve(stacks.compose("reviewer", "1.0.0", base="stacks/base", skills=["skills/pytest-helpers"]))
+```
+
+The returned `Stack` is the same kind of object as `Stack.load(...)` returns. Details: [Stack resolver](stack-resolver.md).
 
 ## `stack.json`
 

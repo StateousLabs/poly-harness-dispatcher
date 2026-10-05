@@ -39,6 +39,18 @@ print(result.status, result.cost_usd, result.result_text)
 followup = d.spawn(Inputs(msg="Which one has a scripts/ folder?"), session_id=result.session_id)
 ```
 
+To compose a stack from several sources (a base stack plus extra skills, MCP servers or hooks, local or `https://`)
+and keep it in a local store, use `phd.stacks`:
+
+```python
+import phd.stacks as stacks
+
+stack = stacks.resolve(stacks.compose("reviewer", "1.0.0", base="tests/fixtures/stack",
+                                      skills=["path/to/extra-skill"]))
+spec = Spec(harness="claude", model="haiku", stack=stack, cwd="path/to/repo",
+            credentials=Credentials.from_host("claude"))
+```
+
 `session_id=` continues that harness session (the home is re-materialized from the current spec).
 `spawn()` blocks; in Jupyter or async code use `await d.start(inputs)`, then
 `async for ev in handle.events()` and `await handle.wait()` (see `examples/quickstart.ipynb`). A failed run does
@@ -51,6 +63,7 @@ On macOS the Claude login lives in the Keychain: use `Credentials.claude_oauth_t
 
 - [Documentation index](docs/index.md): what is built, what is planned, and every page
 - [Getting started](docs/getting-started.md): install, authentication per harness, first agent, tests, dry runs
+- [Stack resolver](docs/concepts/stack-resolver.md): compose and store stacks from several sources
 - [Architecture](docs/architecture.md): package layout, data flow, roadmap components
 - [API reference](docs/reference/index.md)
 - [Design record](docs/CoreDesign.md)

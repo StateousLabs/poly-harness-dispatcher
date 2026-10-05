@@ -20,6 +20,12 @@ src/phd/
     proc.py            pid_alive
     shell.py           shell_join (hook command lines), resolve_argv (PATH lookup, .cmd shims)
     toml.py            minimal TOML writer for codex config.toml
+  stacks/            compose, resolve and store stacks (uses spec and _util only)
+    __init__.py        resolve, get, list, remove, prune, compose, load_manifest, Manifest, ComponentSource
+    manifest.py        Manifest, ComponentSource, stack.toml parsing, compose()
+    sources.py         fetch local / http(s) sources, unpack archives safely
+    assemble.py        build config/ from a manifest: clash rules, ${here}, stack.json
+    store.py           the store: index.json, identity hash, dedupe, locking, list/remove/prune
   spec/              what to run
     spec.py            Spec, Inputs
     credentials.py     Credentials
@@ -52,7 +58,7 @@ src/phd/
 A package imports only from packages to its left:
 
 ```
-errors, constants  <-  _util  <-  spec, results  <-  materialize  <-  harnesses  <-  execution  <-  phd/__init__
+errors, constants  <-  _util  <-  spec, results  <-  stacks  <-  materialize  <-  harnesses  <-  execution  <-  phd/__init__
 ```
 
 Simplified diagram of the main edges (it omits, for example, `harnesses` → `_util`, `execution` → `_util` and
@@ -155,8 +161,8 @@ How the data changes shape from caller to ledger:
 
 ## Roadmap components
 
-> Everything in this section is **PLANNED, NOT DESIGNED**. It records the owner's stated intent and the open
-> questions. Nothing here exists in the code, and none of it is a design decision.
+> Item 1 (the stack resolver) is **built**. Everything else in this section is **PLANNED, NOT DESIGNED**: it records
+> the owner's stated intent and the open questions. None of it exists in the code, and none of it is a design decision.
 
 ```mermaid
 flowchart TB
@@ -164,7 +170,7 @@ flowchart TB
         core["core spawner<br/>spec / materialize / harnesses / execution / results"]
     end
     api["API (FastAPI)<br/>planned"]:::planned
-    resolver["stack resolver (stacks/)<br/>planned"]:::planned
+    resolver["stack resolver (stacks/)<br/>built"]
     sandbox["sandboxing (sandbox/, runner/)<br/>planned"]:::planned
     basemcp["BaseMCP<br/>tentative"]:::planned
     memory["memory (knowledge graph)<br/>planned, maybe separate project"]:::planned
@@ -182,15 +188,12 @@ flowchart TB
 
 What exists: everything documented on the other pages.
 
-Planned addition: a **stack resolver** that collects stacks from multiple sources (local directories, URLs,
-tarballs) and materializes them directly. Today `Stack.load` accepts only an already-unpacked directory.
+The **stack resolver** is built: `phd.stacks` composes a stack from local paths and URLs (a base stack plus
+individual skills, MCP servers and hook bundles), keeps it in a local store and deduplicates by content. It
+produces an ordinary `Stack`, so the core is unchanged. See [Stack resolver](concepts/stack-resolver.md).
 
-Open questions: source types and precedence; caching and versioning; integrity (CoreDesign mentions signed
-tarballs for remote stacks as a later-layer idea); whether "materialized directly" means skipping the
-`Stack.load` → copy step.
-
-Where it would sit: a sibling package `stacks/` (named in CoreDesign's package-layout note) that produces a
-directory, or a `Stack`, for the existing core.
+Still open: content verification (hash pins, signatures; CoreDesign mentions signed tarballs as a later-layer
+idea), a download cache, a registry, and shipping stacks into a sandbox.
 
 ### 2. API
 

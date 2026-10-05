@@ -82,3 +82,27 @@ def test_only_stack_skills(harness, poisoned_cwd):
     assert "demo-notes" in text and "demo-minimal" in text, text
     leaked = [name for name in KNOWN_BUILTIN_SKILLS[harness] if name in text]
     assert not leaked, f"harness built-in skills visible: {leaked}\n{text}"
+
+
+def test_composed_stack_lists_exactly_its_skills(tmp_path, http_server, poisoned_cwd):
+    import phd.stacks as stacks
+    from helpers import make_tar
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    (extra / "SKILL.md").write_text("---\nname: extra-local\ndescription: A composed local skill.\n---\n",
+                                    encoding="utf-8")
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "SKILL.md").write_text("---\nname: extra-remote\ndescription: A composed remote skill.\n---\n",
+                                     encoding="utf-8")
+    make_tar(remote, http_server.www / "remote.tar.gz")
+    stack = stacks.resolve(stacks.compose("live-composed", "1", base=FIXTURES / "stack",
+                                          skills=[extra, f"{http_server.url}/remote.tar.gz"]),
+                           store_root=tmp_path / "store")
+    spec = Spec(harness="claude", model=MODELS["claude"], stack=stack, cwd=poisoned_cwd,
+                credentials=Credentials.from_host("claude"), secrets={"ECHO_PREFIX": "phd-echo"}, timeout_s=300)
+    r = Dispatcher(spec, runs_root=RUNS).spawn(Inputs(msg="List the names of your skills, nothing else."))
+    assert r.status is RunStatus.SUCCEEDED, r.error
+    text = r.result_text or ""
+    for name in ("demo-notes", "demo-minimal", "extra-local", "extra-remote"):
+        assert name in text, text

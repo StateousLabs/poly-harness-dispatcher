@@ -3,16 +3,17 @@
 This page explains how the public API is organised and where each name is documented.
 
 Everything a user needs is importable from the top-level package: `from phd import ...` (the names in
-`phd.__all__`), plus the `phd.runs` module. Internal packages (`phd.spec`, `phd.execution`, `phd.harnesses`,
+`phd.__all__`), plus the `phd.runs` and `phd.stacks` modules. Internal packages (`phd.spec`, `phd.execution`, `phd.harnesses`,
 `phd.materialize`, `phd.results`, `phd._util`) are implementation details and may change.
 
 | Page | Names | Role |
 |---|---|---|
 | [Spec and stack](spec.md) | `Spec`, `Inputs`, `Credentials`, `Stack`, `HookDef` | describe a run: what, where, how, who, the task |
+| [Stack resolver](stacks.md) | `phd.stacks`: `resolve`, `get`, `list`, `remove`, `prune`, `compose`, `load_manifest`, `Manifest`, `ComponentSource`, `StoreEntry` | build a `Stack` from several sources; the local stack store |
 | [Dispatcher](dispatcher.md) | `Dispatcher`, `RunHandle` (and the `MaterializedHome` that `plan()` returns) | dry-run, launch, stream, wait, cancel, resume |
 | [Results](results.md) | `RunResult`, `RunStatus`, `RunError`, `Usage`, `Event`, `LocalLedger`, `ResultSink`, `phd.runs` | what a run produced, and where it is recorded |
 | [Models](models.md) | `ModelCatalog` | pre-launch model validation |
-| [Errors](errors.md) | `PhdError` and its 16 subclasses | pre-launch failures |
+| [Errors](errors.md) | `PhdError` and its 19 subclasses | pre-launch failures |
 
 Typical flow:
 

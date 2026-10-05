@@ -24,7 +24,7 @@ flowchart LR
 | Component | State | Where |
 |---|---|---|
 | Core spawner: `Spec` + `Stack` + materializer + launcher + collector, local run ledger | **Built** (layer 1). Runs on the host with **no sandbox**. | `src/phd/`, this documentation |
-| Stack resolver (stacks from several sources, URLs, tarballs) | Planned, not designed | [Architecture](architecture.md#roadmap-components) |
+| Stack resolver (stacks from several sources, URLs, archives; local store) | **Built** | `src/phd/stacks/`, [Stack resolver](concepts/stack-resolver.md) |
 | API (FastAPI surface over the spawner) | Planned, not designed | [Architecture](architecture.md#roadmap-components) |
 | BaseMCP (user chat + artifact tools for agents) | Tentative, not designed | [Architecture](architecture.md#roadmap-components) |
 | Sandboxing (container and/or microVM) | Planned, not designed | [Architecture](architecture.md#roadmap-components) |
@@ -50,6 +50,7 @@ print(result.status, result.result_text)
 **Concepts**
 
 - [Stacks](concepts/stacks.md): the `config/` directory: `stack.json`, the agent file, skills, `.mcp.json`, hooks, validation, `content_hash`.
+- [Stack resolver](concepts/stack-resolver.md): compose a stack from local paths and URLs; the manifest, clash rules, the store and its dedupe rules.
 - [Spec, Inputs, Credentials](concepts/spec-and-inputs.md): every field, its default, validation and effect.
 - [Harnesses](concepts/harnesses.md): per-harness reference: config home, argv, env, materialization, resume, cost, quirks.
 - [Prompt assembly](concepts/prompt-assembly.md): what goes in the system prompt and the first user message.
@@ -67,7 +68,7 @@ print(result.status, result.result_text)
 **Reference**
 
 - [Troubleshooting](troubleshooting.md): every `PhdError`, common failure kinds, Windows notes.
-- [API reference](reference/index.md): [Spec and stack](reference/spec.md), [Dispatcher](reference/dispatcher.md), [Results](reference/results.md), [Models](reference/models.md), [Errors](reference/errors.md).
+- [API reference](reference/index.md): [Spec and stack](reference/spec.md), [Stack resolver](reference/stacks.md), [Dispatcher](reference/dispatcher.md), [Results](reference/results.md), [Models](reference/models.md), [Errors](reference/errors.md).
 
 ---
 

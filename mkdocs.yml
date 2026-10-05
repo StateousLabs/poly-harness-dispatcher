@@ -69,6 +69,7 @@ nav:
   - Getting started: getting-started.md
   - Concepts:
       - Stacks: concepts/stacks.md
+      - Stack resolver: concepts/stack-resolver.md
       - Spec, Inputs, Credentials: concepts/spec-and-inputs.md
       - Harnesses: concepts/harnesses.md
       - Prompt assembly: concepts/prompt-assembly.md
@@ -82,6 +83,7 @@ nav:
   - API reference:
       - Overview: reference/index.md
       - Spec and stack: reference/spec.md
+      - Stack resolver: reference/stacks.md
       - Dispatcher: reference/dispatcher.md
       - Results: reference/results.md
       - Models: reference/models.md
