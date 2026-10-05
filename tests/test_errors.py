@@ -7,7 +7,7 @@ def test_every_error_is_a_phd_error():
     names = ["UnknownHarness", "HarnessNotInstalled", "CwdNotFound", "InputNotFound", "EmptyTask",
              "StackInvalid", "StackIncompatible", "HookUnsupported", "MissingSecret",
              "MissingCredentials", "UnsafeAutonomy", "UnsupportedFeature", "InvalidSpec",
-             "InvalidRunsRoot", "NotResumable", "ModelNotSupported"]
+             "InvalidRunsRoot", "NotResumable", "ModelNotSupported", "StackFetchError", "StackConflict", "StackNotFound"]
     for name in names:
         assert issubclass(getattr(errors, name), errors.PhdError), name
 

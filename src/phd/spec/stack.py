@@ -58,6 +58,7 @@ class Stack:
         skills: Skill directories under `skills/` (each has a `SKILL.md`), sorted by name.
         mcp_servers: `.mcp.json` `mcpServers`, unresolved (placeholders intact).
         hooks: Parsed `hooks/hooks.json` entries.
+        store: Where the stack lives in the stack store, or None for Stack.load(dir).
     """
 
     root: Path
@@ -71,6 +72,7 @@ class Stack:
     skills: tuple[Path, ...]
     mcp_servers: dict[str, dict]
     hooks: tuple[HookDef, ...]
+    store: StoreEntry | None = None
 
     @property
     def ref(self) -> str:
@@ -164,23 +166,33 @@ class Stack:
         hashed), files under `__pycache__/`, and `*.pyc` files. The dispatcher computes it at
         plan time and records it as `RunResult.stack_hash`.
         """
-        digest = hashlib.sha256()
-        for path in sorted(p for p in self.root.rglob("*") if p.is_file()):
-            rel = path.relative_to(self.root)
-            # Skip __pycache__ directories (check relative path parts, excluding filename)
-            if "__pycache__" in rel.parts[:-1]:
-                continue
-            # Skip hidden directories (but allow hidden files like .mcp.json)
-            if any(part.startswith(".") for part in rel.parts[:-1]):
-                continue
-            # Skip .pyc files
-            if rel.suffix == ".pyc":
-                continue
-            digest.update(rel.as_posix().encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
-            digest.update(b"\0")
-        return "sha256:" + digest.hexdigest()
+        return hash_tree(self.root)
+
+
+def hash_tree(root: Path, *, ignore_meta: tuple[str, ...] = ()) -> str:
+    """SHA-256 over a stack directory, as `"sha256:<hex>"`.
+
+    Files are visited in sorted order; each contributes its POSIX relative path and bytes. Skipped
+    (relative to `root`): files under a directory whose name starts with `.`, files under
+    `__pycache__/`, and `*.pyc`. With `ignore_meta`, `stack.json` is hashed as canonical JSON
+    without those keys (used for the store's identity hash).
+    """
+    digest = hashlib.sha256()
+    for path in sorted(p for p in Path(root).rglob("*") if p.is_file()):
+        rel = path.relative_to(root)
+        if "__pycache__" in rel.parts[:-1] or any(part.startswith(".") for part in rel.parts[:-1]):
+            continue
+        if rel.suffix == ".pyc":
+            continue
+        data = path.read_bytes()
+        if ignore_meta and rel.as_posix() == "stack.json":
+            meta = json.loads(data.decode("utf-8"))
+            data = json.dumps({k: v for k, v in meta.items() if k not in ignore_meta}, sort_keys=True).encode("utf-8")
+        digest.update(rel.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(data)
+        digest.update(b"\0")
+    return "sha256:" + digest.hexdigest()
 
 
 def _read_json(path: Path, required: bool = False) -> dict:
@@ -234,3 +246,35 @@ def _parse_hook(root: Path, hook: object) -> HookDef:
     return HookDef(event=hook["event"], command=hook["command"],
                    tool=(match or {}).get("tool") if match is not None else None,
                    timeout_s=timeout_s)
+
+
+@dataclass(frozen=True)
+class StoreEntry:
+    """Where a stack lives in the PHD stack store (`phd.stacks`).
+
+    Attributes:
+        ref: `"<name>@<version>"` of the stored stack that is used.
+        name: Stored stack name.
+        version: Stored stack version.
+        hash: Identity hash (`"sha256:<hex>"`): the content hash with `stack.json`'s `name`,
+            `version` and `description` left out.
+        created_at: ISO-8601 time the entry was stored.
+        manifest: Path of the manifest it was resolved from, or `None`.
+        path: The stored stack directory (`<store>/<name>/<version>/config`).
+        requested: The `name@version` that was asked for. It differs from `ref` when an identical
+            stack already stored under another ref was reused.
+    """
+
+    ref: str
+    name: str
+    version: str
+    hash: str
+    created_at: str
+    manifest: str | None
+    path: Path
+    requested: str
+
+    @property
+    def reused(self) -> bool:
+        """True when an identical stack stored under another ref was returned instead of storing a new one."""
+        return self.requested != self.ref

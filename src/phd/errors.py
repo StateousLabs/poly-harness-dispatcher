@@ -38,6 +38,18 @@ class StackIncompatible(PhdError):
     """The stack's `harnesses` list does not include `Spec.harness`."""
 
 
+class StackFetchError(PhdError):
+    """A stack source could not be read or downloaded, or its archive is unusable or unsafe."""
+
+
+class StackConflict(PhdError):
+    """The store already has this `name@version` with different content (pass `replace=True` to overwrite)."""
+
+
+class StackNotFound(PhdError):
+    """No stored stack matches the reference, or a stack's directory no longer exists."""
+
+
 class HookUnsupported(PhdError):
     """A hook's event is not neutral, or its event/tool cannot be expressed for the harness."""
 

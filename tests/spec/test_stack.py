@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import shutil
@@ -6,7 +7,7 @@ import pytest
 
 from conftest import FIXTURES
 from phd.errors import HookUnsupported, StackIncompatible, StackInvalid
-from phd.spec import HookDef, Stack
+from phd.spec import HookDef, Stack, StoreEntry, hash_tree
 
 
 @pytest.fixture
@@ -200,3 +201,28 @@ def test_content_hash_under_hidden_directory(tmp_path):
     (stack_root / "skills" / "demo-notes" / "references" / "notes.md").write_text("modified content")
     hash2 = Stack.load(stack_root).content_hash()
     assert hash2 != hash1, "Hash should change when content changes"
+
+
+def test_hash_tree_matches_content_hash(stack):
+    assert hash_tree(stack.root) == stack.content_hash()
+
+
+def test_hash_tree_ignore_meta(stack_copy):
+    a = hash_tree(stack_copy, ignore_meta=("name", "version", "description"))
+    meta = json.loads((stack_copy / "stack.json").read_text())
+    meta.update(name="renamed", version="9.9.9", description="other")
+    (stack_copy / "stack.json").write_text(json.dumps(meta))
+    assert hash_tree(stack_copy, ignore_meta=("name", "version", "description")) == a
+    assert hash_tree(stack_copy) != hash_tree(stack_copy, ignore_meta=("name",))
+    meta["harnesses"] = ["claude"]
+    (stack_copy / "stack.json").write_text(json.dumps(meta))
+    assert hash_tree(stack_copy, ignore_meta=("name", "version", "description")) != a
+
+
+def test_store_entry_and_stack_store(stack, tmp_path):
+    assert stack.store is None
+    e = StoreEntry(ref="a@1", name="a", version="1", hash="sha256:x", created_at="t", manifest=None,
+                   path=tmp_path, requested="b@2")
+    assert e.reused
+    assert not dataclasses.replace(e, requested="a@1").reused
+    assert dataclasses.replace(stack, store=e).store is e
