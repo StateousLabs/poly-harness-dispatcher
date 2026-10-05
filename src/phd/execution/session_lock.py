@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .._util.filelock import is_stale, read_holder
+from .._util.filelock import is_stale, read_holder, retry_sharing
 from .._util.proc import pid_alive
 from ..errors import NotResumable
 
@@ -76,6 +76,6 @@ def _running(holder: dict) -> bool:
 
 def _unlink(path: Path) -> None:
     try:
-        path.unlink()
+        retry_sharing(lambda: os.unlink(path))
     except FileNotFoundError:
         pass

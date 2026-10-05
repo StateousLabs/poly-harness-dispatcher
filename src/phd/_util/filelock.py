@@ -1,12 +1,11 @@
-"""A blocking inter-process lock file; a lock left by a dead process is taken over."""
+"""A blocking inter-process lock (OS file lock) plus the lock-file helpers the session lock uses."""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -56,69 +55,70 @@ def is_stale(path: Path, *, grace_s: float = UNREADABLE_GRACE_S) -> bool:
     return not (isinstance(pid, int) and pid_alive(pid))
 
 
+if sys.platform == "win32":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        os.lseek(fd, 0, 0)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, 0)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:  # BlockingIOError while another descriptor holds it
+            return False
+        return True
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 class FileLock:
     """`with FileLock(path):` — waits up to `timeout_s` for the lock (TimeoutError after that).
 
-    Each acquire writes a unique token into the lock file; release removes the file only if it still
-    holds our token. A stale lock is taken over by *renaming* it to a name unique to this acquire
-    (only one process can win that rename), never by a blind unlink that could delete a fresh lock."""
+    An OS lock on the file (`msvcrt.locking` on Windows, `flock` elsewhere): the kernel releases it when
+    the holding process dies, so there is no stale-lock takeover. The lock is per open descriptor, so a
+    second FileLock on the same path in the same process blocks too. Nothing is written into the file
+    (a locked byte range would block readers on Windows) and the file is never deleted."""
 
     def __init__(self, path: Path, *, timeout_s: float = 30.0, poll_s: float = 0.05):
         self.path, self.timeout_s, self.poll_s = Path(path), timeout_s, poll_s
-        self.token = ""
+        self._fd: int | None = None
 
     def __enter__(self) -> FileLock:
         deadline = time.monotonic() + self.timeout_s
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.token = uuid.uuid4().hex
-        while True:
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            except FileExistsError:
-                if is_stale(self.path) and self._take_over():
-                    continue
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"timed out after {self.timeout_s}s waiting for {self.path}") from None
-                time.sleep(self.poll_s)
-                continue
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"pid": os.getpid(), "token": self.token,
-                           "started_at": datetime.now(timezone.utc).isoformat()}, f)
-            return self
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise TimeoutError(f"timed out after {self.timeout_s}s waiting for {self.path}")
+            time.sleep(self.poll_s)
+        self._fd = fd
+        return self
 
     def __exit__(self, *exc) -> None:
-        holder = read_holder(self.path)
-        if holder is not None and holder.get("token") == self.token:
-            _unlink(self.path)
-
-    def _take_over(self) -> bool:
-        """Claim the stale lock by renaming it aside. True if the caller should retry the create now.
-
-        After winning the rename the claimed file is re-read: still stale -> delete it. Not stale (a fresh
-        lock appeared between our check and the rename) -> put it back; if the path is taken again, drop the
-        claimed file only when its holder's pid is dead, else leave it and keep polling."""
-        claimed = self.path.with_name(f"{self.path.name}.{self.token}.stale")
+        fd, self._fd = self._fd, None
+        if fd is None:
+            return
         try:
-            retry_sharing(lambda: os.rename(self.path, claimed))
-        except OSError:  # gone already, or another process won the rename (or still blocked): poll again
-            return False
-        if is_stale(claimed):
-            _unlink(claimed)
-            return True
-        if not self.path.exists():
-            try:
-                os.rename(claimed, self.path)
-                return False
-            except OSError:
-                pass
-        holder = read_holder(claimed)
-        pid = holder.get("pid") if holder else None
-        if isinstance(pid, int) and not pid_alive(pid):
-            _unlink(claimed)
-        return False
+            _unlock(fd)
+        finally:
+            os.close(fd)
 
 
 def _unlink(path: Path) -> None:
+    """Delete a file, tolerating its absence and Windows sharing violations (`retry_sharing`)."""
     try:
         retry_sharing(lambda: os.unlink(path))
     except FileNotFoundError:

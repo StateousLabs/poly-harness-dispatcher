@@ -20,6 +20,11 @@ DEFAULT_STORE_ROOT = Path.home() / ".phd" / "stacks"
 IDENTITY_IGNORE = ("name", "version", "description")
 STAGING_MAX_AGE_S = 3600
 _SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_RESERVED_DEVICE = re.compile(r"(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?", re.IGNORECASE)  # Windows device names
+
+
+def _safe_part(part: str) -> bool:
+    return bool(_SAFE_PART.fullmatch(part)) and not part.endswith(".") and not _RESERVED_DEVICE.fullmatch(part)
 
 
 def store_root(root: str | Path | None = None) -> Path:
@@ -52,9 +57,9 @@ class StackStore:
             allow_duplicates: bool, replace: bool) -> StoreEntry:
         """Store `staged` (holding config/ and stack.lock.json) under name@version, or reuse an equal stack."""
         for label, part in (("name", name), ("version", version)):
-            if not _SAFE_PART.fullmatch(part):
+            if not _safe_part(part):
                 raise StackInvalid(f"invalid stack {label} {part!r}: use letters, digits, '.', '_' and '-' "
-                                   "(starting with a letter or digit)")
+                                   "(starting with a letter or digit, not ending in '.', not a Windows device name)")
         ref = f"{name}@{version}"
         with FileLock(self.root / ".store.lock"):
             index = self._read_index()
@@ -75,9 +80,18 @@ class StackStore:
             target.parent.mkdir(parents=True, exist_ok=True)
             old = None
             if target.exists():
+                if record is None:
+                    _discard(staged)
+                    raise StackInvalid(f"stack folder for {ref} exists but is not indexed "
+                                       "(case or trailing-dot collision?)")
                 old = self.root / ".staging" / f"replaced-{uuid.uuid4().hex}"
                 retry_sharing(lambda: os.replace(target, old))
-            retry_sharing(lambda: os.replace(staged, target))
+            try:
+                retry_sharing(lambda: os.replace(staged, target))
+            except BaseException:
+                if old is not None:  # put the old stack back before failing
+                    retry_sharing(lambda: os.replace(old, target))
+                raise
             index[ref] = {"hash": ident, "created_at": datetime.now(timezone.utc).isoformat(), "manifest": manifest}
             self._write_index(index)  # the index is current before the old folder is deleted
             if old is not None:

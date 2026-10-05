@@ -235,3 +235,41 @@ def test_corrupt_index_is_a_stack_invalid(tmp_path, content):
     (store.root / "index.json").write_text(content)
     with pytest.raises(StackInvalid, match="stack store index is corrupt"):
         store.list()
+
+
+@pytest.mark.parametrize("bad", ["x.", "CON", "con", "nul.txt", "Com1", "LPT9.log", "aux"])
+def test_put_rejects_windows_hostile_names(tmp_path, bad):
+    store = StackStore(tmp_path / "store")
+    staged, ident = stage(store)
+    with pytest.raises(StackInvalid):
+        put(store, staged, ident, name=bad)
+    with pytest.raises(StackInvalid):
+        put(store, staged, ident, version=bad)
+
+
+def test_unindexed_existing_folder_is_refused(tmp_path):
+    store = StackStore(tmp_path / "store")
+    (store.root / "s" / "1").mkdir(parents=True)
+    staged, ident = stage(store)
+    with pytest.raises(StackInvalid, match="s@1 exists but is not indexed"):
+        put(store, staged, ident)
+    assert not staged.exists() and not (store.root / "index.json").exists()
+
+
+def test_failed_replace_move_restores_the_old_folder(tmp_path, monkeypatch):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    before = _index(store)
+    staged, ident = stage(store, tweak="# changed\n")
+    real = os.replace
+
+    def failing(src, dst, *a, **kw):
+        if str(src) == str(staged):
+            raise OSError("disk says no")
+        return real(src, dst, *a, **kw)
+    monkeypatch.setattr(os, "replace", failing)
+    with pytest.raises(OSError, match="disk says no"):
+        put(store, staged, ident, replace=True)
+    monkeypatch.undo()
+    assert (store.root / "s" / "1" / "config" / "stack.json").is_file()
+    assert _index(store) == before
