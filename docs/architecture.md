@@ -17,6 +17,7 @@ src/phd/
 
   _util/             stdlib-only helpers; imports nothing from phd except errors
     fs.py              write_json, write_private, deep_merge, robust_rmtree, is_within
+    proc.py            pid_alive
     shell.py           shell_join (hook command lines), resolve_argv (PATH lookup, .cmd shims)
     toml.py            minimal TOML writer for codex config.toml
   spec/              what to run
@@ -43,6 +44,7 @@ src/phd/
     dispatcher.py      Dispatcher
     handle.py          RunHandle
     process.py         HarnessProcess, child_env
+    session_lock.py    SessionLock: one run at a time per run home
 ```
 
 ## Dependency order and import rule

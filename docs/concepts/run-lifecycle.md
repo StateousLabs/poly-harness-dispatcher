@@ -65,6 +65,7 @@ sequenceDiagram
   result.json                  the RunResult, written after the run
   home/                        the isolated config home (absent for resumed turns, which use the session's
                                home, and after resumable=False)
+    .phd-session.lock          present only while a run is using this home (see Session lock below)
 ```
 
 | File | Written by | Contents |
@@ -111,6 +112,25 @@ Checks, in this order, all made before anything is written:
 | no PHD-owned path in the home (or a parent of one inside it) is a symlink or junction | deletion must never leave the home | `NotResumable` ("is a symlink or junction") |
 | its `cwd` is `spec.cwd` | claude keys sessions by working directory | `NotResumable` ("ran in cwd") |
 | the session run's `run.json` exists | it carries the session's `rules_text` | `NotResumable` ("has no run.json") |
+| no live run holds the session's lock | two turns must never rewrite and use the same home at once | `NotResumable` ("is busy with run …"); the empty run directory that was just allocated is removed, the home is untouched |
+
+### Session lock
+
+Every run that uses a home holds `<home>/.phd-session.lock` (JSON: `pid`, `run_id`, `started_at`) for as long
+as it runs:
+
+- a **fresh run** takes it on its new home right after materialization;
+- a **resumed turn** takes it on the session's shared home after the checks above pass and **before** any
+  PHD-owned path in the home is deleted or rewritten;
+- `plan(...)`, with or without `session_id`, never takes or checks it (a dry run never touches the shared home).
+
+The lock is created atomically (`O_CREAT | O_EXCL`) and released on every exit path (success, failure, timeout,
+budget, cancel, interrupt, and when the harness cannot be started); a fresh run with `resumable=False` releases it
+before its home is deleted. A lock whose process is no longer running, or whose file cannot be read, is **stale**
+and is taken over automatically. Several runs can share one Python process (async), so for a lock written by this
+process PHD checks its in-process record of runs that still hold a lock rather than the pid. In practice the lock
+matters for turns of an existing session: a session only becomes resumable once a run of it has finished (its
+`result.json` exists), so the lock prevents two resumed turns (from one process or several) from running at once.
 
 Details:
 

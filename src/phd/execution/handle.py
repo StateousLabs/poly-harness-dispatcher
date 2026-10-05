@@ -20,6 +20,7 @@ from .process import HarnessProcess, child_env
 
 if TYPE_CHECKING:
     from .dispatcher import Dispatcher
+    from .session_lock import SessionLock
 
 
 class RunHandle:
@@ -34,9 +35,11 @@ class RunHandle:
         materialized: The `MaterializedHome` that was launched.
     """
 
-    def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None, stack_hash: str):
+    def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None, stack_hash: str,
+                 lock: SessionLock | None = None):
         self._d = dispatcher
         self._stack_hash = stack_hash
+        self._lock = lock  # held for the whole run; released on every exit path
         self.materialized = m
         self.run_id = m.run_id
         self.resumed_from = resumed_from
@@ -50,8 +53,8 @@ class RunHandle:
 
     @classmethod
     async def launch(cls, d: Dispatcher, m: MaterializedHome, *, resumed_from: str | None,
-                     stack_hash: str) -> RunHandle:
-        handle = cls(d, m, resumed_from, stack_hash)
+                     stack_hash: str, lock: SessionLock | None = None) -> RunHandle:
+        handle = cls(d, m, resumed_from, stack_hash, lock)
         override = d.executables.get(d.spec.harness)
         argv = [*override, *m.argv[1:]] if override else resolve_argv(m.argv)
         handle._proc = HarnessProcess(argv, env=child_env(m.env), cwd=d.spec.cwd, stdin_text=m.stdin,
@@ -111,8 +114,13 @@ class RunHandle:
                 except Exception as e:
                     result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
         finally:
+            self._release_lock()
             self._result = result
             self._queue.put_nowait(None)
+
+    def _release_lock(self) -> None:
+        if self._lock is not None:
+            self._lock.release()
 
     def _kill_if_running(self) -> None:
         proc = self._proc
@@ -161,6 +169,7 @@ class RunHandle:
                 result.exit_code = exit_code
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
+            self._release_lock()  # the lock file lives in the home that is about to go
             try:
                 robust_rmtree(m.home)
             except OSError as e:

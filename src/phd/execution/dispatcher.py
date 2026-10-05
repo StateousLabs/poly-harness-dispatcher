@@ -7,13 +7,14 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from .._util.fs import is_within
+from .._util.fs import is_within, robust_rmtree
 from ..errors import InvalidRunsRoot, NotResumable, UnsupportedFeature
 from ..harnesses import ModelCatalog, get_adapter
 from ..materialize import MaterializedHome, materialize
 from ..results import LocalLedger, ResultSink, RunResult
 from ..spec import Inputs, Spec
 from .handle import RunHandle
+from .session_lock import SessionLock
 
 
 class Dispatcher:
@@ -104,23 +105,41 @@ class Dispatcher:
         return self._plan(inputs, session_id, dry_run=True)[0]
 
     def _plan(self, inputs: Inputs, session_id: str | None, *,
-              dry_run: bool = False) -> tuple[MaterializedHome, str, str | None]:
+              dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None]:
         prev = self._find_session(inputs, session_id) if session_id is not None else None
         stack_hash = self.spec.stack.content_hash()  # pinned at plan time: what actually runs
         run_id, run_dir = self.ledger.allocate()
         home = Path(prev.home_dir) if prev and not dry_run else None  # a dry run never touches the session
-        rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # the session's rules
-        m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
-                        rules_text=rules_text)
-        warnings = list(self.warnings)
-        if prev:
-            m.argv = self.adapter.resume_argv(m.argv, session_id, self.spec)
-            if prev.stack != self.spec.stack.ref:
-                warnings.append(f"session {session_id} ran stack {prev.stack}; this turn runs {self.spec.stack.ref}")
-        m.warnings[:0] = warnings
-        resumed_from = prev.run_id if prev else None
-        self.ledger.write_record(run_dir, self._record(m, session_id=session_id, resumed_from=resumed_from))
-        return m, stack_hash, resumed_from
+        # A resumed turn locks the shared home before rewriting it; a dry run never locks.
+        lock = self._lock_session(home, run_id, run_dir, session_id) if home is not None else None
+        try:
+            rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # session's rules
+            m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
+                            rules_text=rules_text)
+            if lock is None and not dry_run:  # a fresh run locks its new home for as long as it runs
+                lock = SessionLock(m.home, run_id).acquire(f"run home {m.home}")
+            warnings = list(self.warnings)
+            if prev:
+                m.argv = self.adapter.resume_argv(m.argv, session_id, self.spec)
+                if prev.stack != self.spec.stack.ref:
+                    warnings.append(f"session {session_id} ran stack {prev.stack}; this turn runs {self.spec.stack.ref}")
+            m.warnings[:0] = warnings
+            resumed_from = prev.run_id if prev else None
+            self.ledger.write_record(run_dir, self._record(m, session_id=session_id, resumed_from=resumed_from))
+        except BaseException:
+            if lock is not None:
+                lock.release()
+            raise
+        return m, stack_hash, resumed_from, lock
+
+    def _lock_session(self, home: Path, run_id: str, run_dir: Path, session_id: str) -> SessionLock:
+        """Lock the session's shared home; when another live run holds it, remove the still-empty run
+        directory and raise `NotResumable` before anything in the home is touched."""
+        try:
+            return SessionLock(home, run_id).acquire(f"session {session_id!r}")
+        except NotResumable:
+            robust_rmtree(run_dir)
+            raise
 
     def _find_session(self, inputs: Inputs, session_id: str) -> RunResult:
         """The latest finished run of `session_id`, checked to be continuable by this spec; writes nothing."""
@@ -190,7 +209,9 @@ class Dispatcher:
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
             NotResumable: No finished run has `session_id`; it belongs to another harness; its
-                home no longer exists; or it ran in a different `cwd`.
+                home no longer exists; it ran in a different `cwd`; or another live run is using
+                the session right now (`<home>/.phd-session.lock`; a lock left by a dead process is
+                taken over automatically).
             UnsupportedFeature: `session_id` together with `inputs.rules` (rules are part of the
                 session's system prompt).
 
@@ -203,8 +224,13 @@ class Dispatcher:
             nxt = await (await d.start(Inputs(msg="now fix it"), session_id=result.session_id)).wait()
             ```
         """
-        m, stack_hash, resumed_from = self._plan(inputs, session_id)
-        return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash)
+        m, stack_hash, resumed_from, lock = self._plan(inputs, session_id)
+        try:
+            return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock)
+        except BaseException:  # the harness never started: free the home again
+            if lock is not None:
+                lock.release()
+            raise
 
     def spawn(self, inputs: Inputs, *, session_id: str | None = None) -> RunResult:
         """Blocking wrapper: `start(inputs, session_id=...)` then `wait()`.
