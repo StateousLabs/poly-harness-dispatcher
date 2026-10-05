@@ -32,7 +32,7 @@ def test_local_file(tmp_path):
 
 
 def test_local_missing(tmp_path):
-    with pytest.raises(StackFetchError, match="skills\[2\]: .* does not exist"):
+    with pytest.raises(StackFetchError, match=r"skills\[2\]: .* does not exist"):
         fetch(ComponentSource(str(tmp_path / "nope")), tmp_path / "work", what="skills[2]")
 
 
@@ -103,3 +103,73 @@ def test_corrupt_archive(tmp_path, http_server):
     (http_server.www / "bad.zip").write_bytes(b"not a zip")
     with pytest.raises(StackFetchError, match="not a usable archive"):
         fetch(ComponentSource(f"{http_server.url}/bad.zip"), tmp_path / "work", what="skills[0]")
+
+
+def test_header_value_with_newline_refused(tmp_path, http_server, monkeypatch):
+    monkeypatch.setenv("STACKS_TOKEN", "zq9sec\r\nX-Evil: 1")
+    src = ComponentSource(f"{http_server.url}/a.json", headers={"Authorization": "Bearer ${env:STACKS_TOKEN}"})
+    with pytest.raises(StackInvalid) as e:
+        fetch(src, tmp_path / "w", what="mcp[0]")
+    assert "zq9sec" not in str(e.value) and "Authorization" in str(e.value) and "STACKS_TOKEN" in str(e.value)
+
+
+def test_invalid_url_never_leaks_query(tmp_path):
+    with pytest.raises(StackFetchError) as e:
+        fetch(ComponentSource("http://127.0.0.1:1/a b.json?sig=SECRET"), tmp_path / "w", what="base")
+    assert "SECRET" not in str(e.value)
+
+
+def test_connection_refused_never_leaks_query(tmp_path):
+    with pytest.raises(StackFetchError) as e:
+        fetch(ComponentSource("http://127.0.0.1:1/a.json?sig=SECRET"), tmp_path / "w", what="base")
+    assert "SECRET" not in str(e.value) and "base" in str(e.value)
+
+
+def test_display_source_drops_userinfo():
+    assert display_source("https://user:pw@host:8443/x?q=1") == "https://host:8443/x"
+    assert display_source("https://user:pw@host/x") == "https://host/x"
+
+
+def test_same_origin_redirect_keeps_headers(tmp_path, http_server):
+    (http_server.www / "a.json").write_text("{}", encoding="utf-8")
+    http_server.state["token"] = "t"
+    http_server.state["redirects"]["/go"] = f"{http_server.url}/a.json"
+    src = ComponentSource(f"{http_server.url}/go", headers={"Authorization": "Bearer t"})
+    assert fetch(src, tmp_path / "w", what="mcp[0]").path.name == "a.json"
+
+
+def test_cross_origin_redirect_drops_headers(tmp_path, http_server):
+    (http_server.www / "a.json").write_text("{}", encoding="utf-8")
+    port = http_server.url.rsplit(":", 1)[1]
+    http_server.state["redirects"]["/go"] = f"http://localhost:{port}/a.json"
+    src = ComponentSource(f"{http_server.url}/go", headers={"Authorization": "Bearer t"})
+    fetch(src, tmp_path / "w", what="mcp[0]")
+    assert http_server.state["seen"] == ["Bearer t", None]
+
+
+def test_https_to_http_redirect_refused(tmp_path):
+    from urllib.request import Request
+
+    from phd.stacks.sources import _SafeRedirect
+
+    handler = _SafeRedirect({})
+    req = Request("https://example.com/a?sig=SECRET")
+    with pytest.raises(StackFetchError) as e:
+        handler.redirect_request(req, None, 302, "Found", {}, "http://evil.example/x?sig=SECRET")
+    assert "SECRET" not in str(e.value)
+    # loopback is allowed
+    assert handler.redirect_request(req, None, 302, "Found", {}, "http://127.0.0.1/x") is not None
+
+
+def test_zip_suffix_case_insensitive(tmp_path, http_server, skill_dir):
+    make_zip(skill_dir, http_server.www / "PDF.ZIP")
+    f = fetch(ComponentSource(f"{http_server.url}/PDF.ZIP"), tmp_path / "w", what="skills[0]")
+    assert (f.path / "SKILL.md").is_file()
+
+
+def test_filename_cannot_escape():
+    from phd.stacks.sources import _safe_filename
+
+    assert _safe_filename(r"..\..\x.json") == "x.json"
+    assert _safe_filename("../../x.json") == "x.json"
+    assert _safe_filename("") == "download"

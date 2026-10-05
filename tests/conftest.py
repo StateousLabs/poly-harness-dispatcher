@@ -66,13 +66,19 @@ def http_server(tmp_path):
     """Serve tmp_path/'www' on http://127.0.0.1:<port>; set .state['token'] to require a bearer token."""
     www = tmp_path / "www"
     www.mkdir()
-    state = {"token": None}
+    state = {"token": None, "redirects": {}, "seen": []}
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(www), **kwargs)
 
         def do_GET(self):
+            state["seen"].append(self.headers.get("Authorization"))
+            if self.path in state["redirects"]:
+                self.send_response(302)
+                self.send_header("Location", state["redirects"][self.path])
+                self.end_headers()
+                return
             if state["token"] and self.headers.get("Authorization") != f"Bearer {state['token']}":
                 self.send_error(401, "Unauthorized")
                 return

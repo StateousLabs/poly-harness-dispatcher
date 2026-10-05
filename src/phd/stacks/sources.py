@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import os
 import tarfile
@@ -36,7 +37,15 @@ def display_source(source: str) -> str:
     if "://" not in source:
         return source
     parts = urlsplit(source)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    host = parts.hostname or ""
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    netloc = f"{host}:{port}" if port else host
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def expand_headers(headers: dict[str, str], what: str) -> dict[str, str]:
@@ -49,6 +58,9 @@ def expand_headers(headers: dict[str, str], what: str) -> dict[str, str]:
                 raise StackInvalid(f"{what}: header {key!r} needs environment variable {name}")
             return os.environ[name]
         out[key] = ENV_REF.sub(substitute, value)
+        if any(ch in out[key] for ch in "\r\n\0"):
+            names = ", ".join(ENV_REF.findall(value)) or "(none; the literal value)"
+            raise StackInvalid(f"{what}: header {key!r} has a line break or NUL in its value; check environment variable(s): {names}")
     return out
 
 
@@ -73,14 +85,23 @@ def _fetch_local(src: ComponentSource, work: Path, what: str) -> Fetched:
 def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
     shown = display_source(src.source)
     request = urllib.request.Request(src.source, headers=expand_headers(src.headers, what))
+    opener = urllib.request.build_opener(_SafeRedirect(src.headers))
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+        with opener.open(request, timeout=TIMEOUT_S) as response:
             data = response.read()
+            final_url = response.geturl()
+    except StackFetchError as e:
+        raise StackFetchError(f"{what}: {shown}: {e}") from None
     except urllib.error.HTTPError as e:
         raise StackFetchError(f"{what}: {shown}: HTTP {e.code} {e.reason}") from None
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        raise StackFetchError(f"{what}: {shown}: {getattr(e, 'reason', e)}") from None
-    filename = PurePosixPath(urlsplit(src.source).path).name or "download"
+    except urllib.error.URLError as e:
+        reason = e.reason if isinstance(e.reason, str) else type(e.reason).__name__
+        raise StackFetchError(f"{what}: {shown}: request failed ({reason})") from None
+    except http.client.HTTPException as e:
+        raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
+    except (OSError, ValueError) as e:  # never echo str(e): it can carry the URL or header values
+        raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
+    filename = _safe_filename(urlsplit(final_url).path)
     if _is_archive_name(filename) or _looks_like_archive(data):
         return _unpack(data, filename, work, what)
     dest = Path(tempfile.mkdtemp(dir=work)) / filename
@@ -88,10 +109,44 @@ def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
     return Fetched(dest, Path(filename).stem, _sha256(data))
 
 
+def _safe_filename(url_path: str) -> str:
+    """Last path segment of a URL path, with backslashes treated as separators; never empty, never a traversal."""
+    name = Path(url_path.replace("\\", "/")).name
+    return name if name not in ("", ".", "..") else "download"
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port or {"http": 80, "https": 443}.get(scheme)
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or "").lower(), port
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse https->http downgrades (except loopback); drop the user's headers when leaving the origin."""
+
+    def __init__(self, user_headers: dict[str, str]) -> None:
+        self._user_headers = {k.capitalize() for k in user_headers}
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = _origin(req.full_url), _origin(newurl)
+        if old[0] == "https" and new[0] == "http" and new[1] not in ("localhost", "127.0.0.1"):
+            raise StackFetchError(f"refusing redirect from https to http ({display_source(newurl)})")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and old != new:
+            for key in self._user_headers:
+                redirected.headers.pop(key, None)
+                redirected.unredirected_hdrs.pop(key, None)
+        return redirected
+
+
 def _unpack(data: bytes, filename: str, work: Path, what: str) -> Fetched:
     dest = Path(tempfile.mkdtemp(dir=work))
     try:
-        if filename.endswith(".zip") or (not _is_archive_name(filename) and zipfile.is_zipfile(io.BytesIO(data))):
+        if filename.lower().endswith(".zip") or (not _is_archive_name(filename) and zipfile.is_zipfile(io.BytesIO(data))):
             _unzip(data, dest, what)
         else:
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
