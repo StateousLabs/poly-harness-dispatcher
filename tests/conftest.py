@@ -54,3 +54,36 @@ def make_spec(stack, workdir, credentials):
 def inputs() -> Inputs:
     return Inputs(brief=FIXTURES / "inputs" / "brief.md", rules=FIXTURES / "inputs" / "RULES.md",
                   msg="Ünïcode check — café")
+
+
+import http.server
+import threading
+from types import SimpleNamespace
+
+
+@pytest.fixture
+def http_server(tmp_path):
+    """Serve tmp_path/'www' on http://127.0.0.1:<port>; set .state['token'] to require a bearer token."""
+    www = tmp_path / "www"
+    www.mkdir()
+    state = {"token": None}
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(www), **kwargs)
+
+        def do_GET(self):
+            if state["token"] and self.headers.get("Authorization") != f"Bearer {state['token']}":
+                self.send_error(401, "Unauthorized")
+                return
+            super().do_GET()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield SimpleNamespace(url=f"http://127.0.0.1:{server.server_address[1]}", www=www, state=state)
+    server.shutdown()
+    server.server_close()
