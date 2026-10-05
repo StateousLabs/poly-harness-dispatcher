@@ -89,7 +89,6 @@ def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
     try:
         with opener.open(request, timeout=TIMEOUT_S) as response:
             data = response.read()
-            final_url = response.geturl()
     except StackFetchError as e:
         raise StackFetchError(f"{what}: {shown}: {e}") from None
     except urllib.error.HTTPError as e:
@@ -101,7 +100,7 @@ def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
         raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
     except (OSError, ValueError) as e:  # never echo str(e): it can carry the URL or header values
         raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
-    filename = _safe_filename(urlsplit(final_url).path)
+    filename = _safe_filename(urlsplit(src.source).path)
     if _is_archive_name(filename) or _looks_like_archive(data):
         return _unpack(data, filename, work, what)
     dest = Path(tempfile.mkdtemp(dir=work)) / filename

@@ -135,7 +135,7 @@ def test_same_origin_redirect_keeps_headers(tmp_path, http_server):
     http_server.state["token"] = "t"
     http_server.state["redirects"]["/go"] = f"{http_server.url}/a.json"
     src = ComponentSource(f"{http_server.url}/go", headers={"Authorization": "Bearer t"})
-    assert fetch(src, tmp_path / "w", what="mcp[0]").path.name == "a.json"
+    assert fetch(src, tmp_path / "w", what="mcp[0]").path.name == "go"
 
 
 def test_cross_origin_redirect_drops_headers(tmp_path, http_server):
@@ -173,3 +173,12 @@ def test_filename_cannot_escape():
     assert _safe_filename(r"..\..\x.json") == "x.json"
     assert _safe_filename("../../x.json") == "x.json"
     assert _safe_filename("") == "download"
+
+
+def test_name_comes_from_original_url_not_redirect_target(tmp_path, http_server, skill_dir):
+    (http_server.www / "blob").mkdir()
+    make_tar(skill_dir, http_server.www / "blob" / "abc123")
+    http_server.state["redirects"]["/pkg-1.2.tar.gz"] = f"{http_server.url}/blob/abc123"
+    f = fetch(ComponentSource(f"{http_server.url}/pkg-1.2.tar.gz"), tmp_path / "w", what="skills[0]")
+    assert f.name == "pkg-1.2"
+    assert (f.path / "SKILL.md").is_file()
