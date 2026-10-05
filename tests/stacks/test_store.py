@@ -1,13 +1,15 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
 from conftest import FIXTURES
-from phd.errors import StackConflict, StackNotFound
-from phd.stacks.store import StackStore, identity_hash, store_root
+from phd.errors import StackConflict, StackInvalid, StackNotFound
+from phd.stacks.store import STAGING_MAX_AGE_S, StackStore, identity_hash, store_root
 
 
 def stage(store, name="s", version="1", tweak=None):
@@ -102,6 +104,8 @@ def test_get_remove_prune(tmp_path):
         store.remove("s@1", "nope@1")
     assert store.get("s@1")  # nothing removed when one ref is unknown
     leftover = store.new_staging()
+    old = time.time() - 2 * STAGING_MAX_AGE_S
+    os.utime(leftover, (old, old))
     store.remove("s@1")
     assert not (store.root / "s" / "1").exists() and store.list() == []
     store.prune()
@@ -140,3 +144,94 @@ def test_concurrent_puts_keep_a_valid_index(tmp_path):
     refs = sorted(p.communicate(timeout=120)[0].strip() for p in procs)
     assert refs == ["n0@1", "n1@1", "n2@1", "n3@1"]
     assert sorted(json.loads((root / "index.json").read_text())) == refs
+
+
+def _index(store):
+    return json.loads((store.root / "index.json").read_text())
+
+
+def test_write_index_and_move_retry_sharing_violations(tmp_path, monkeypatch):
+    store = StackStore(tmp_path / "store")
+    staged, ident = stage(store)
+    real, left = os.replace, {"n": 4}
+
+    def flaky(*a, **kw):
+        if left["n"] > 0:
+            left["n"] -= 1
+            raise PermissionError("sharing violation")
+        return real(*a, **kw)
+    monkeypatch.setattr(os, "replace", flaky)
+    assert put(store, staged, ident).ref == "s@1" and left["n"] == 0
+    assert _index(store)["s@1"]["hash"] == ident
+
+
+def test_put_rejects_unsafe_name_or_version(tmp_path):
+    store = StackStore(tmp_path / "store")
+    staged, ident = stage(store)
+    for name, version in [("..", "1"), ("s", ".."), ("a/b", "1"), ("s", "1/../.."), ("", "1"), ("-x", "1")]:
+        with pytest.raises(StackInvalid):
+            put(store, staged, ident, name=name, version=version)
+    assert staged.exists()
+
+
+def test_remove_refuses_tampered_index_entries(tmp_path):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("x")
+    index = _index(store)
+    index["..@.."] = {"hash": "h", "created_at": "2020"}
+    index[f"{outside}@1"] = {"hash": "h", "created_at": "2020"}
+    (store.root / "index.json").write_text(json.dumps(index))
+    for ref in ("..@..", f"{outside}@1"):
+        with pytest.raises(StackInvalid):
+            store.remove("s@1", ref)
+    with pytest.raises(StackInvalid):
+        store.prune()
+    assert (outside / "keep.txt").exists() and store.get("s@1")
+
+
+def test_replace_writes_the_index_before_deleting_the_old_folder(tmp_path, monkeypatch):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    staged, ident = stage(store, tweak="# changed\n")
+
+    def boom(path):
+        raise OSError("locked")
+    monkeypatch.setattr("phd.stacks.store.robust_rmtree", boom)
+    put(store, staged, ident, replace=True)
+    monkeypatch.undo()
+    assert _index(store)["s@1"]["hash"] == ident
+    staged, ident2 = stage(store, tweak="# changed\n")
+    assert ident2 == ident and not put(store, staged, ident2).reused
+
+
+def test_prune_keeps_fresh_staging_and_removes_aged(tmp_path):
+    store = StackStore(tmp_path / "store")
+    fresh, aged = store.new_staging(), store.new_staging()
+    old = time.time() - 2 * STAGING_MAX_AGE_S
+    os.utime(aged, (old, old))
+    store.prune()
+    assert fresh.exists() and not aged.exists()
+
+
+def test_reuse_and_conflict_discard_the_staged_folder(tmp_path):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    staged, ident = stage(store)
+    put(store, staged, ident)
+    assert not staged.exists()
+    staged, ident = stage(store, tweak="# changed\n")
+    with pytest.raises(StackConflict):
+        put(store, staged, ident)
+    assert not staged.exists()
+
+
+@pytest.mark.parametrize("content", ["{not json", "[]", '{"s@1": 3}'])
+def test_corrupt_index_is_a_stack_invalid(tmp_path, content):
+    store = StackStore(tmp_path / "store")
+    store.root.mkdir(parents=True)
+    (store.root / "index.json").write_text(content)
+    with pytest.raises(StackInvalid, match="stack store index is corrupt"):
+        store.list()

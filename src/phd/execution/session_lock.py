@@ -39,6 +39,8 @@ class SessionLock:
                 holder = read_holder(self.path)
                 if holder is not None and _running(holder):
                     raise NotResumable(f"{what} is busy with run {holder.get('run_id')} (pid {holder.get('pid')})") from None
+                if holder is None and not self.path.exists():  # released between our two looks: just retry
+                    continue
                 if holder is None and not is_stale(self.path):
                     raise NotResumable(f"{what} is busy (lock file is being written)") from None
                 if read_holder(self.path) == holder:  # still the stale lock we looked at: take it over

@@ -136,3 +136,28 @@ def test_acquire_refuses_a_live_holder(tmp_path):
     first.release()
     SessionLock(tmp_path, "run-b").acquire("session s").release()
     assert not (tmp_path / LOCK_NAME).exists()
+
+
+def test_busy_within_grace_for_a_fresh_unreadable_lock(tmp_path):
+    (tmp_path / LOCK_NAME).write_text("")
+    with pytest.raises(NotResumable, match="lock file is being written"):
+        SessionLock(tmp_path, "run-a").acquire("session s")
+
+
+def test_lock_released_between_the_two_looks_is_retried(tmp_path, monkeypatch):
+    # the create hits an existing lock, but by the time we read it the file is gone: retry, do not report busy
+    import phd.execution.session_lock as mod
+    state = {"first": True}
+    real_open = os.open
+
+    def open_once(path, flags, mode=0o777):
+        if state["first"]:
+            state["first"] = False
+            raise FileExistsError()
+        return real_open(path, flags, mode)
+    monkeypatch.setattr(os, "open", open_once)
+    monkeypatch.setattr(mod, "read_holder", lambda path: None)
+    lock = SessionLock(tmp_path, "run-a").acquire("session s")
+    assert lock.held and not state["first"]
+    monkeypatch.undo()
+    lock.release()

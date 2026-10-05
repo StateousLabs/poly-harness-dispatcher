@@ -5,17 +5,21 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .._util.filelock import FileLock
+from .._util.filelock import FileLock, retry_sharing
 from .._util.fs import robust_rmtree, write_json
-from ..errors import StackConflict, StackNotFound
+from ..errors import StackConflict, StackInvalid, StackNotFound
 from ..spec import StoreEntry, hash_tree
 
 DEFAULT_STORE_ROOT = Path.home() / ".phd" / "stacks"
 IDENTITY_IGNORE = ("name", "version", "description")
+STAGING_MAX_AGE_S = 3600
+_SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def store_root(root: str | Path | None = None) -> Path:
@@ -47,30 +51,37 @@ class StackStore:
     def put(self, staged: Path, *, name: str, version: str, ident: str, manifest: str | None,
             allow_duplicates: bool, replace: bool) -> StoreEntry:
         """Store `staged` (holding config/ and stack.lock.json) under name@version, or reuse an equal stack."""
+        for label, part in (("name", name), ("version", version)):
+            if not _SAFE_PART.fullmatch(part):
+                raise StackInvalid(f"invalid stack {label} {part!r}: use letters, digits, '.', '_' and '-' "
+                                   "(starting with a letter or digit)")
         ref = f"{name}@{version}"
         with FileLock(self.root / ".store.lock"):
             index = self._read_index()
             record = index.get(ref)
             if record is not None and record["hash"] == ident:
+                _discard(staged)
                 return self._entry(ref, record, ref)
             if record is not None and not replace:
+                _discard(staged)
                 raise StackConflict(f"{ref} is already stored with different content ({record['hash']}); "
                                     "pass replace=True to overwrite it")
             if record is None and not allow_duplicates:
                 same = sorted((r for r, v in index.items() if v["hash"] == ident), key=lambda r: index[r]["created_at"])
                 if same:
+                    _discard(staged)
                     return self._entry(same[0], index[same[0]], ref)
             target = self.root / name / version
             target.parent.mkdir(parents=True, exist_ok=True)
+            old = None
             if target.exists():
                 old = self.root / ".staging" / f"replaced-{uuid.uuid4().hex}"
-                os.replace(target, old)
-                os.replace(staged, target)
-                robust_rmtree(old)
-            else:
-                os.replace(staged, target)
+                retry_sharing(lambda: os.replace(target, old))
+            retry_sharing(lambda: os.replace(staged, target))
             index[ref] = {"hash": ident, "created_at": datetime.now(timezone.utc).isoformat(), "manifest": manifest}
-            self._write_index(index)
+            self._write_index(index)  # the index is current before the old folder is deleted
+            if old is not None:
+                _discard(old)  # best effort; prune() collects it later
             return self._entry(ref, index[ref], ref)
 
     def get(self, ref: str) -> StoreEntry:
@@ -97,26 +108,39 @@ class StackStore:
             missing = [r for r in refs if r not in index]
             if missing:
                 raise StackNotFound(f"no stack(s) {missing} in {self.root}")
-            for ref in refs:
-                name, _, version = ref.rpartition("@")
-                robust_rmtree(self.root / name / version)
-                if (self.root / name).is_dir() and not any((self.root / name).iterdir()):
-                    (self.root / name).rmdir()
+            targets = {ref: self._target(ref) for ref in refs}  # validate every ref before touching disk
+            for ref, target in targets.items():
+                robust_rmtree(target)
+                if target.parent.is_dir() and not any(target.parent.iterdir()):
+                    target.parent.rmdir()
                 del index[ref]
             self._write_index(index)
 
     def prune(self) -> None:
-        """Delete leftover staging folders and index entries whose folder is gone."""
+        """Delete stale staging folders (older than STAGING_MAX_AGE_S) and index entries whose folder is gone."""
         with FileLock(self.root / ".store.lock"):
             staging = self.root / ".staging"
             if staging.is_dir():
                 for leftover in staging.iterdir():
-                    robust_rmtree(leftover)
+                    try:
+                        age = time.time() - leftover.stat().st_mtime
+                    except OSError:
+                        continue
+                    if age > STAGING_MAX_AGE_S:
+                        _discard(leftover)
             index = self._read_index()
-            kept = {r: v for r, v in index.items()
-                    if (self.root / r.rpartition("@")[0] / r.rpartition("@")[2] / "config").is_dir()}
+            kept = {r: v for r, v in index.items() if (self._target(r) / "config").is_dir()}
             if kept != index:
                 self._write_index(kept)
+
+    def _target(self, ref: str) -> Path:
+        """The folder of an indexed ref; StackInvalid if it would lie outside the store root."""
+        name, _, version = ref.rpartition("@")
+        root = self.root.resolve()
+        target = (self.root / name / version).resolve()
+        if not target.is_relative_to(root) or target == root:
+            raise StackInvalid(f"stack store index entry {ref!r} points outside the store: {self._index_path}")
+        return target
 
     def _entry(self, ref: str, record: dict, requested: str) -> StoreEntry:
         name, _, version = ref.rpartition("@")
@@ -127,10 +151,23 @@ class StackStore:
     def _read_index(self) -> dict:
         if not self._index_path.is_file():
             return {}
-        data = json.loads(self._index_path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        try:
+            data = json.loads(retry_sharing(lambda: self._index_path.read_text(encoding="utf-8")))
+        except ValueError:
+            data = None
+        if not isinstance(data, dict) or not all(isinstance(v, dict) and "hash" in v for v in data.values()):
+            raise StackInvalid(f"stack store index is corrupt: {self._index_path}")
+        return data
 
     def _write_index(self, index: dict) -> None:
         tmp = self._index_path.with_name("index.json.tmp")
         write_json(tmp, index)
-        os.replace(tmp, self._index_path)
+        retry_sharing(lambda: os.replace(tmp, self._index_path))
+
+
+def _discard(path: Path) -> None:
+    """Delete a folder, best effort: a leftover is collected by a later `prune()`."""
+    try:
+        robust_rmtree(path)
+    except OSError:
+        pass
