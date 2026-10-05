@@ -113,32 +113,34 @@ def test_agent_folder_needs_exactly_one_md(tmp_path, parts):
 
 def test_mcp_folder_replace_cleans_old_servers(tmp_path, parts):
     """When replacing an MCP folder, remove servers from the old folder."""
-    weather1 = parts / "w1"
-    shutil.copytree(parts / "weather", weather1)
-    (weather1 / ".mcp.json").write_text(json.dumps({"mcpServers": {"a": {
+    # Create two sources with same component name "weather" but different servers
+    x_dir = parts / "x"
+    x_dir.mkdir()
+    x_weather = x_dir / "weather"
+    shutil.copytree(parts / "weather", x_weather)
+    (x_weather / ".mcp.json").write_text(json.dumps({"mcpServers": {"a": {
         "command": "python", "args": ["${here}/a.py"]}}}), encoding="utf-8")
 
-    weather2 = parts / "w2"
-    shutil.copytree(parts / "weather", weather2)
-    (weather2 / ".mcp.json").write_text(json.dumps({"mcpServers": {"b": {
+    y_dir = parts / "y"
+    y_dir.mkdir()
+    y_weather = y_dir / "weather"
+    shutil.copytree(parts / "weather", y_weather)
+    (y_weather / ".mcp.json").write_text(json.dumps({"mcpServers": {"b": {
         "command": "python", "args": ["${here}/b.py"]}}}), encoding="utf-8")
 
     config, _ = build(tmp_path, compose("c", "1", base=parts / "base",
-                                        mcp=[{"source": str(weather1), "replace": True},
-                                             {"source": str(weather2), "replace": True}]))
+                                        mcp=[x_weather, {"source": str(y_weather), "replace": True}]))
     stack = Stack.load(config)
-    assert "a" in stack.mcp_servers and "b" in stack.mcp_servers
+    assert "b" in stack.mcp_servers and "a" not in stack.mcp_servers
 
 
 def test_mcp_folder_clash_without_replace(tmp_path, parts):
     """Same folder name without replace raises StackInvalid."""
-    # Add weather without replace first
-    m1 = compose("c", "1", base=parts / "base", mcp=[parts / "weather"])
-    config1, _ = build(parts / "tmp1", m1)
-    # Try to add the same weather without replace
     with pytest.raises(StackInvalid, match="MCP component folder 'weather' already exists"):
-        m2 = compose("c", "1", base=parts / "base", mcp=[parts / "weather", parts / "weather"])
-        build(parts / "tmp2", m2)
+        m = compose("c", "1", base=parts / "base", mcp=[parts / "weather", parts / "weather"])
+        build(tmp_path, m)
+
+
 def test_base_invalid_mcp_servers_type(tmp_path, parts):
     """Base with invalid mcpServers type raises StackInvalid."""
     bad_base = parts / "badbase"
@@ -153,6 +155,8 @@ def test_base_invalid_mcp_servers_type(tmp_path, parts):
         build(tmp_path, compose("c", "1", base=bad_base))
 
 
+
+
 def test_base_invalid_hooks_type(tmp_path, parts):
     """Base with invalid hooks type raises StackInvalid."""
     bad_base = parts / "badbase2"
@@ -165,6 +169,8 @@ def test_base_invalid_hooks_type(tmp_path, parts):
 
     with pytest.raises(StackInvalid, match="base: 'hooks' must be an array"):
         build(tmp_path, compose("c", "1", base=bad_base))
+
+
 
 
 def test_base_here_rewritten_to_stack(tmp_path, parts):
@@ -189,6 +195,8 @@ def test_base_here_rewritten_to_stack(tmp_path, parts):
     assert any("${stack}/test.py" in cmd for cmd in commands)
 
 
+
+
 def test_skill_hostile_name(tmp_path, parts):
     """Skill with hostile name like ../evil raises StackInvalid."""
     evil = parts / "evil"
@@ -197,6 +205,8 @@ def test_skill_hostile_name(tmp_path, parts):
 
     with pytest.raises(StackInvalid, match="must match"):
         build(tmp_path, compose("c", "1", base=parts / "base", skills=[evil]))
+
+
 
 
 def test_hook_bundle_name_conflicts_with_file(tmp_path, parts):
@@ -214,6 +224,8 @@ def test_hook_bundle_name_conflicts_with_file(tmp_path, parts):
                                hooks=[{"source": str(guard_py_bundle), "replace": True}]))
 
 
+
+
 def test_hook_bundle_named_hooks_json(tmp_path, parts):
     """Hook bundle named hooks.json raises StackInvalid."""
     hooks_json_dir = parts / "hooks.json"
@@ -224,6 +236,8 @@ def test_hook_bundle_named_hooks_json(tmp_path, parts):
     with pytest.raises(StackInvalid, match="hook bundle 'hooks.json' conflicts with a hooks file"):
         build(tmp_path, compose("c", "1", base=parts / "base",
                                hooks=[{"source": str(hooks_json_dir), "replace": True}]))
+
+
 def test_frontmatter_name_only_top_level(tmp_path, parts):
     """Only accept name: key at top level, not in nested objects."""
     nested = parts / "nested"
