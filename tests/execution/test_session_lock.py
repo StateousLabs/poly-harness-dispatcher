@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -71,12 +72,12 @@ async def test_a_fresh_run_holds_its_home_lock_until_it_ends(tmp_path, monkeypat
     assert result.status is RunStatus.CANCELLED and not lock.exists()
 
 
-@pytest.mark.parametrize("env, status", [({"FAKE_SLEEP": "30"}, RunStatus.TIMED_OUT),
-                                         ({"FAKE_EXIT": "3"}, RunStatus.FAILED)])
-def test_lock_is_released_on_timeout_and_crash(env, status, tmp_path, monkeypatch, make_spec):
+@pytest.mark.parametrize("env, status, spec_kw", [({"FAKE_SLEEP": "30"}, RunStatus.TIMED_OUT, {"timeout_s": 2}),
+                                                  ({"FAKE_EXIT": "3"}, RunStatus.FAILED, {})])
+def test_lock_is_released_on_timeout_and_crash(env, status, spec_kw, tmp_path, monkeypatch, make_spec):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    r = dispatcher(make_spec("claude", timeout_s=2), tmp_path).spawn(Inputs(msg="x"))
+    r = dispatcher(make_spec("claude", **spec_kw), tmp_path).spawn(Inputs(msg="x"))
     assert r.status is status and not (Path(r.home_dir) / LOCK_NAME).exists()
 
 
@@ -91,6 +92,9 @@ def test_stale_locks_are_taken_over(stale, tmp_path, monkeypatch, make_spec):
                "same-process-finished": json.dumps({"pid": os.getpid(), "run_id": "crashed-earlier",
                                                      "started_at": "x"})}[stale]
     lock.write_text(content, encoding="utf-8")
+    if stale == "corrupt":
+        old = time.time() - 120
+        os.utime(lock, (old, old))
     again = d.spawn(Inputs(msg="again"), session_id=first.session_id)
     assert again.status is RunStatus.SUCCEEDED and not lock.exists()
 

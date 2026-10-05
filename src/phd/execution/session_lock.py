@@ -2,8 +2,8 @@
 
 Every run that uses a home holds `<home>/.phd-session.lock` while it runs: a fresh run on its new
 home, a resumed turn on the session's shared home (taken before the home is re-materialized). The
-file records `{"pid", "run_id", "started_at"}`. A lock whose process is gone, or whose file cannot be
-read, is stale and is taken over. Several runs can live in one Python process (async), so for a lock
+file records `{"pid", "run_id", "started_at"}`. A lock whose process is gone, or whose file has been unreadable
+for a grace period, is stale and is taken over. Several runs can live in one Python process (async), so for a lock
 written by this process the in-process registry `_HELD` decides whether its run is still going.
 """
 
@@ -14,6 +14,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .._util.filelock import is_stale, read_holder
 from .._util.proc import pid_alive
 from ..errors import NotResumable
 
@@ -35,10 +36,12 @@ class SessionLock:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
-                holder = _read(self.path)
+                holder = read_holder(self.path)
                 if holder is not None and _running(holder):
                     raise NotResumable(f"{what} is busy with run {holder.get('run_id')} (pid {holder.get('pid')})") from None
-                if _read(self.path) == holder:  # still the stale lock we looked at: take it over
+                if holder is None and not is_stale(self.path):
+                    raise NotResumable(f"{what} is busy (lock file is being written)") from None
+                if read_holder(self.path) == holder:  # still the stale lock we looked at: take it over
                     _unlink(self.path)
                 continue
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -55,17 +58,9 @@ class SessionLock:
             return
         self.held = False
         _HELD.discard(self.run_id)
-        holder = _read(self.path)
+        holder = read_holder(self.path)
         if holder is not None and holder.get("run_id") == self.run_id:
             _unlink(self.path)
-
-
-def _read(path: Path) -> dict | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _running(holder: dict) -> bool:
