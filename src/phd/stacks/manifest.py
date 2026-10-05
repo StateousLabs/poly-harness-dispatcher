@@ -76,7 +76,7 @@ def load_manifest(path: str | Path) -> Manifest:
     path = Path(path).expanduser().resolve()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         raise StackInvalid(f"{path}: cannot read ({e})") from e
     try:
         data = tomllib.loads(text)
@@ -182,6 +182,12 @@ def _source(value, where: str, root: Path) -> str:
         parts = urlsplit(value)
         if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1")):
             return value
-        raise StackInvalid(f"{where}: {value!r}: only https:// URLs (or http://localhost) and local paths are supported")
-    p = Path(value).expanduser()
-    return str(p.resolve() if p.is_absolute() else (root / p).resolve())
+        raise StackInvalid(f"{where}: {parts.scheme}://{parts.hostname or ''}: only https:// URLs (or http://localhost) and local paths are supported")
+    try:
+        p = Path(value).expanduser()
+    except (RuntimeError, ValueError) as e:
+        raise StackInvalid(f"{where}: invalid path ({e})") from e
+    try:
+        return str(p.resolve() if p.is_absolute() else (root / p).resolve())
+    except (RuntimeError, ValueError) as e:
+        raise StackInvalid(f"{where}: invalid path ({e})") from e

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -74,6 +73,8 @@ def test_compose_equals_parsed(tmp_path):
     ('name = "a"\nversion = "1"\nbase_hooks = "no"', "base_hooks"),
     ('name = "a"\nversion = "1"\nbase = "s3://bucket/x.tar.gz"', "only https://"),
     ('name = "a"\nversion = "1"\nbase = "http://example.com/x.tar.gz"', "only https://"),
+    ('name = "a"\nversion = "1"\nbase = "s3://b/x?X-Amz-Signature=SECRET"', "only https://"),
+    ('name = "a"\nversion = "1"\nbase = "http://user:pw@example.com/x?token=SECRET"', "only https://"),
     ('name = "a"\nversion = "1"\n[[skills]]\nreplace = true', "'source'"),
     ('name = "a"\nversion = "1"\n[[skills]]\nsource = "x"\nreplace = "yes"', "'replace'"),
     ('name = "a"\nversion = "1"\n[[skills]]\nsource = "x"\nwhatever = 1', "unknown key"),
@@ -101,3 +102,10 @@ def test_windows_paths_are_paths_not_urls(tmp_path):  # Review Focus 2
 def test_missing_manifest_file(tmp_path):
     with pytest.raises(StackInvalid, match="cannot read"):
         load_manifest(tmp_path / "nope.toml")
+
+
+def test_non_utf8_manifest(tmp_path):
+    p = tmp_path / "bad.toml"
+    p.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(StackInvalid, match="cannot read"):
+        load_manifest(p)
