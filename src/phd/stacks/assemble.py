@@ -43,6 +43,8 @@ def assemble(manifest: Manifest, staging: Path) -> list[Provenance]:
         _require(fetched, "stack.json", "base")
         shutil.copytree(fetched.path, config, ignore=_IGNORE)
         meta = _read_json(config / "stack.json", "base stack.json")
+        _validate_base_mcp(config / ".mcp.json")
+        _validate_base_hooks(config / "hooks" / "hooks.json")
         _rewrite_file(config / ".mcp.json", "${stack}")
         _rewrite_file(config / "hooks" / "hooks.json", "${stack}")
         provenance.append(_prov("base", meta.get("name", fetched.name), manifest.base, fetched))
@@ -138,6 +140,11 @@ def _put_mcp(src: ComponentSource, config: Path, work: Path, what: str, servers:
         if target.exists():
             if not src.replace:
                 raise StackInvalid(f"{what}: MCP component folder {component!r} already exists; set replace = true")
+            # Clean up old servers that reference this component folder
+            search_path = f"${{stack}}/mcp/{component}"
+            servers_to_remove = [k for k, v in servers.items() if _contains_string(v, search_path)]
+            for k in servers_to_remove:
+                del servers[k]
             shutil.rmtree(target)
         shutil.copytree(files, target, ignore=_IGNORE)
     here = f"${{stack}}/mcp/{component}"
@@ -153,6 +160,7 @@ def _put_hooks(src: ComponentSource, config: Path, work: Path, what: str, bundle
     _require(fetched, "hooks.json", what)
     bundle = fetched.name
     _check_name(bundle, what, "hook bundle")
+    _validate_hook_bundle_name(bundle, config / "hooks")
     target = config / "hooks" / bundle
     if target.exists() or bundle in bundles:
         if not src.replace:
@@ -179,9 +187,11 @@ def _frontmatter_name(skill_md: Path) -> str | None:
     for line in lines[1:]:
         if line.strip() == "---":
             return None
-        key, sep, value = line.partition(":")
-        if sep and key.strip() == "name":
-            return value.strip().strip("'\"") or None
+        # Only accept keys with no leading whitespace (top-level keys)
+        if line and line[0] not in (' ', '\t'):
+            key, sep, value = line.partition(":")
+            if sep and key == "name":
+                return value.strip().strip("'\"") or None
     return None
 
 
@@ -217,3 +227,40 @@ def _read_json(path: Path, what: str) -> dict:
 
 def _prov(kind: str, name: str, src: ComponentSource, fetched: Fetched) -> Provenance:
     return Provenance(kind=kind, name=name, source=display_source(src.source), digest=fetched.digest)
+
+
+def _validate_base_mcp(mcp_file: Path) -> None:
+    if mcp_file.is_file():
+        data = _read_json(mcp_file, "base .mcp.json")
+        servers = data.get("mcpServers")
+        if servers is not None and not isinstance(servers, dict):
+            raise StackInvalid("base: 'mcpServers' must be an object")
+
+
+def _validate_base_hooks(hooks_file: Path) -> None:
+    if hooks_file.is_file():
+        data = _read_json(hooks_file, "base hooks.json")
+        hooks = data.get("hooks")
+        if hooks is not None and not isinstance(hooks, list):
+            raise StackInvalid("base: 'hooks' must be an array")
+
+
+def _validate_hook_bundle_name(bundle: str, hooks_dir: Path) -> None:
+    """Check if bundle name conflicts with existing files in hooks directory."""
+    if bundle == "hooks.json":
+        raise StackInvalid(f"hook bundle {bundle!r} conflicts with a hooks file")
+    if hooks_dir.exists():
+        file_path = hooks_dir / bundle
+        if file_path.exists() and not file_path.is_dir():
+            raise StackInvalid(f"hook bundle {bundle!r} conflicts with a hooks file")
+
+
+def _contains_string(value, search: str) -> bool:
+    """Check if search string appears anywhere in a nested structure."""
+    if isinstance(value, dict):
+        return any(_contains_string(v, search) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_string(v, search) for v in value)
+    if isinstance(value, str):
+        return search in value
+    return False

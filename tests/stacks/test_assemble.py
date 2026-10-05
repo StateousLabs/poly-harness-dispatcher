@@ -109,3 +109,130 @@ def test_missing_marker_file(tmp_path, parts):
 def test_agent_folder_needs_exactly_one_md(tmp_path, parts):
     with pytest.raises(StackInvalid, match="exactly one .md"):
         build(tmp_path, compose("c", "1", base=parts / "base", agent=parts / "base"))
+
+
+def test_mcp_folder_replace_cleans_old_servers(tmp_path, parts):
+    """When replacing an MCP folder, remove servers from the old folder."""
+    weather1 = parts / "w1"
+    shutil.copytree(parts / "weather", weather1)
+    (weather1 / ".mcp.json").write_text(json.dumps({"mcpServers": {"a": {
+        "command": "python", "args": ["${here}/a.py"]}}}), encoding="utf-8")
+
+    weather2 = parts / "w2"
+    shutil.copytree(parts / "weather", weather2)
+    (weather2 / ".mcp.json").write_text(json.dumps({"mcpServers": {"b": {
+        "command": "python", "args": ["${here}/b.py"]}}}), encoding="utf-8")
+
+    config, _ = build(tmp_path, compose("c", "1", base=parts / "base",
+                                        mcp=[{"source": str(weather1), "replace": True},
+                                             {"source": str(weather2), "replace": True}]))
+    stack = Stack.load(config)
+    assert "a" in stack.mcp_servers and "b" in stack.mcp_servers
+
+
+def test_mcp_folder_clash_without_replace(tmp_path, parts):
+    """Same folder name without replace raises StackInvalid."""
+    # Add weather without replace first
+    m1 = compose("c", "1", base=parts / "base", mcp=[parts / "weather"])
+    config1, _ = build(parts / "tmp1", m1)
+    # Try to add the same weather without replace
+    with pytest.raises(StackInvalid, match="MCP component folder 'weather' already exists"):
+        m2 = compose("c", "1", base=parts / "base", mcp=[parts / "weather", parts / "weather"])
+        build(parts / "tmp2", m2)
+def test_base_invalid_mcp_servers_type(tmp_path, parts):
+    """Base with invalid mcpServers type raises StackInvalid."""
+    bad_base = parts / "badbase"
+    shutil.copytree(parts / "base", bad_base)
+    mcp_file = bad_base / ".mcp.json"
+    if mcp_file.is_file():
+        data = json.loads(mcp_file.read_text(encoding="utf-8"))
+        data["mcpServers"] = "not a dict"
+        mcp_file.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(StackInvalid, match="base: 'mcpServers' must be an object"):
+        build(tmp_path, compose("c", "1", base=bad_base))
+
+
+def test_base_invalid_hooks_type(tmp_path, parts):
+    """Base with invalid hooks type raises StackInvalid."""
+    bad_base = parts / "badbase2"
+    shutil.copytree(parts / "base", bad_base)
+    hooks_file = bad_base / "hooks" / "hooks.json"
+    if hooks_file.is_file():
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        data["hooks"] = "not a list"
+        hooks_file.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(StackInvalid, match="base: 'hooks' must be an array"):
+        build(tmp_path, compose("c", "1", base=bad_base))
+
+
+def test_base_here_rewritten_to_stack(tmp_path, parts):
+    """Base's ${here} in .mcp.json and hooks.json is rewritten to ${stack}."""
+    custom_base = parts / "custombase"
+    shutil.copytree(parts / "base", custom_base)
+
+    mcp_file = custom_base / ".mcp.json"
+    data = json.loads(mcp_file.read_text(encoding="utf-8"))
+    data["mcpServers"]["custom"] = {"command": "python", "args": ["${here}/test.py"]}
+    mcp_file.write_text(json.dumps(data), encoding="utf-8")
+
+    hooks_file = custom_base / "hooks" / "hooks.json"
+    data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    data["hooks"].append({"event": "post_tool", "command": "python ${here}/test.py"})
+    hooks_file.write_text(json.dumps(data), encoding="utf-8")
+
+    config, _ = build(tmp_path, compose("c", "1", base=custom_base))
+    stack = Stack.load(config)
+    assert stack.mcp_servers["custom"]["args"] == ["${stack}/test.py"]
+    commands = [h.command for h in stack.hooks]
+    assert any("${stack}/test.py" in cmd for cmd in commands)
+
+
+def test_skill_hostile_name(tmp_path, parts):
+    """Skill with hostile name like ../evil raises StackInvalid."""
+    evil = parts / "evil"
+    evil.mkdir()
+    (evil / "SKILL.md").write_text("---\nname: ../evil\n---\nbody\n", encoding="utf-8")
+
+    with pytest.raises(StackInvalid, match="must match"):
+        build(tmp_path, compose("c", "1", base=parts / "base", skills=[evil]))
+
+
+def test_hook_bundle_name_conflicts_with_file(tmp_path, parts):
+    """Hook bundle named after an existing file raises StackInvalid."""
+    custom_base = parts / "custombase2"
+    shutil.copytree(parts / "base", custom_base)
+
+    guard_py_bundle = parts / "guard.py"
+    guard_py_bundle.mkdir()
+    (guard_py_bundle / "hooks.json").write_text(json.dumps({"hooks": [
+        {"event": "post_tool", "command": "echo test"}]}), encoding="utf-8")
+
+    with pytest.raises(StackInvalid, match="hook bundle 'guard.py' conflicts with a hooks file"):
+        build(tmp_path, compose("c", "1", base=custom_base,
+                               hooks=[{"source": str(guard_py_bundle), "replace": True}]))
+
+
+def test_hook_bundle_named_hooks_json(tmp_path, parts):
+    """Hook bundle named hooks.json raises StackInvalid."""
+    hooks_json_dir = parts / "hooks.json"
+    hooks_json_dir.mkdir(exist_ok=True)
+    (hooks_json_dir / "hooks.json").write_text(json.dumps({"hooks": [
+        {"event": "post_tool", "command": "echo test"}]}), encoding="utf-8")
+
+    with pytest.raises(StackInvalid, match="hook bundle 'hooks.json' conflicts with a hooks file"):
+        build(tmp_path, compose("c", "1", base=parts / "base",
+                               hooks=[{"source": str(hooks_json_dir), "replace": True}]))
+def test_frontmatter_name_only_top_level(tmp_path, parts):
+    """Only accept name: key at top level, not in nested objects."""
+    nested = parts / "nested"
+    nested.mkdir()
+    (nested / "SKILL.md").write_text(
+        "---\nmetadata:\n  name: nested\nname: real\n---\nbody\n",
+        encoding="utf-8"
+    )
+
+    config, _ = build(tmp_path, compose("c", "1", base=parts / "base", skills=[nested]))
+    stack = Stack.load(config)
+    assert any(s.name == "real" for s in stack.skills)
