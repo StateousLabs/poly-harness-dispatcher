@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -84,7 +85,7 @@ class Spec:
         timeout_s: Wall-clock limit for the run, including writing the prompt. On expiry the
             process tree is killed and the result has status `timed_out`. Default 1800.
         budget_usd: Cost cap. claude gets `--max-budget-usd` (claude reports cost only in its
-            final line, where PHD also checks it); opencode is stopped by PHD as soon as the
+            final line, where PHD also checks this turn's own cost); opencode is stopped by PHD as soon as the
             summed `step_finish` cost exceeds it; codex reports no cost, so it is not enforced
             (a warning is added).
         output_schema: JSON Schema for a structured final answer (claude `--json-schema`, codex
@@ -104,8 +105,9 @@ class Spec:
     Raises:
         UnknownHarness: `harness` is not supported.
         InvalidSpec: Blank `model`; bad `project_config` / `autonomy`; non-bool
-            `harness_builtins`; non-positive `timeout_s` or `budget_usd`; bad `idle_timeout_s` /
-            `schema_repair`; malformed `output_schema`.
+            `harness_builtins`; non-positive or non-finite `timeout_s` or `budget_usd`; bad `idle_timeout_s` /
+            `schema_repair`; malformed `output_schema` (also one with a `$ref` that does
+            not resolve).
         CwdNotFound: `cwd` is not a directory.
         UnsafeAutonomy: `autonomy="full"` without `unsafe=True`.
         MissingCredentials: `credentials.harness` differs from `harness`.
@@ -156,12 +158,13 @@ class Spec:
             raise MissingCredentials(f"credentials are for {self.credentials.harness!r}, spec harness is {self.harness!r}")
         if not isinstance(self.harness_builtins, bool):
             raise InvalidSpec(f"harness_builtins must be a bool, got {self.harness_builtins!r}")
-        if self.timeout_s <= 0:
+        if not math.isfinite(self.timeout_s) or self.timeout_s <= 0:
             raise InvalidSpec("timeout_s must be positive")
-        if self.budget_usd is not None and self.budget_usd <= 0:
+        if self.budget_usd is not None and (not math.isfinite(self.budget_usd) or self.budget_usd <= 0):
             raise InvalidSpec("budget_usd must be positive when set")
         if self.idle_timeout_s is not None and (isinstance(self.idle_timeout_s, bool)
                                                 or not isinstance(self.idle_timeout_s, (int, float))
+                                                or not math.isfinite(self.idle_timeout_s)
                                                 or self.idle_timeout_s <= 0):
             raise InvalidSpec(f"idle_timeout_s must be a positive number when set, got {self.idle_timeout_s!r}")
         if not isinstance(self.schema_repair, bool):

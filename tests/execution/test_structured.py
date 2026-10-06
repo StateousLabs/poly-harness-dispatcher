@@ -83,10 +83,11 @@ def test_a_failed_run_is_not_validated(tmp_path, make_spec, monkeypatch):
 
 def test_repair_turn_fixes_the_answer(tmp_path, make_spec, stream, echo):
     stream(claude_stream(tmp_path, "bad", result="", structured={"event": "nope"}),
-           claude_stream(tmp_path, "good", result="", structured={"event": "done"}))
+           claude_stream(tmp_path, "good", result="", structured={"event": "done"}, cost=0.02))  # cumulative
     _, r = run(tmp_path, make_spec, schema_repair=True)
     assert r.status is RunStatus.SUCCEEDED and r.structured_output == {"event": "done"}
     assert "schema repair turn used" in r.warnings and r.cost_usd == pytest.approx(0.02) and r.num_turns == 2
+    assert r.session_cost_usd == pytest.approx(0.02)
     calls = echo()
     assert len(calls) == 2 and "--resume" in calls[1]["argv"] and "sess-s1" in calls[1]["argv"]
     assert calls[1]["stdin"].startswith("Your final answer did not match the required JSON Schema: $.event")
@@ -108,11 +109,14 @@ def test_repair_is_off_by_default(tmp_path, make_spec, stream, echo):
     assert r.error.kind == "schema" and len(echo()) == 1
 
 
-def test_repair_shares_the_budget(tmp_path, make_spec, stream):
+@pytest.mark.parametrize("second_cumulative,status", [(0.02, RunStatus.BUDGET_EXCEEDED),
+                                                       (0.014, RunStatus.SUCCEEDED)])
+def test_repair_shares_the_budget(tmp_path, make_spec, stream, second_cumulative, status):
+    # per-turn 0.01 + (second_cumulative - 0.01): a sum of 0.02 exceeds 0.015, 0.014 does not
     stream(claude_stream(tmp_path, "bad", result="", structured={"event": "nope"}),
-           claude_stream(tmp_path, "good", result="", structured={"event": "done"}))
+           claude_stream(tmp_path, "good", result="", structured={"event": "done"}, cost=second_cumulative))
     _, r = run(tmp_path, make_spec, schema_repair=True, budget_usd=0.015)
-    assert r.status is RunStatus.BUDGET_EXCEEDED
+    assert r.status is status and r.cost_usd == pytest.approx(second_cumulative)
 
 
 def test_repair_works_with_resumable_false(tmp_path, make_spec, stream):  # Review Focus 3
@@ -157,8 +161,9 @@ def on_second_spawn(monkeypatch):
 
 
 def two_streams(tmp_path, first_cost=0.01):
+    """A wrong first answer, then a corrected one costing 0.01 more (claude reports the session total)."""
     return (claude_stream(tmp_path, "bad", result="", structured={"event": "nope"}, cost=first_cost),
-            claude_stream(tmp_path, "good", result="", structured={"event": "done"}))
+            claude_stream(tmp_path, "good", result="", structured={"event": "done"}, cost=first_cost + 0.01))
 
 
 def test_cancel_during_repair_start_is_not_lost(tmp_path, make_spec, stream, monkeypatch, on_second_spawn):
@@ -199,7 +204,89 @@ def test_repair_gets_only_the_remaining_budget(tmp_path, make_spec, stream, echo
 def test_no_repair_when_the_budget_is_spent(tmp_path, make_spec, stream, echo):
     stream(*two_streams(tmp_path, first_cost=0.02))
     _, r = run(tmp_path, make_spec, schema_repair=True, budget_usd=0.02)
-    assert len(echo()) == 1 and r.error.kind in ("schema", "budget")
+    assert len(echo()) == 1 and r.error.kind == "schema"
+    assert "schema repair skipped: budget_usd spent" in r.warnings
+
+
+def test_no_repair_when_the_timeout_is_nearly_spent(tmp_path, make_spec, stream, echo, monkeypatch):
+    from phd.execution import handle as handle_mod
+    stream(*two_streams(tmp_path))
+    monkeypatch.setattr(handle_mod, "REPAIR_MIN_TIME_S", 10_000.0)  # more than timeout_s leaves after any first turn
+    _, r = run(tmp_path, make_spec, schema_repair=True, timeout_s=1800)
+    assert len(echo()) == 1 and r.error.kind == "schema"
+    assert "schema repair skipped: timeout_s nearly spent" in r.warnings
+    types = [json.loads(line)["type"] for line in open(r.events_path, encoding="utf-8")]
+    assert "schema.repair" not in types
+
+
+def test_repair_failure_after_start_keeps_the_first_turn(tmp_path, make_spec, stream, monkeypatch):
+    from phd.execution import handle as handle_mod
+    stream(*two_streams(tmp_path))
+
+    def boom(first, second):
+        raise ValueError("merge exploded")
+    monkeypatch.setattr(handle_mod, "_merge", boom)
+    _, r = run(tmp_path, make_spec, schema_repair=True)
+    assert r.error.kind == "schema" and r.cost_usd == pytest.approx(0.01)
+    assert "schema repair turn failed: ValueError: merge exploded" in r.warnings
+    types = [json.loads(line)["type"] for line in open(r.events_path, encoding="utf-8")]
+    assert types[-1] == "run.finished" and types.count("run.finished") == 1
+
+
+def test_schema_repair_event_only_after_the_repair_started(tmp_path, make_spec, stream, on_second_spawn):
+    stream(*two_streams(tmp_path))
+
+    def boom(handle):
+        raise OSError("no such harness")
+    on_second_spawn(boom)
+    _, r = run(tmp_path, make_spec, schema_repair=True)
+    types = [json.loads(line)["type"] for line in open(r.events_path, encoding="utf-8")]
+    assert "schema.repair" not in types
+
+
+def test_resumed_claude_turn_reports_its_own_cost(tmp_path, make_spec, stream):
+    good = {"result": "", "structured": {"event": "done"}}
+    stream(claude_stream(tmp_path, "t1", cost=0.02, **good), claude_stream(tmp_path, "t2", cost=0.03, **good),
+           claude_stream(tmp_path, "t3", cost=0.05, **good))
+    d, first = run(tmp_path, make_spec, budget_usd=0.025)
+    assert first.cost_usd == pytest.approx(0.02) and first.session_cost_usd == pytest.approx(0.02)
+    second = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert second.status is RunStatus.SUCCEEDED  # 0.01 this turn, not the session's 0.03
+    assert second.cost_usd == pytest.approx(0.01) and second.session_cost_usd == pytest.approx(0.03)
+    third = d.spawn(Inputs(msg="and again"), session_id=first.session_id)
+    assert third.cost_usd == pytest.approx(0.02) and third.session_cost_usd == pytest.approx(0.05)
+
+
+def test_resume_after_an_old_record_falls_back_to_its_cost(tmp_path, make_spec, stream):
+    good = {"result": "", "structured": {"event": "done"}}
+    stream(claude_stream(tmp_path, "t1", cost=0.02, **good), claude_stream(tmp_path, "t2", cost=0.03, **good))
+    d, first = run(tmp_path, make_spec)
+    path = os.path.join(first.run_dir, "result.json")
+    with open(path, encoding="utf-8") as f:
+        record = json.load(f)
+    del record["session_cost_usd"]  # written before the field existed
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(record, f)
+    second = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert second.cost_usd == pytest.approx(0.01) and second.session_cost_usd == pytest.approx(0.03)
+
+
+def test_per_invocation_cost_harness_is_unaffected_on_resume(tmp_path, make_spec, monkeypatch):
+    from conftest import STREAMS
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "opencode_ok.jsonl"))
+    d = Dispatcher(make_spec("opencode"), runs_root=tmp_path / "runs", validate_model=False,
+                   allow_temp_runs_root=True, executables={"opencode": FAKE})
+    first = d.spawn(Inputs(msg="x"))
+    second = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert first.cost_usd and second.cost_usd == pytest.approx(first.cost_usd)
+    assert first.session_cost_usd is None and second.session_cost_usd is None
+
+
+def test_escaped_secret_renderings_are_scrubbed(tmp_path, make_spec, stream):
+    secret = "it's\\secret"  # a quote and a backslash: jsonschema prints repr(), json would double the backslash
+    stream(claude_stream(tmp_path, "leak", result="", structured={"event": secret}))
+    _, r = run(tmp_path, make_spec, secrets={"ECHO_PREFIX": secret})
+    assert r.error.kind == "schema" and "secret" not in r.error.message
 
 
 def test_with_budget_helper():

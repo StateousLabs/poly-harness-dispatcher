@@ -60,3 +60,29 @@ def test_validate_answer_scrubs_before_capping():
     message = validate_answer(SCHEMA, value, scrub=lambda text: text.replace(secret, "[X]"))
     assert "SECRET" not in message and len(message) <= MAX_MESSAGE
     assert "SECRET" in validate_answer(SCHEMA, value)  # without scrub the cap would split it, not hide it
+
+
+@pytest.mark.parametrize("schema", [
+    {"$ref": "#/$defs/missing"},
+    {"properties": {"a": {"$ref": "#/nope"}}},
+    {"$ref": "https://example.com/s.json"},
+])
+def test_schema_error_reports_an_unresolvable_ref(schema):
+    message = schema_error(schema)
+    assert message is not None and message.startswith("unresolvable $ref: ") and len(message) <= MAX_MESSAGE
+
+
+def test_schema_error_accepts_a_resolvable_ref():
+    assert schema_error({"$defs": {"e": {"enum": ["done"]}}, "properties": {"event": {"$ref": "#/$defs/e"}}}) is None
+
+
+def test_validate_answer_does_not_raise_for_an_unresolvable_ref():
+    message = validate_answer({"$ref": "#/$defs/SECRETVALUE"}, {"event": "done"},
+                              scrub=lambda text: text.replace("SECRETVALUE", "[X]"))
+    assert message.startswith("unresolvable $ref: ") and "SECRETVALUE" not in message
+    assert len(message) <= MAX_MESSAGE
+
+
+@pytest.mark.parametrize("tag", ["JSON", "Json"])
+def test_extract_json_fence_tag_is_case_insensitive(tag):
+    assert extract_json(f'Here:\n```{tag}\n{{"event": "done"}}\n```') == {"event": "done"}

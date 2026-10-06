@@ -46,6 +46,13 @@ def _kernel32():
     return k
 
 
+def _ntdll():
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long  # NTSTATUS
+    return ntdll
+
+
 def resume(pid: int) -> None:
     """Resume a process created with CREATE_SUSPENDED (ntdll's NtResumeProcess). Raises OSError on failure."""
     k = _kernel32()
@@ -53,11 +60,8 @@ def resume(pid: int) -> None:
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
-        ntdll = ctypes.WinDLL("ntdll")
-        ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
-        ntdll.NtResumeProcess.restype = ctypes.c_long  # NTSTATUS
-        status = ntdll.NtResumeProcess(handle)
-        if status != 0:
+        status = _ntdll().NtResumeProcess(handle)
+        if status < 0:  # NT_SUCCESS: success and informational statuses are >= 0
             raise OSError(f"NtResumeProcess failed with NTSTATUS 0x{status & 0xFFFFFFFF:08X}")
     finally:
         k.CloseHandle(handle)

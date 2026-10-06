@@ -21,7 +21,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `error` | `RunError` or `None` | `kind` + `message` ([below](#error-kinds-and-precedence)) |
 | `result_text` | `str` or `None` | final answer: claude `result`; codex last completed `agent_message`; opencode last `text` part |
 | `structured_output` | any | claude's `structured_output`; otherwise, when `Spec.output_schema` is set, `result_text` parsed as JSON (a single fenced block is accepted). Kept even when it fails validation; `None` if no JSON could be extracted |
-| `cost_usd` | `float` or `None` | cost reported by the harness |
+| `cost_usd` | `float` or `None` | this run's own cost, as reported by the harness. claude reports a session-cumulative `total_cost_usd` on `--resume`, so for a resumed claude turn (and a repair turn) PHD subtracts what the session had cost before this invocation; with a repair turn, the sum of both turns' own costs. `budget_usd` is checked against this figure |
 | `cost_source` | `str` | [below](#cost_source) |
 | `usage` | `Usage` | `input_tokens` (includes cached), `cached_input_tokens`, `output_tokens`, `reasoning_tokens` |
 | `num_turns` | `int` or `None` | claude: reported; codex: count of `turn.completed`; opencode: count of `step_finish` |
@@ -37,10 +37,11 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `started_at`, `finished_at` | `str` | ISO 8601, UTC (`+00:00`) |
 | `cli_version` | `str` or `None` | claude only (`claude_code_version` from the init event); `None` for codex and opencode |
 | `sandbox` | `None` | reserved for the sandbox layer; always `None` today |
-| `warnings` | `list[str]` | pre-launch warnings, `harness_config` conflicts, `orphan protection unavailable: ...`, `schema repair turn used`, `schema repair turn could not start: ...`, home-cleanup and sink failures |
+| `warnings` | `list[str]` | pre-launch warnings, `harness_config` conflicts, `orphan protection unavailable: ...`, `schema repair turn used`, `schema repair turn could not start: ...`, `schema repair turn failed: ...`, `schema repair skipped: ...`, home-cleanup and sink failures |
 | `raw_final` | `dict` or `None` | claude `result` line; last codex `turn.completed`; last opencode `step_finish` |
 | `events_path` | `str` | `<run_dir>/events.jsonl` |
 | `stderr_path` | `str` | `<run_dir>/stderr.log` |
+| `session_cost_usd` | `float` or `None` | claude only: the harness's own cumulative cost of the whole session after this run (the last `total_cost_usd` it reported); `None` for codex and opencode (their cost is per invocation), when claude reported no cost, and in `result.json` files written before this field existed |
 
 `RunResult.to_dict()` / `RunResult.from_dict()` convert to and from the `result.json` form.
 
@@ -112,7 +113,7 @@ own events.
 | `tool_call` | parser | claude `{"tool", "input", "id"}`; codex and opencode `{"tool", "id", "status"}` |
 | `tool_result` | parser | claude `{"id", "is_error"}`; codex `{"tool", "id", "status"}` |
 | `usage` | parser | `Usage` fields so far + `"cost_usd"` |
-| `schema.repair` | PHD | `{"error": ...}`: the schema error that triggered the [repair turn](run-lifecycle.md#schema-repair-turn); emitted before the repair process starts |
+| `schema.repair` | PHD | `{"error": ...}`: the schema error that triggered the [repair turn](run-lifecycle.md#schema-repair-turn); emitted when the repair turn starts (after its process started) |
 | `log` | PHD or parser | non-JSON stdout line: `{"text": line}`; parser warning: `{"text", "level": "warning"}`; unparsable event: `{"text": "unparsed <harness> event", "raw_type"}` |
 | `run.finished` | PHD, last | `{"status": "<status>"}` |
 
@@ -127,7 +128,7 @@ Per harness, which native stream items produce which events:
 | assistant text | `assistant` text item → `message` | `item.completed` `agent_message` → `message` | `text` → `message` |
 | tool call | `assistant` `tool_use` item → `tool_call` | `item.started` of `command_execution`, `mcp_tool_call` (tool `mcp:<server>/<tool>`), `file_change`, `web_search` → `tool_call` | `tool_use` → `tool_call` |
 | tool result | `user` `tool_result` item → `tool_result` | `item.completed` of those types → `tool_result` | none |
-| usage / cost | `result` → `usage` (once, with `cost_usd`) | `turn.completed` → `usage` (cumulative, `cost_usd: null`) | `step_finish` → `usage` (cumulative tokens and cost) |
+| usage / cost | `result` → `usage` (once, with `cost_usd` as claude reported it: session-cumulative on a resumed turn) | `turn.completed` → `usage` (cumulative, `cost_usd: null`) | `step_finish` → `usage` (cumulative tokens and cost) |
 | warnings | none | `item.completed` `error` item → `log` warning (except the hook-trust warning) | retryable `error` → `log` warning |
 | failure | `result` with `is_error` → error, no event | `turn.failed` / `error` → error, no event | non-retryable `error` → error, no event |
 

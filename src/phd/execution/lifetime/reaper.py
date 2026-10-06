@@ -17,6 +17,9 @@ class ReaperGuard:
         self._proc: subprocess.Popen | None = None
 
     def attach(self, pid: int) -> None:
+        if getattr(sys, "frozen", False):  # sys.executable is the frozen app, not a Python that can run the script
+            self.warning = "orphan protection unavailable: frozen interpreter"
+            return
         try:
             # Own session: a terminal Ctrl+C or a signal to the caller's group must not take the reaper too.
             self._proc = subprocess.Popen([sys.executable, "-I", str(SCRIPT), str(pid)], stdin=subprocess.PIPE,

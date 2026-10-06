@@ -18,6 +18,7 @@ RESIDUAL_BUILTIN_SKILLS = ("design", "doctor")
 
 class ClaudeAdapter:
     name = "claude"
+    cumulative_cost = True  # `total_cost_usd` on --resume is the whole session's, not this invocation's
 
     def validate(self, spec: Spec) -> list[str]:
         check_supported("claude", spec.stack.hooks)

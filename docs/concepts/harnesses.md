@@ -77,7 +77,10 @@ last `type == "result"` line gives `result` (`result_text`), `total_cost_usd`, `
 `structured_output`, `is_error` / `subtype`.
 
 **Cost:** `total_cost_usd` from the result line, `cost_source = "harness"` (or `"unknown"` if absent). Cost is
-only known at the end of the run.
+only known at the end of the run. On `--resume`, `total_cost_usd` is the **session's** cumulative cost (token usage
+is still per invocation), so PHD reports `cost_usd` = reported − the session's cost before this turn (the previous
+run's `session_cost_usd`, or its `cost_usd` for an older record) and keeps the reported total in
+`session_cost_usd`. `--max-budget-usd` caps one invocation, which matches PHD's per-turn budget check.
 
 **Model catalogue:** no CLI command. PHD accepts the aliases `opus`, `sonnet`, `haiku`, `fable` and the known ids
 `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-opus-5`, `claude-sonnet-5`,

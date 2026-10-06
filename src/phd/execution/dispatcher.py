@@ -105,7 +105,7 @@ class Dispatcher:
         return self._plan(inputs, session_id, dry_run=True)[0]
 
     def _plan(self, inputs: Inputs, session_id: str | None, *,
-              dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None]:
+              dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None, float]:
         if not self.spec.stack.root.is_dir():
             raise StackNotFound(f"stack {self.spec.stack.ref}: {self.spec.stack.root} no longer exists "
                                 "(removed from the store?)")
@@ -133,7 +133,7 @@ class Dispatcher:
             if lock is not None:
                 lock.release()
             raise
-        return m, stack_hash, resumed_from, lock
+        return m, stack_hash, resumed_from, lock, _session_cost(prev)
 
     def _lock_session(self, home: Path, run_id: str, run_dir: Path, session_id: str) -> SessionLock:
         """Lock the session's shared home; when another live run holds it, remove the still-empty run
@@ -228,10 +228,10 @@ class Dispatcher:
             nxt = await (await d.start(Inputs(msg="now fix it"), session_id=result.session_id)).wait()
             ```
         """
-        m, stack_hash, resumed_from, lock = self._plan(inputs, session_id)
+        m, stack_hash, resumed_from, lock, cost_before = self._plan(inputs, session_id)
         try:
             return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock,
-                                          session_id=session_id)
+                                          session_id=session_id, session_cost_before=cost_before)
         except BaseException:  # the harness never started: free the home again
             if lock is not None:
                 lock.release()
@@ -300,6 +300,16 @@ class Dispatcher:
                 "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
                 "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home),
                 "rules_text": m.rules_text}
+
+
+def _session_cost(prev: RunResult | None) -> float:
+    """What the session had cost before this turn, for harnesses that report cumulative cost: the previous
+    run's `session_cost_usd`, else (a record written before that field existed) its `cost_usd`."""
+    if prev is None:
+        return 0.0
+    if prev.session_cost_usd is not None:
+        return prev.session_cost_usd
+    return prev.cost_usd or 0.0
 
 
 def _is_link(path: Path) -> bool:

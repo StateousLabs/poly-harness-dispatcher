@@ -19,7 +19,18 @@ class StreamParser(Protocol):
 
 
 class Adapter(Protocol):
+    """One harness. Besides the methods:
+
+    Attributes:
+        name: The harness name.
+        cumulative_cost: `True` when the harness's reported cost is the whole session's so far rather than
+            this invocation's (claude on `--resume`); PHD then subtracts the session's earlier cost to get
+            the run's own `cost_usd` and budget figure, and records the reported total as
+            `RunResult.session_cost_usd`.
+    """
+
     name: str
+    cumulative_cost: bool
 
     def validate(self, spec: Spec) -> list[str]: ...
     def materialize(self, ctx: MaterializeContext) -> tuple[list[str], dict[str, str]]: ...

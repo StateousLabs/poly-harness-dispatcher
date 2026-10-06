@@ -119,7 +119,9 @@ class RunResult:
         result_text: The agent's final text answer, if any.
         structured_output: The structured answer when `Spec.output_schema` is set (from the
             harness, else parsed from `result_text` as JSON when possible).
-        cost_usd: Cost reported by the harness, or `None`.
+        cost_usd: Cost of this run, or `None`. For claude this is the turn's own cost: claude reports a
+            session-cumulative figure on `--resume`, so PHD subtracts what the session had cost before
+            (see `session_cost_usd`).
         cost_source: `"harness"` (claude when it reported `total_cost_usd`; opencode always)
             or `"unknown"` (codex; claude without a cost; PHD-internal failures). The value
             `"estimated"` is reserved and never produced today.
@@ -147,6 +149,9 @@ class RunResult:
             `turn.completed`, last opencode `step_finish`).
         events_path: Path of `events.jsonl`.
         stderr_path: Path of `stderr.log`.
+        session_cost_usd: The harness's own cumulative cost for the whole session after this run, for
+            harnesses that report cost per session (claude); `None` otherwise or when not reported.
+            Absent from records written before it existed (loads as `None`).
     """
 
     run_id: str
@@ -182,6 +187,7 @@ class RunResult:
     raw_final: dict | None = None
     events_path: str = ""
     stderr_path: str = ""
+    session_cost_usd: float | None = None
 
     def to_dict(self) -> dict:
         """Return a JSON-ready dict (the `result.json` format); `status` becomes its string."""

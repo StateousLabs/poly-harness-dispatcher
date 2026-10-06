@@ -45,13 +45,30 @@ class HarnessProcess:
             self.guard.attach(self.proc.pid)  # on Windows this also resumes the suspended harness
         except BaseException:
             # Never leak a harness. It has spawned nothing yet (on Windows it is still suspended),
-            # so killing the one process is enough.
-            self.proc.kill()
+            # so killing the one process (POSIX: its new group) is enough.
+            self._kill_unguarded()
+            self.close()  # frees a job handle the guard may already hold
+            try:
+                await asyncio.wait_for(self.proc.wait(), 5)  # reap it: never leave the transport unawaited
+            except Exception:
+                pass
             raise
         self._stderr_task = asyncio.create_task(self._copy_stderr())
         # The prompt is written in the background: a harness that never reads stdin must not block
         # start() (and so escape timeout_s).
         self._stdin_task = asyncio.create_task(self._write_stdin())
+
+    def _kill_unguarded(self) -> None:
+        try:
+            if os.name == "nt":
+                self.proc.kill()
+            else:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except OSError:
+                    self.proc.kill()
+        except ProcessLookupError:
+            pass
 
     async def _write_stdin(self) -> None:
         try:

@@ -223,3 +223,19 @@ def test_malformed_output_schema_is_rejected(make_spec):
 def test_output_schema_must_be_a_dict(make_spec):
     with pytest.raises(InvalidSpec, match="output_schema must be a dict"):
         make_spec(output_schema=["x"])
+
+
+@pytest.mark.parametrize("field,message", [("timeout_s", "timeout_s must be positive"),
+                                           ("budget_usd", "budget_usd must be positive"),
+                                           ("idle_timeout_s", "idle_timeout_s must be a positive number")])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_spec_numbers_must_be_finite(make_spec, field, message, bad):
+    with pytest.raises(InvalidSpec, match=message):
+        make_spec("claude", **{field: bad})
+
+
+@pytest.mark.parametrize("schema", [{"$ref": "#/$defs/missing"}, {"properties": {"a": {"$ref": "#/nope"}}},
+                                    {"$ref": "https://example.com/s.json"}])
+def test_output_schema_with_an_unresolvable_ref_is_rejected(make_spec, schema):
+    with pytest.raises(InvalidSpec, match=r"output_schema is not a valid JSON Schema: unresolvable \$ref: "):
+        make_spec(output_schema=schema)

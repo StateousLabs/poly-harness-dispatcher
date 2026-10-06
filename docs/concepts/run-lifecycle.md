@@ -97,6 +97,12 @@ cancelled run has finished. `handle.done` is `True` once the result exists. Erro
 id is known before launch: `RunHandle.session_id` is set at once and `session.started` is emitted right after
 `run.started`. The same id ends up in `RunResult.session_id`; a repair turn does not emit it again.
 
+!!! warning "Resuming after a crash is not supported yet"
+    The session id is available at start, but `start(..., session_id=)` finds sessions through **finished** runs
+    (`result.json`). If the supervisor dies mid-run, that run never writes a result, so resuming a session whose
+    only run never finished raises `NotResumable("no finished run with session …")`. Planned: a session record
+    written when `session.started` fires.
+
 ### Idle timeout
 
 `Spec.idle_timeout_s` (default `None`, off) ends a run whose harness prints no stdout line for that many seconds:
@@ -155,7 +161,7 @@ Checks, in this order, all made before anything is written:
 | Check | Why | If it fails |
 |---|---|---|
 | `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
-| a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status | `NotResumable` ("no finished run with session") |
+| a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status. A run whose process died before writing `result.json` (supervisor crash) does not count, so its session cannot be resumed yet | `NotResumable` ("no finished run with session") |
 | that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
 | its `home_dir` is `<runs_root>/<run_id>/home` of a run in this ledger (resolved; the run dir has a `run.json`) and not a symlink or junction | `home_dir` is read from `result.json`, and resuming deletes PHD-owned paths under it | `NotResumable` ("is not a run home", "is a symlink or junction") |
 | its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
@@ -200,6 +206,10 @@ Details:
   never accumulate along a chain.
 - `stack_hash` is the hash of the stack in the new `Spec` (the home's stack copy is replaced). If the stack ref
   (`name@version`) differs from the previous run's, the result gets a warning; the turn still runs.
+- **Cost is per turn.** claude reports the session's cumulative cost on `--resume`; PHD subtracts the session's
+  cost before this turn (the previous run's `session_cost_usd`, falling back to its `cost_usd` for an older record),
+  so `RunResult.cost_usd` and the `budget_usd` check cover this turn only, and `session_cost_usd` holds claude's
+  cumulative figure. codex and opencode report per-invocation cost and are unchanged.
 - A resumed run never deletes the shared home, even if `Spec.resumable` is `False` (and its `resumable` is `True`
   whenever it has a session id). A fresh run with `resumable=False` still deletes its home, ending the chain.
 - `plan(inputs, session_id=...)` previews a resumed turn without modifying the session: the checks run, the
@@ -285,24 +295,27 @@ so finishing a run never blocks the event loop.
 ## Schema repair turn
 
 With `Spec.output_schema` and `Spec.schema_repair=True`, a run whose answer fails the schema check
-(`error.kind == "schema"`) gets **one** more turn in the same run: PHD emits a `schema.repair` event
-(`{"error": ...}`) and resumes the harness session with the prompt `Your final answer did not match the required
+(`error.kind == "schema"`) gets **one** more turn in the same run: PHD resumes the harness session, emits a
+`schema.repair` event (`{"error": ...}`) once the repair process has started, and sends the prompt `Your final answer did not match the required
 JSON Schema: <error>. Reply with only the corrected JSON.`
 
 - The repair turn is a second process of the **same run**: same `run_id`, run directory, `events.jsonl` and
   `RunResult`. It is not a new run and emits no second `session.started`.
 - It shares the run's limits: the same `timeout_s` deadline, `idle_timeout_s` per turn, and the budget. Claude's
   repair process gets `--max-budget-usd` set to the **remaining** budget (`budget_usd` minus what the first turn
-  cost); streamed-cost enforcement (opencode) counts the first turn's cost too. If nothing remains, no repair runs
-  and the first result is returned.
-- It is skipped when the run was cancelled, or when the first turn reported no session id.
-- Cost, usage and turns are **summed** over both turns. If only one turn reports a cost, `cost_source` is
-  `"unknown"` (a sum would undercount).
+  cost); the budget check counts the first turn's cost plus the repair turn's own (claude's cumulative figure
+  minus what the first turn reported). If nothing remains, no repair runs and the first result is returned with
+  the warning `schema repair skipped: budget_usd spent`.
+- It is skipped when the run was cancelled, when the first turn reported no session id, and when less than one
+  second of `timeout_s` remains (warning `schema repair skipped: timeout_s nearly spent`).
+- Cost, usage and turns are **summed** over both turns (each turn's own cost). If only one turn reports a cost,
+  `cost_source` is `"unknown"` (a sum would undercount).
 - The result gets the warning `schema repair turn used`. If the repaired answer still fails, the error is a
   `schema` error whose message starts with `after one repair turn: `. Any other failure of the repair turn
   (timeout, crash) is reported as usual.
 - If the repair process cannot be started, the first turn's result is kept with the warning
-  `schema repair turn could not start: <Type>: <msg>`.
+  `schema repair turn could not start: <Type>: <msg>`. Any other unexpected error in the repair step keeps the
+  first turn's result with the warning `schema repair turn failed: <Type>: <msg>`.
 
 Messages and per-harness mechanisms: [Option combinations](combinations.md#output_schema).
 

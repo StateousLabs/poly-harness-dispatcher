@@ -33,6 +33,7 @@ def foreign_skills(cwd: Path, project_config: str, home: Path) -> list[Path]:
 
 class CodexAdapter:
     name = "codex"
+    cumulative_cost = False  # reported cost is this invocation's own
 
     def validate(self, spec: Spec) -> list[str]:
         check_supported("codex", spec.stack.hooks)

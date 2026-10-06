@@ -16,6 +16,7 @@ BUILTIN_SKILLS = ("customize-opencode",)
 
 class OpencodeAdapter:
     name = "opencode"
+    cumulative_cost = False  # reported cost is this invocation's own
 
     def validate(self, spec: Spec) -> list[str]:
         check_supported("opencode", spec.stack.hooks)

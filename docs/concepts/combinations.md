@@ -46,7 +46,7 @@ and env flags; codex: the user's `~/.agents/skills/*/SKILL.md` disabled in `conf
 
 | Harness | Mechanism | When it stops | Resulting status |
 |---|---|---|---|
-| claude | `--max-budget-usd <budget>` passed to claude, **and** PHD compares claude's reported cost with the budget | claude applies its own cap; PHD can only check at the final `result` line, where claude reports cost | `budget_exceeded` (claude's own error subtype contains `budget`, or PHD saw cost > budget) |
+| claude | `--max-budget-usd <budget>` passed to claude (a per-invocation cap), **and** PHD compares this turn's own cost with the budget (on a resumed turn: claude's cumulative figure minus the session's earlier cost) | claude applies its own cap; PHD can only check at the final `result` line, where claude reports cost | `budget_exceeded` (claude's own error subtype contains `budget`, or PHD saw cost > budget) |
 | codex | none: codex reports no cost | never | `budget_usd` is ignored; `Dispatcher(...)` adds the warning `codex reports no cost, so budget_usd cannot be enforced for this run` |
 | opencode | PHD sums `step_finish.cost` and kills the process tree when the sum exceeds the budget | after the step that crossed it | `budget_exceeded`; `cost_usd` is the sum at that point |
 

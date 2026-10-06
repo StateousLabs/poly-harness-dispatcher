@@ -127,11 +127,17 @@ async def test_concurrent_runs_have_separate_guards(tmp_path, monkeypatch, make_
     monkeypatch.setenv("FAKE_SLEEP", "30")
     d = Dispatcher(make_spec("claude"), runs_root=tmp_path / "runs", validate_model=False,
                    allow_temp_runs_root=True, executables={"claude": FAKE})
-    a, b = await d.start(Inputs(msg="a")), await d.start(Inputs(msg="b"))
-    assert (await a.cancel()).status is RunStatus.CANCELLED
-    await asyncio.sleep(1)
-    assert not b.done
-    assert (await b.cancel()).status is RunStatus.CANCELLED
+    monkeypatch.setenv("FAKE_PIDFILE", str(tmp_path / "a.pid"))
+    a = await d.start(Inputs(msg="a"))
+    monkeypatch.setenv("FAKE_PIDFILE", str(tmp_path / "b.pid"))  # read when b's process is spawned
+    b = await d.start(Inputs(msg="b"))
+    try:
+        b_pid = await asyncio.to_thread(read_pid, tmp_path / "b.pid")
+        assert (await a.cancel()).status is RunStatus.CANCELLED
+        await asyncio.sleep(1)
+        assert not b.done and pid_alive(b_pid), "cancelling one run killed another run's harness"
+    finally:
+        assert (await b.cancel()).status is RunStatus.CANCELLED
 
 
 async def test_guard_setup_crash_kills_the_harness(tmp_path, monkeypatch):
@@ -144,12 +150,64 @@ async def test_guard_setup_crash_kills_the_harness(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="guard setup exploded"):
         await p.start()
     assert p.proc is not None
-    for _ in range(100):  # the loop must run for the child watcher to see the exit
-        if p.proc.returncode is not None:
-            break
-        await asyncio.sleep(0.05)
+    await asyncio.wait_for(p.proc.wait(), 10)
     assert p.proc.returncode is not None, "harness leaked by a failed guard setup"
     assert await asyncio.to_thread(wait_dead, p.proc.pid, 5)
+
+
+async def test_guard_attach_crash_releases_the_guard_and_reaps_the_harness(tmp_path, monkeypatch):
+    released = []
+
+    class Exploding:
+        warning = None
+
+        def attach(self, pid):
+            raise RuntimeError("attach exploded")
+
+        def kill(self):
+            return False
+
+        def release(self):
+            released.append(True)
+
+    monkeypatch.setattr(lifetime, "new_guard", Exploding)
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    p = HarnessProcess(FAKE, env=child_env({}), cwd=tmp_path, stdin_text="x", stderr_path=tmp_path / "e.log")
+    with pytest.raises(RuntimeError, match="attach exploded"):
+        await p.start()
+    assert released, "the guard was not released"
+    assert p.proc.returncode is not None, "start() re-raised before the harness had exited"
+    await asyncio.wait_for(p.proc.wait(), 10)
+
+
+def test_reaper_is_not_started_from_a_frozen_interpreter(monkeypatch):
+    from phd.execution.lifetime.reaper import ReaperGuard
+
+    started = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: started.append(a))
+    guard = ReaperGuard()
+    guard.attach(12345)
+    assert not started and guard._proc is None
+    assert guard.warning == "orphan protection unavailable: frozen interpreter"
+    guard.release()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NtResumeProcess is Windows-only")
+@pytest.mark.parametrize("status,fails", [(0x40000000, False), (0, False), (-0x3FFFFFFF, True)])
+def test_resume_fails_only_on_an_error_ntstatus(monkeypatch, status, fails):
+    from phd.execution.lifetime import windows_job
+
+    class FakeNtdll:
+        def NtResumeProcess(self, handle):
+            return status
+
+    monkeypatch.setattr(windows_job, "_ntdll", lambda: FakeNtdll())
+    if fails:
+        with pytest.raises(OSError, match="NtResumeProcess failed"):
+            windows_job.resume(os.getpid())
+    else:
+        windows_job.resume(os.getpid())  # an informational (positive) status is success
 
 
 @pytest.mark.skipif(os.name != "nt", reason="JobGuard is Windows-only")

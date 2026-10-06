@@ -8,11 +8,11 @@ This page is the API reference for `RunResult`, `RunStatus`, `RunError`, `Usage`
 
 ### RunResult
 
-Dataclass with 33 fields (`run_id`, `harness`, `model`, `stack`, `stack_hash`, `status`, `exit_code`, `error`,
+Dataclass with 34 fields (`run_id`, `harness`, `model`, `stack`, `stack_hash`, `status`, `exit_code`, `error`,
 `result_text`, `structured_output`, `cost_usd`, `cost_source`, `usage`, `num_turns`, `duration_ms`, `session_id`,
 `resumable`, `resumed_from`, `run_dir`, `home_dir`, `cwd`, `project_config`, `autonomy`, `unsafe`,
 `credential_kind`, `started_at`, `finished_at`, `cli_version`, `sandbox`, `warnings`, `raw_final`,
-`events_path`, `stderr_path`); field table in [Results and events](../concepts/results-and-events.md#runresult).
+`events_path`, `stderr_path`, `session_cost_usd`); field table in [Results and events](../concepts/results-and-events.md#runresult).
 
 | Member | Purpose |
 |---|---|

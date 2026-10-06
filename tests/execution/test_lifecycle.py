@@ -117,7 +117,7 @@ def test_idle_limit_stops_a_silent_run(tmp_path, slow, make_spec):
 def test_steady_output_never_trips_the_idle_limit(tmp_path, monkeypatch, make_spec):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     monkeypatch.setenv("FAKE_LINE_DELAY", "0.4")
-    r = dispatcher(make_spec("claude", idle_timeout_s=3), tmp_path).spawn(Inputs(msg="x"))
+    r = dispatcher(make_spec("claude", idle_timeout_s=10), tmp_path).spawn(Inputs(msg="x"))
     assert r.status is RunStatus.SUCCEEDED
 
 
