@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import tempfile
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 from .._util.fs import is_within, robust_rmtree
@@ -231,11 +232,43 @@ class Dispatcher:
         """
         m, stack_hash, resumed_from, lock = self._plan(inputs, session_id)
         try:
-            return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock)
+            return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock,
+                                          session_id=session_id)
         except BaseException:  # the harness never started: free the home again
             if lock is not None:
                 lock.release()
             raise
+
+    @contextlib.asynccontextmanager
+    async def run(self, inputs: Inputs, *, session_id: str | None = None) -> AsyncIterator[RunHandle]:
+        """`start()` as an async context manager: leaving the block ends the run.
+
+        On exit for any reason (the block ended, an exception, task cancellation), a run that has
+        not finished is cancelled and PHD waits for the harness to die before the exception goes
+        on. The result is recorded in the ledger as usual (status `cancelled`).
+
+        Args:
+            inputs: The task.
+            session_id: Continue this harness session (see `start`).
+
+        Raises:
+            PhdError: Any pre-launch error listed for `start`, raised on entering the block.
+
+        Example:
+            ```python
+            async with d.run(inputs) as handle:
+                async for ev in handle.events():
+                    print(ev.type)
+                result = await handle.wait()
+            ```
+        """
+        handle = await self.start(inputs, session_id=session_id)
+        try:
+            yield handle
+        finally:
+            if not handle.done:
+                handle._request_cancel()  # synchronous: the kill is issued before anything can interrupt us
+                await handle.wait()       # shielded: the run finishes even if this task is cancelled again
 
     def spawn(self, inputs: Inputs, *, session_id: str | None = None) -> RunResult:
         """Blocking wrapper: `start(inputs, session_id=...)` then `wait()`.

@@ -61,7 +61,7 @@ async def test_events_stream(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "opencode_ok.jsonl"))
     handle = await dispatcher(make_spec("opencode"), tmp_path).start(inputs)
     types = [ev.type async for ev in handle.events()]
-    assert types == ["run.started", "tool_call", "usage", "message", "usage", "run.finished"]
+    assert types == ["run.started", "session.started", "tool_call", "usage", "message", "usage", "run.finished"]
     assert (await handle.wait()).status is RunStatus.SUCCEEDED
 
 

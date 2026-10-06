@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, TextIO
 
@@ -23,6 +24,17 @@ if TYPE_CHECKING:
     from .session_lock import SessionLock
 
 
+@dataclass
+class _Turn:
+    """What happened to one harness process (a run has one, or two with a schema repair turn)."""
+
+    exit_code: int | None = None
+    timed_out: bool = False
+    budget_hit: bool = False
+    idle_hit: bool = False
+    internal: Exception | None = None
+
+
 class RunHandle:
     """One live run. Created by `Dispatcher.start`, not directly.
 
@@ -33,16 +45,19 @@ class RunHandle:
         run_id: This run's id.
         resumed_from: For a resumed session, the run the session was found in; else `None`.
         materialized: The `MaterializedHome` that was launched.
+        session_id: The harness session id once the harness reports it (at once for a resumed turn); `None` before.
     """
 
     def __init__(self, dispatcher: Dispatcher, m: MaterializedHome, resumed_from: str | None, stack_hash: str,
-                 lock: SessionLock | None = None):
+                 lock: SessionLock | None = None, session_id: str | None = None):
         self._d = dispatcher
         self._stack_hash = stack_hash
         self._lock = lock  # held for the whole run; released on every exit path
         self.materialized = m
         self.run_id = m.run_id
         self.resumed_from = resumed_from
+        self.session_id: str | None = session_id  # a resumed turn knows its session before launch
+        self._resume_session = session_id  # set for a resumed turn: the id is known before launch
         self._queue: asyncio.Queue[Event | None] = asyncio.Queue()
         self._result: RunResult | None = None
         self._cancelled = False
@@ -53,15 +68,33 @@ class RunHandle:
 
     @classmethod
     async def launch(cls, d: Dispatcher, m: MaterializedHome, *, resumed_from: str | None,
-                     stack_hash: str, lock: SessionLock | None = None) -> RunHandle:
-        handle = cls(d, m, resumed_from, stack_hash, lock)
-        override = d.executables.get(d.spec.harness)
-        argv = [*override, *m.argv[1:]] if override else resolve_argv(m.argv)
-        handle._proc = HarnessProcess(argv, env=child_env(m.env), cwd=d.spec.cwd, stdin_text=m.stdin,
+                     stack_hash: str, lock: SessionLock | None = None,
+                     session_id: str | None = None) -> RunHandle:
+        handle = cls(d, m, resumed_from, stack_hash, lock, session_id)
+        handle._proc = HarnessProcess(handle._resolve(m.argv), env=child_env(m.env), cwd=d.spec.cwd, stdin_text=m.stdin,
                                       stderr_path=m.run_dir / "stderr.log")
         await handle._proc.start()
         handle._task = asyncio.create_task(handle._pump())
         return handle
+
+    def _resolve(self, argv: list[str]) -> list[str]:
+        override = self._d.executables.get(self._d.spec.harness)
+        return [*override, *argv[1:]] if override else resolve_argv(argv)
+
+    @property
+    def done(self) -> bool:
+        """True once the run has finished and its `RunResult` exists."""
+        return self._task is not None and self._task.done()
+
+    def _request_cancel(self) -> None:
+        self._cancelled = True
+        if self._proc is not None:
+            self._proc.kill_tree()
+
+    def _note_session(self, sink: TextIO, session_id: str | None) -> None:
+        if session_id and self.session_id is None:
+            self.session_id = session_id
+            self._emit(sink, "session.started", {"session_id": session_id})
 
     async def events(self) -> AsyncIterator[Event]:
         """Yield normalized events until the run finishes (the last one is `run.finished`).
@@ -88,8 +121,7 @@ class RunHandle:
         A run still in progress finishes with status `cancelled`. On a run that has already
         finished this just returns the existing result.
         """
-        self._cancelled = True
-        self._proc.kill_tree()
+        self._request_cancel()
         return await self.wait()
 
     def _emit(self, sink: TextIO, kind: str, data: dict, raw: dict | None = None) -> None:
@@ -143,30 +175,14 @@ class RunHandle:
 
     async def _run_to_result(self) -> RunResult:
         spec, m = self._d.spec, self.materialized
-        parser = self._d.adapter.parser()
-        timed_out = budget_hit = False
-        exit_code: int | None = None
-        internal: Exception | None = None
+        deadline = asyncio.get_running_loop().time() + spec.timeout_s
         with open(m.run_dir / "events.jsonl", "a", encoding="utf-8") as events_file:
             self._emit(events_file, "run.started", {"argv": m.argv, "resumed_from": self.resumed_from})
-            try:
-                async with asyncio.timeout(spec.timeout_s):
-                    budget_hit = await self._consume(events_file, parser)
-                    exit_code = await self._proc.wait()
-            except TimeoutError:
-                timed_out = True
-                self._proc.kill_tree()
-                exit_code = await self._proc.wait()
-            except Exception as e:  # post-launch problems are data, never raised (CoreDesign §3)
-                internal = e
-                self._proc.kill_tree()
-                exit_code = await self._proc.wait()
-            try:
-                result = self._build_result(parser.outcome(), exit_code, timed_out=timed_out,
-                                            budget_hit=budget_hit, internal=internal)
-            except Exception as e:
-                result = self._minimal_result(e)
-                result.exit_code = exit_code
+            if self._resume_session:
+                self._emit(events_file, "session.started", {"session_id": self._resume_session})
+            parser = self._d.adapter.parser()
+            turn = await self._turn(events_file, parser, deadline)
+            result = self._finish(parser.outcome(), turn)
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
             self._release_lock()  # the lock file lives in the home that is about to go
@@ -177,9 +193,42 @@ class RunHandle:
             result.resumable = False
         return result
 
-    async def _consume(self, events_file: TextIO, parser) -> bool:
-        budget = self._d.spec.budget_usd
-        async for line in self._proc.lines():
+    def _finish(self, o: Outcome, t: _Turn) -> RunResult:
+        try:
+            return self._build_result(o, t)
+        except Exception as e:
+            result = self._minimal_result(e)
+            result.exit_code = t.exit_code
+            return result
+
+    async def _turn(self, events_file: TextIO, parser, deadline: float, *, budget_spent: float = 0.0) -> _Turn:
+        t = _Turn()
+        try:
+            async with asyncio.timeout_at(deadline):
+                t.budget_hit, t.idle_hit = await self._consume(events_file, parser, budget_spent)
+                t.exit_code = await self._proc.wait()
+        except TimeoutError:
+            t.timed_out = True
+            self._proc.kill_tree()
+            t.exit_code = await self._proc.wait()
+        except Exception as e:  # post-launch problems are data, never raised (CoreDesign §3)
+            t.internal = e
+            self._proc.kill_tree()
+            t.exit_code = await self._proc.wait()
+        return t
+
+    async def _consume(self, events_file: TextIO, parser, budget_spent: float) -> tuple[bool, bool]:
+        """Pump stdout into events; return (budget_hit, idle_hit)."""
+        budget, idle = self._d.spec.budget_usd, self._d.spec.idle_timeout_s
+        lines = aiter(self._proc.lines())
+        while True:
+            try:
+                line = await (asyncio.wait_for(anext(lines), idle) if idle else anext(lines))
+            except StopAsyncIteration:
+                return False, False
+            except TimeoutError:  # wait_for's own timeout: the harness was silent for idle_timeout_s
+                self._proc.kill_tree()
+                return False, True
             if not line.strip():
                 continue
             try:
@@ -191,11 +240,11 @@ class RunHandle:
                 continue
             for kind, data in parser.feed(obj):
                 self._emit(events_file, kind, data, raw=obj)
+            self._note_session(events_file, parser.outcome().session_id)
             cost = parser.running_cost()
-            if budget is not None and cost is not None and cost > budget:
+            if budget is not None and cost is not None and budget_spent + cost > budget:
                 self._proc.kill_tree()
-                return True
-        return False
+                return True, False
 
     def _scrub(self, text: str) -> str:
         spec = self._d.spec
@@ -204,23 +253,24 @@ class RunHandle:
                 text = text.replace(value, REDACTED)
         return text
 
-    def _build_result(self, o: Outcome, exit_code: int | None, *, timed_out: bool, budget_hit: bool,
-                      internal: Exception | None) -> RunResult:
+    def _build_result(self, o: Outcome, t: _Turn) -> RunResult:
         spec, m = self._d.spec, self.materialized
         if self._cancelled:
             error = RunError("cancelled", "run was cancelled")
-        elif timed_out:
+        elif t.timed_out:
             error = RunError("timeout", f"no result within timeout_s={spec.timeout_s}")
-        elif budget_hit:
+        elif t.idle_hit:
+            error = RunError("idle_timeout", f"no output for idle_timeout_s={spec.idle_timeout_s:g}")
+        elif t.budget_hit:
             error = RunError("budget", f"cost {o.cost_usd} exceeded budget_usd={spec.budget_usd}")
         elif self._proc.overflowed:
             error = RunError("stream_overflow", "a stdout line exceeded the stream limit; run was stopped")
-        elif internal is not None:
-            error = RunError("phd_internal", f"{type(internal).__name__}: {internal}")
+        elif t.internal is not None:
+            error = RunError("phd_internal", f"{type(t.internal).__name__}: {t.internal}")
         elif o.error is not None:
             error = o.error
-        elif exit_code != 0:
-            error = RunError("harness_crash", f"exit code {exit_code}; stderr: {self._scrub(self._proc.stderr_tail())}")
+        elif t.exit_code != 0:
+            error = RunError("harness_crash", f"exit code {t.exit_code}; stderr: {self._scrub(self._proc.stderr_tail())}")
         elif o.result_text is None and o.raw_final is None:
             error = RunError("no_result", "harness exited without a final result")
         else:
@@ -233,7 +283,7 @@ class RunHandle:
                 pass
         return RunResult(
             run_id=m.run_id, harness=spec.harness, model=spec.model, stack=spec.stack.ref,
-            stack_hash=self._stack_hash, status=decide_status(error), exit_code=exit_code, error=error,
+            stack_hash=self._stack_hash, status=decide_status(error), exit_code=t.exit_code, error=error,
             result_text=o.result_text, structured_output=structured, cost_usd=o.cost_usd,
             cost_source=o.cost_source, usage=o.usage, num_turns=o.num_turns,
             duration_ms=int((time.monotonic() - self._t0) * 1000), session_id=o.session_id,
