@@ -273,3 +273,36 @@ def test_failed_replace_move_restores_the_old_folder(tmp_path, monkeypatch):
     monkeypatch.undo()
     assert (store.root / "s" / "1" / "config" / "stack.json").is_file()
     assert _index(store) == before
+
+
+def test_get_of_an_entry_whose_folder_is_missing(tmp_path):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    shutil.rmtree(store.root / "s" / "1" / "config")
+    with pytest.raises(StackNotFound, match=r"stack s@1: folder missing from the store \(run prune\)"):
+        store.get("s@1")
+    with pytest.raises(StackNotFound, match="folder missing"):
+        store.get("s")
+
+
+def test_put_reheals_a_missing_folder_on_the_same_ref_same_hash_path(tmp_path):
+    store = StackStore(tmp_path / "store")
+    put(store, *stage(store))
+    shutil.rmtree(store.root / "s" / "1")
+    staged, ident = stage(store)
+    e = put(store, staged, ident)
+    assert e.ref == "s@1" and (e.path / "stack.json").is_file() and not staged.exists()
+    assert store.get("s@1").ref == "s@1"
+
+
+def test_permission_error_after_retries_is_stack_invalid(tmp_path, monkeypatch):
+    store = StackStore(tmp_path / "store")
+    staged, ident = stage(store)
+    monkeypatch.setattr("phd._util.filelock.time.sleep", lambda s: None)
+
+    def denied(*a, **kw):
+        raise PermissionError("sharing violation")
+    monkeypatch.setattr(os, "replace", denied)
+    with pytest.raises(StackInvalid, match="in use or not writable") as e:
+        put(store, staged, ident)
+    assert str(store.root) in str(e.value)

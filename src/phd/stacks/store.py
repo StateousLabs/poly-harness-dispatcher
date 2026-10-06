@@ -5,26 +5,26 @@ from __future__ import annotations
 import builtins
 import json
 import os
-import re
 import time
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 from .._util.filelock import FileLock, retry_sharing
 from .._util.fs import robust_rmtree, write_json
+from .._util.names import is_safe_part
 from ..errors import StackConflict, StackInvalid, StackNotFound
 from ..spec import StoreEntry, hash_tree
 
 DEFAULT_STORE_ROOT = Path.home() / ".phd" / "stacks"
 IDENTITY_IGNORE = ("name", "version", "description")
 STAGING_MAX_AGE_S = 3600
-_SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_RESERVED_DEVICE = re.compile(r"(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?", re.IGNORECASE)  # Windows device names
+LOCK_TIMEOUT_S = 30.0
 
-
-def _safe_part(part: str) -> bool:
-    return bool(_SAFE_PART.fullmatch(part)) and not part.endswith(".") and not _RESERVED_DEVICE.fullmatch(part)
+T = TypeVar("T")
 
 
 def store_root(root: str | Path | None = None) -> Path:
@@ -57,22 +57,25 @@ class StackStore:
             allow_duplicates: bool, replace: bool) -> StoreEntry:
         """Store `staged` (holding config/ and stack.lock.json) under name@version, or reuse an equal stack."""
         for label, part in (("name", name), ("version", version)):
-            if not _safe_part(part):
+            if not is_safe_part(part):
                 raise StackInvalid(f"invalid stack {label} {part!r}: use letters, digits, '.', '_' and '-' "
                                    "(starting with a letter or digit, not ending in '.', not a Windows device name)")
         ref = f"{name}@{version}"
-        with FileLock(self.root / ".store.lock"):
+        with self._locked():
             index = self._read_index()
             record = index.get(ref)
             if record is not None and record["hash"] == ident:
-                _discard(staged)
-                return self._entry(ref, record, ref)
-            if record is not None and not replace:
+                if (self._target(ref) / "config").is_dir():
+                    _discard(staged)
+                    return self._entry(ref, record, ref)
+                # indexed but its folder is gone: store the staged folder in its place (self-healing)
+            elif record is not None and not replace:
                 _discard(staged)
                 raise StackConflict(f"{ref} is already stored with different content ({record['hash']}); "
                                     "pass replace=True to overwrite it")
             if record is None and not allow_duplicates:
-                same = sorted((r for r, v in index.items() if v["hash"] == ident), key=lambda r: index[r]["created_at"])
+                same = sorted((r for r, v in index.items() if v["hash"] == ident and (self._target(r) / "config").is_dir()),
+                              key=lambda r: index[r]["created_at"])
                 if same:
                     _discard(staged)
                     return self._entry(same[0], index[same[0]], ref)
@@ -85,12 +88,12 @@ class StackStore:
                     raise StackInvalid(f"stack folder for {ref} exists but is not indexed "
                                        "(case or trailing-dot collision?)")
                 old = self.root / ".staging" / f"replaced-{uuid.uuid4().hex}"
-                retry_sharing(lambda: os.replace(target, old))
+                _sharing(lambda: os.replace(target, old), target)
             try:
-                retry_sharing(lambda: os.replace(staged, target))
+                _sharing(lambda: os.replace(staged, target), target)
             except BaseException:
                 if old is not None:  # put the old stack back before failing
-                    retry_sharing(lambda: os.replace(old, target))
+                    _sharing(lambda: os.replace(old, target), target)
                 raise
             index[ref] = {"hash": ident, "created_at": datetime.now(timezone.utc).isoformat(), "manifest": manifest}
             self._write_index(index)  # the index is current before the old folder is deleted
@@ -99,17 +102,22 @@ class StackStore:
             return self._entry(ref, index[ref], ref)
 
     def get(self, ref: str) -> StoreEntry:
-        """`"name@version"`, or `"name"` for its most recently stored version."""
+        """`"name@version"`, or `"name"` for its most recently stored version.
+
+        Raises `StackNotFound` for an unknown ref, or an indexed one whose folder is missing."""
         index = self._read_index()
         if "@" in ref:
             if ref not in index:
                 raise StackNotFound(f"no stack {ref!r} in {self.root}")
-            return self._entry(ref, index[ref], ref)
-        refs = [r for r in index if r.rpartition("@")[0] == ref]
-        if not refs:
-            raise StackNotFound(f"no stack named {ref!r} in {self.root}")
-        latest = max(refs, key=lambda r: index[r]["created_at"])
-        return self._entry(latest, index[latest], latest)
+            found = ref
+        else:
+            refs = [r for r in index if r.rpartition("@")[0] == ref]
+            if not refs:
+                raise StackNotFound(f"no stack named {ref!r} in {self.root}")
+            found = max(refs, key=lambda r: index[r]["created_at"])
+        if not (self._target(found) / "config").is_dir():
+            raise StackNotFound(f"stack {found}: folder missing from the store (run prune)")
+        return self._entry(found, index[found], found)
 
     def list(self) -> builtins.list[StoreEntry]:
         index = self._read_index()
@@ -117,7 +125,7 @@ class StackStore:
 
     def remove(self, *refs: str) -> None:
         """Remove stored stacks; nothing is removed if any ref is unknown."""
-        with FileLock(self.root / ".store.lock"):
+        with self._locked():
             index = self._read_index()
             missing = [r for r in refs if r not in index]
             if missing:
@@ -132,7 +140,7 @@ class StackStore:
 
     def prune(self) -> None:
         """Delete stale staging folders (older than STAGING_MAX_AGE_S) and index entries whose folder is gone."""
-        with FileLock(self.root / ".store.lock"):
+        with self._locked():
             staging = self.root / ".staging"
             if staging.is_dir():
                 for leftover in staging.iterdir():
@@ -146,6 +154,19 @@ class StackStore:
             kept = {r: v for r, v in index.items() if (self._target(r) / "config").is_dir()}
             if kept != index:
                 self._write_index(kept)
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Hold `<root>/.store.lock`; a lock still held by another process after LOCK_TIMEOUT_S is StackInvalid."""
+        lock = FileLock(self.root / ".store.lock", timeout_s=LOCK_TIMEOUT_S)
+        try:
+            lock.__enter__()
+        except TimeoutError:
+            raise StackInvalid(f"stack store is busy (lock held > {LOCK_TIMEOUT_S}s): {self.root}") from None
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
 
     def _target(self, ref: str) -> Path:
         """The folder of an indexed ref; StackInvalid if it would lie outside the store root."""
@@ -166,7 +187,7 @@ class StackStore:
         if not self._index_path.is_file():
             return {}
         try:
-            data = json.loads(retry_sharing(lambda: self._index_path.read_text(encoding="utf-8")))
+            data = json.loads(_sharing(lambda: self._index_path.read_text(encoding="utf-8"), self._index_path))
         except ValueError:
             data = None
         if not isinstance(data, dict) or not all(isinstance(v, dict) and "hash" in v for v in data.values()):
@@ -176,7 +197,7 @@ class StackStore:
     def _write_index(self, index: dict) -> None:
         tmp = self._index_path.with_name("index.json.tmp")
         write_json(tmp, index)
-        retry_sharing(lambda: os.replace(tmp, self._index_path))
+        _sharing(lambda: os.replace(tmp, self._index_path), self._index_path)
 
 
 def _discard(path: Path) -> None:
@@ -185,3 +206,11 @@ def _discard(path: Path) -> None:
         robust_rmtree(path)
     except OSError:
         pass
+
+
+def _sharing(fn: Callable[[], T], path: Path) -> T:
+    """`retry_sharing(fn)`; a PermissionError that outlasts the retries is StackInvalid naming `path`."""
+    try:
+        return retry_sharing(fn)
+    except PermissionError:
+        raise StackInvalid(f"stack store path is in use or not writable: {path}") from None

@@ -7,13 +7,15 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
+from .._util.names import SAFE_NAME_RULE, is_safe_part
 from ..constants import HARNESSES
 from ..errors import StackInvalid
 
 ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
-_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+URL_SCHEMES = frozenset({"https", "http"})
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _TOP_KEYS = {"name", "version", "description", "harnesses", "default_models", "base", "agent",
              "base_hooks", "skills", "mcp", "hooks"}
 _ENTRY_KEYS = {"source", "replace", "headers"}
@@ -38,7 +40,13 @@ class ComponentSource:
     @property
     def is_url(self) -> bool:
         """True for an http(s) URL, False for a local path."""
-        return self.source.startswith(("https://", "http://"))
+        return is_url(self.source)
+
+
+def is_url(source: str) -> bool:
+    """True if `source` is an http(s) URL: it contains `://` and its scheme (any case, after stripping
+    whitespace) is `https` or `http`. The one test of "URL or local path" used everywhere."""
+    return "://" in source and urlsplit(source.strip()).scheme.lower() in URL_SCHEMES
 
 
 @dataclass(frozen=True)
@@ -125,8 +133,8 @@ def _build(data: dict, *, where: str, root: Path, path: Path | None) -> Manifest
         raise StackInvalid(f"{where}: unknown key(s) {unknown}")
     for key in ("name", "version"):
         value = data.get(key)
-        if not isinstance(value, str) or not _SAFE_NAME.fullmatch(value):
-            raise StackInvalid(f"{where}: {key!r} must match [A-Za-z0-9][A-Za-z0-9._-]* (got {value!r})")
+        if not is_safe_part(value):
+            raise StackInvalid(f"{where}: {key!r} must use {SAFE_NAME_RULE} (got {value!r})")
     description = data.get("description")
     if description is not None and not isinstance(description, str):
         raise StackInvalid(f"{where}: 'description' must be a string")
@@ -179,10 +187,11 @@ def _source(value, where: str, root: Path) -> str:
     if not isinstance(value, str) or not value.strip():
         raise StackInvalid(f"{where}: source must be a non-empty string")
     if "://" in value:
-        parts = urlsplit(value)
-        if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1")):
-            return value
-        raise StackInvalid(f"{where}: {parts.scheme}://{parts.hostname or ''}: only https:// URLs (or http://localhost) and local paths are supported")
+        parts = urlsplit(value.strip())
+        scheme = parts.scheme.lower()
+        if is_url(value) and (scheme == "https" or parts.hostname in LOOPBACK_HOSTS):
+            return urlunsplit((scheme, parts.netloc, parts.path, parts.query, parts.fragment))  # canonical form
+        raise StackInvalid(f"{where}: {scheme}://{parts.hostname or ''}: only https:// URLs (or http://localhost) and local paths are supported")
     try:
         p = Path(value).expanduser()
     except (RuntimeError, ValueError) as e:

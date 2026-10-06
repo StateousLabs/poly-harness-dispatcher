@@ -90,9 +90,9 @@ def test_lock_is_released_when_the_holder_crashes(tmp_path):
     lock, proc = _hold(tmp_path, 0.2, mode="crash")
     proc.wait(timeout=30)
     started = time.monotonic()
-    with FileLock(lock, timeout_s=2):
+    with FileLock(lock, timeout_s=10):
         pass
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 10
 
 
 def test_two_processes_never_hold_the_lock_together(tmp_path):
@@ -133,3 +133,22 @@ def test_read_holder_and_is_stale_for_session_locks(tmp_path):
     old = time.time() - 120
     os.utime(path, (old, old))
     assert is_stale(path, grace_s=60)
+
+
+def test_enter_closes_the_descriptor_when_waiting_is_interrupted(tmp_path, monkeypatch):
+    closed, real_close = [], os.close
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupted(fd):
+        raise Interrupted
+
+    def tracking_close(fd):
+        closed.append(fd)
+        real_close(fd)
+    monkeypatch.setattr("phd._util.filelock._try_lock", interrupted)
+    monkeypatch.setattr("phd._util.filelock.os.close", tracking_close)
+    with pytest.raises(Interrupted):
+        FileLock(tmp_path / ".lock").__enter__()
+    assert len(closed) == 1

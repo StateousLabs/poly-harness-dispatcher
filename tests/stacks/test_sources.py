@@ -182,3 +182,18 @@ def test_name_comes_from_original_url_not_redirect_target(tmp_path, http_server,
     f = fetch(ComponentSource(f"{http_server.url}/pkg-1.2.tar.gz"), tmp_path / "w", what="skills[0]")
     assert f.name == "pkg-1.2"
     assert (f.path / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("target", ["ftp://example.com/x?sig=SECRET", "http://example.com/x?sig=SECRET",
+                                    "file:///etc/x?sig=SECRET"])
+def test_redirect_policy_refuses_and_never_leaks(tmp_path, http_server, target):
+    http_server.state["redirects"]["/go"] = target
+    with pytest.raises(StackFetchError) as e:
+        fetch(ComponentSource(f"{http_server.url}/go"), tmp_path / "w", what="base")
+    assert "SECRET" not in str(e.value) and "base" in str(e.value)
+
+
+def test_redirect_to_http_external_is_refused(tmp_path, http_server):
+    http_server.state["redirects"]["/go"] = "http://example.com/"
+    with pytest.raises(StackFetchError, match="refusing redirect"):
+        fetch(ComponentSource(f"{http_server.url}/go"), tmp_path / "w", what="base")

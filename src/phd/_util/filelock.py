@@ -99,11 +99,14 @@ class FileLock:
         deadline = time.monotonic() + self.timeout_s
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        while not _try_lock(fd):
-            if time.monotonic() >= deadline:
-                os.close(fd)
-                raise TimeoutError(f"timed out after {self.timeout_s}s waiting for {self.path}")
-            time.sleep(self.poll_s)
+        try:
+            while not _try_lock(fd):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out after {self.timeout_s}s waiting for {self.path}")
+                time.sleep(self.poll_s)
+        except BaseException:  # timeout, Ctrl+C, anything: never leak the descriptor
+            os.close(fd)
+            raise
         self._fd = fd
         return self
 
@@ -116,10 +119,3 @@ class FileLock:
         finally:
             os.close(fd)
 
-
-def _unlink(path: Path) -> None:
-    """Delete a file, tolerating its absence and Windows sharing violations (`retry_sharing`)."""
-    try:
-        retry_sharing(lambda: os.unlink(path))
-    except FileNotFoundError:
-        pass

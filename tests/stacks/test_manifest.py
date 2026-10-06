@@ -109,3 +109,17 @@ def test_non_utf8_manifest(tmp_path):
     p.write_bytes(b"\xff\xfe\x00")
     with pytest.raises(StackInvalid, match="cannot read"):
         load_manifest(p)
+
+
+def test_url_scheme_case_and_whitespace_are_normalised():
+    m = compose("a", "1", base="  HTTPS://Example.com/x.tar.gz?sig=S ",
+                skills=["HTTP://127.0.0.1:8000/s.zip", " https://h.example/y.zip"])
+    assert m.base.source == "https://Example.com/x.tar.gz?sig=S" and m.base.is_url
+    assert m.skills[0].source == "http://127.0.0.1:8000/s.zip" and m.skills[0].is_url
+    assert m.skills[1].source == "https://h.example/y.zip" and m.skills[1].is_url
+
+
+@pytest.mark.parametrize("name, version", [("x.", "1"), ("CON", "1"), ("a", "nul.txt"), ("a", "1.")])
+def test_name_and_version_use_the_store_rule(name, version):
+    with pytest.raises(StackInvalid, match="Windows device name"):
+        compose(name, version)

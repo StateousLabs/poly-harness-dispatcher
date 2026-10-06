@@ -6,7 +6,8 @@ import json
 import re
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from .._util.fs import write_json
 from ..errors import StackFetchError, StackInvalid
@@ -41,7 +42,7 @@ def assemble(manifest: Manifest, staging: Path) -> list[Provenance]:
     if manifest.base is not None:
         fetched = fetch(manifest.base, work, what="base")
         _require(fetched, "stack.json", "base")
-        shutil.copytree(fetched.path, config, ignore=_IGNORE)
+        _copytree(fetched.path, config, "base")
         meta = _read_json(config / "stack.json", "base stack.json")
         _validate_base_mcp(config / ".mcp.json")
         _validate_base_hooks(config / "hooks" / "hooks.json")
@@ -72,7 +73,7 @@ def assemble(manifest: Manifest, staging: Path) -> list[Provenance]:
         shutil.rmtree(hooks_dir)
     bundles: dict[str, list] = {}
     for i, src in enumerate(manifest.hooks):
-        provenance.append(_put_hooks(src, config, work, f"hooks[{i}]", bundles))
+        provenance.append(_put_hooks(src, config, work, f"hooks[{i}]", bundles, base_entries))
     if bundles or (manifest.base_hooks and base_entries):
         write_json(hooks_dir / "hooks.json", {"hooks": base_entries + [e for es in bundles.values() for e in es]})
 
@@ -103,14 +104,17 @@ def _put_agent(src: ComponentSource, config: Path, work: Path) -> Provenance:
         for old in agents.glob("*.md"):
             old.unlink()
     agents.mkdir(exist_ok=True)
-    shutil.copy2(md, agents / md.name)
+    try:
+        shutil.copy2(md, agents / md.name)
+    except OSError as e:
+        raise StackFetchError(f"agent: cannot copy the source into the stack ({type(e).__name__})") from None
     return _prov("agent", md.stem, src, fetched)
 
 
 def _put_skill(src: ComponentSource, config: Path, work: Path, what: str) -> Provenance:
     fetched = fetch(src, work, what=what)
     _require(fetched, "SKILL.md", what)
-    name = _frontmatter_name(fetched.path / "SKILL.md") or fetched.name
+    name = _frontmatter_name(fetched.path / "SKILL.md", what) or fetched.name
     _check_name(name, what, "skill")
     target = config / "skills" / name
     if target.exists():
@@ -118,35 +122,39 @@ def _put_skill(src: ComponentSource, config: Path, work: Path, what: str) -> Pro
             raise StackInvalid(f"{what}: skill {name!r} already exists (base or an earlier entry); "
                                "set replace = true to replace it")
         shutil.rmtree(target)
-    shutil.copytree(fetched.path, target, ignore=_IGNORE)
+    _copytree(fetched.path, target, what)
     return _prov("skill", name, src, fetched)
 
 
 def _put_mcp(src: ComponentSource, config: Path, work: Path, what: str, servers: dict) -> Provenance:
     fetched = fetch(src, work, what=what)
     component = fetched.name
-    _check_name(component, what, "MCP component")
     if fetched.path.is_file():
+        if not _SAFE_NAME.fullmatch(component):  # e.g. ".mcp" from weather/.mcp.json: name it after the folder
+            parent = _source_parent_name(src)
+            component = parent if _SAFE_NAME.fullmatch(parent) else "mcp"
         data, files = _read_json(fetched.path, what), None
     else:
         if not (fetched.path / ".mcp.json").is_file():
             raise StackFetchError(f"{what}: .mcp.json not found in {display_source(src.source)}")
         data, files = _read_json(fetched.path / ".mcp.json", what), fetched.path
+    _check_name(component, what, "MCP component")
     entries = data.get("mcpServers")
     if not isinstance(entries, dict):
         raise StackInvalid(f"{what}: 'mcpServers' must be an object")
+    if files is None and _mentions(entries, _HERE):
+        raise StackInvalid(f"{what}: ${{here}} needs a folder source (a single JSON file has no folder in the stack)")
     if files is not None:
         target = config / "mcp" / component
         if target.exists():
             if not src.replace:
                 raise StackInvalid(f"{what}: MCP component folder {component!r} already exists; set replace = true")
-            # Clean up old servers that reference this component folder
-            search_path = f"${{stack}}/mcp/{component}"
-            servers_to_remove = [k for k, v in servers.items() if _contains_string(v, search_path)]
-            for k in servers_to_remove:
+            # drop the old servers that point into the replaced folder, so none is left dangling
+            prefix = f"${{stack}}/mcp/{component}"
+            for k in [k for k, v in servers.items() if _references(v, prefix)]:
                 del servers[k]
             shutil.rmtree(target)
-        shutil.copytree(files, target, ignore=_IGNORE)
+        _copytree(files, target, what)
     here = f"${{stack}}/mcp/{component}"
     for key, server in entries.items():
         if key in servers and not src.replace:
@@ -155,7 +163,8 @@ def _put_mcp(src: ComponentSource, config: Path, work: Path, what: str, servers:
     return _prov("mcp", component, src, fetched)
 
 
-def _put_hooks(src: ComponentSource, config: Path, work: Path, what: str, bundles: dict) -> Provenance:
+def _put_hooks(src: ComponentSource, config: Path, work: Path, what: str, bundles: dict,
+               base_entries: list) -> Provenance:
     fetched = fetch(src, work, what=what)
     _require(fetched, "hooks.json", what)
     bundle = fetched.name
@@ -167,10 +176,12 @@ def _put_hooks(src: ComponentSource, config: Path, work: Path, what: str, bundle
             raise StackInvalid(f"{what}: hook bundle {bundle!r} already exists; set replace = true to replace it")
         if target.exists():
             shutil.rmtree(target)
-    shutil.copytree(fetched.path, target, ignore=_IGNORE)
+        # the old bundle's entries go too: an earlier entry's (dict key below) and the base's
+        base_entries[:] = [e for e in base_entries if not _references(e, f"${{stack}}/hooks/{bundle}")]
     entries = _read_json(fetched.path / "hooks.json", what).get("hooks")
     if not isinstance(entries, list):
         raise StackInvalid(f"{what}: 'hooks' must be an array")
+    _copytree(fetched.path, target, what)
     bundles[bundle] = [_rewrite(e, f"${{stack}}/hooks/{bundle}") for e in entries]
     return _prov("hooks", bundle, src, fetched)
 
@@ -180,8 +191,13 @@ def _require(fetched: Fetched, marker: str, what: str) -> None:
         raise StackFetchError(f"{what}: {marker} not found in the source")
 
 
-def _frontmatter_name(skill_md: Path) -> str | None:
-    lines = skill_md.read_text(encoding="utf-8").splitlines()
+def _frontmatter_name(skill_md: Path, what: str) -> str | None:
+    try:
+        lines = skill_md.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        raise StackInvalid(f"{what}: SKILL.md is not UTF-8 text") from None
+    except OSError as e:
+        raise StackFetchError(f"{what}: cannot read SKILL.md ({type(e).__name__})") from None
     if not lines or lines[0].strip() != "---":
         return None
     for line in lines[1:]:
@@ -232,16 +248,14 @@ def _prov(kind: str, name: str, src: ComponentSource, fetched: Fetched) -> Prove
 def _validate_base_mcp(mcp_file: Path) -> None:
     if mcp_file.is_file():
         data = _read_json(mcp_file, "base .mcp.json")
-        servers = data.get("mcpServers")
-        if servers is not None and not isinstance(servers, dict):
+        if "mcpServers" in data and not isinstance(data["mcpServers"], dict):
             raise StackInvalid("base: 'mcpServers' must be an object")
 
 
 def _validate_base_hooks(hooks_file: Path) -> None:
     if hooks_file.is_file():
         data = _read_json(hooks_file, "base hooks.json")
-        hooks = data.get("hooks")
-        if hooks is not None and not isinstance(hooks, list):
+        if "hooks" in data and not isinstance(data["hooks"], list):
             raise StackInvalid("base: 'hooks' must be an array")
 
 
@@ -255,12 +269,33 @@ def _validate_hook_bundle_name(bundle: str, hooks_dir: Path) -> None:
             raise StackInvalid(f"hook bundle {bundle!r} conflicts with a hooks file")
 
 
-def _contains_string(value, search: str) -> bool:
-    """Check if search string appears anywhere in a nested structure."""
+def _references(value, prefix: str) -> bool:
+    """True if some string nested in `value` names the folder `prefix` itself or a path inside it:
+    `prefix` not followed by another name character, so `${stack}/mcp/git` does not match `${stack}/mcp/github`."""
+    pattern = re.compile(re.escape(prefix) + r"(?![A-Za-z0-9._-])")
+    return _mentions(value, pattern)
+
+
+def _mentions(value, needle: str | re.Pattern) -> bool:
+    """True if a string nested in `value` (dicts, lists) contains `needle` (a substring or a compiled regex)."""
     if isinstance(value, dict):
-        return any(_contains_string(v, search) for v in value.values())
+        return any(_mentions(v, needle) for v in value.values())
     if isinstance(value, list):
-        return any(_contains_string(v, search) for v in value)
+        return any(_mentions(v, needle) for v in value)
     if isinstance(value, str):
-        return search in value
+        return needle in value if isinstance(needle, str) else needle.search(value) is not None
     return False
+
+
+def _source_parent_name(src: ComponentSource) -> str:
+    """The name of the folder holding a single-file source (from the URL path for a URL)."""
+    if src.is_url:
+        return PurePosixPath(urlsplit(src.source).path.replace("\\", "/")).parent.name
+    return Path(src.source).parent.name
+
+
+def _copytree(source: Path, target: Path, what: str) -> None:
+    try:
+        shutil.copytree(source, target, ignore=_IGNORE)
+    except OSError as e:  # shutil.Error is an OSError; its message lists paths, so only the type is shown
+        raise StackFetchError(f"{what}: cannot copy the source into the stack ({type(e).__name__})") from None

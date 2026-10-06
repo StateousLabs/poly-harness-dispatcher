@@ -250,3 +250,85 @@ def test_frontmatter_name_only_top_level(tmp_path, parts):
     config, _ = build(tmp_path, compose("c", "1", base=parts / "base", skills=[nested]))
     stack = Stack.load(config)
     assert any(s.name == "real" for s in stack.skills)
+
+
+def _mcp_folder(root, name, server, script="s.py"):
+    d = root / name
+    d.mkdir(parents=True)
+    (d / ".mcp.json").write_text(json.dumps({"mcpServers": {server: {
+        "command": "python", "args": [f"${{here}}/{script}"]}}}), encoding="utf-8")
+    (d / script).write_text("print(1)\n", encoding="utf-8")
+    return d
+
+
+def test_mcp_folder_replace_is_segment_aware(tmp_path, parts):
+    github = _mcp_folder(parts / "a", "github", "gh")
+    git1 = _mcp_folder(parts / "b", "git", "git1")
+    git2 = _mcp_folder(parts / "c", "git", "git2")
+    config, _ = build(tmp_path, compose("c", "1", base=parts / "base",
+                                        mcp=[github, git1, {"source": str(git2), "replace": True}]))
+    servers = Stack.load(config).mcp_servers
+    assert "gh" in servers and "git2" in servers and "git1" not in servers
+
+
+def test_hook_bundle_replace_drops_the_base_bundle_entries(tmp_path, parts):
+    base = parts / "bundled-base"
+    shutil.copytree(parts / "base", base)
+    (base / "hooks" / "guard").mkdir()
+    (base / "hooks" / "guard" / "g.py").write_text("print(1)\n", encoding="utf-8")
+    hooks_file = base / "hooks" / "hooks.json"
+    data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    data["hooks"].append({"event": "post_tool", "command": "python ${stack}/hooks/guard/g.py"})
+    hooks_file.write_text(json.dumps(data), encoding="utf-8")
+    new = parts / "new" / "guard"
+    new.mkdir(parents=True)
+    (new / "hooks.json").write_text(json.dumps({"hooks": [
+        {"event": "post_tool", "command": "python ${here}/n.py"}]}), encoding="utf-8")
+    (new / "n.py").write_text("print(2)\n", encoding="utf-8")
+    config, _ = build(tmp_path, compose("c", "1", base=base, hooks=[{"source": str(new), "replace": True}]))
+    commands = [h.command for h in Stack.load(config).hooks]
+    assert [c for c in commands if "/hooks/guard/" in c] == ["python ${stack}/hooks/guard/n.py"]
+    assert "python ${stack}/hooks/guard.py" in commands  # the base's other entry stays
+
+
+def test_file_form_mcp_named_after_its_folder(tmp_path, parts):
+    src = parts / "weather" / ".mcp.json"
+    src.write_text(json.dumps({"mcpServers": {"weather": {"command": "weather-server"}}}), encoding="utf-8")
+    config, provenance = build(tmp_path, compose("c", "1", base=parts / "base", mcp=[src]))
+    assert Stack.load(config).mcp_servers["weather"]["command"] == "weather-server"
+    assert [p.name for p in provenance if p.kind == "mcp"] == ["weather"]
+    assert not (config / "mcp" / "weather").exists()
+
+
+def test_file_form_mcp_refuses_here(tmp_path, parts):
+    with pytest.raises(StackInvalid, match=r"\$\{here\} needs a folder source"):
+        build(tmp_path, compose("c", "1", base=parts / "base", mcp=[parts / "weather" / ".mcp.json"]))
+
+
+def test_non_utf8_skill_md_is_stack_invalid(tmp_path, parts):
+    bad = parts / "badskill"
+    bad.mkdir()
+    (bad / "SKILL.md").write_bytes(b"---\nname: \xff\xfe\n---\n")
+    with pytest.raises(StackInvalid, match=r"skills\[0\]: SKILL.md"):
+        build(tmp_path, compose("c", "1", base=parts / "base", skills=[bad]))
+
+
+@pytest.mark.parametrize("rel, key, match", [
+    (".mcp.json", "mcpServers", "base: 'mcpServers' must be an object"),
+    ("hooks/hooks.json", "hooks", "base: 'hooks' must be an array"),
+])
+def test_base_null_sections_are_stack_invalid(tmp_path, parts, rel, key, match):
+    base = parts / "nullbase"
+    shutil.copytree(parts / "base", base)
+    (base / rel).write_text(json.dumps({key: None}), encoding="utf-8")
+    with pytest.raises(StackInvalid, match=match):
+        build(tmp_path, compose("c", "1", base=base))
+
+
+def test_copy_failure_is_stack_fetch_error(tmp_path, parts, monkeypatch):
+    def broken(src, dst, **kw):
+        raise shutil.Error([(str(src), str(dst), "sig=SECRET permission denied")])
+    monkeypatch.setattr(shutil, "copytree", broken)
+    with pytest.raises(StackFetchError, match=r"skills\[0\]") as e:
+        build(tmp_path, compose("c", "1", skills=[parts / "extra-skill"]))
+    assert "SECRET" not in str(e.value)

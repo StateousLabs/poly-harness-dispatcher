@@ -86,13 +86,13 @@ stack = stacks.resolve(m)
 
 | Key | Type | Default | Validation |
 |---|---|---|---|
-| `name` | string | required | must match `[A-Za-z0-9][A-Za-z0-9._-]*` |
-| `version` | string | required | same pattern |
+| `name` | string | required | must match `[A-Za-z0-9][A-Za-z0-9._-]*`, must not end in `.`, must not be a Windows device name (the [store's rule](#names), checked when the manifest is parsed) |
+| `version` | string | required | same rule |
 | `description` | string | none | must be a string |
 | `harnesses` | list of strings | none | non-empty list drawn from `claude`, `codex`, `opencode` |
 | `default_models` | table of strings | none | must be a table whose values are strings |
-| `base` | source string | none | a [source](#sources) |
-| `agent` | source string | none | a source |
+| `base` | source string | none | a [source](#sources): a bare string (or path), not a table, so no `headers` or `replace` |
+| `agent` | source string | none | a bare source string, like `base` |
 | `base_hooks` | bool | `true` | must be `true` or `false` |
 | `skills` | array of tables `[[skills]]` | `[]` | each entry: see below |
 | `mcp` | array of tables `[[mcp]]` | `[]` | same |
@@ -121,8 +121,17 @@ A source is either a **local path** or a **URL**.
 | `https://` URL | `https://example.com/x.tar.gz` | downloaded on every resolve |
 | `http://localhost…`, `http://127.0.0.1…` | `http://127.0.0.1:8000/x.zip` | for local stack servers and tests only |
 
-Any other scheme, or `http://` to another host, raises `StackInvalid`. Relative paths are resolved when the
-manifest is parsed, so a `Manifest` is portable only as far as its absolute paths are.
+Any string containing `://` is a URL candidate. Surrounding whitespace is stripped and the scheme is matched in any
+case, so `HTTPS://host/x.zip` and `"  https://host/x.zip"` are URLs; the parsed `ComponentSource.source` holds the
+canonical form (stripped, lower-case scheme; host, path and query unchanged) and `ComponentSource.is_url` agrees with
+it. Any other scheme, or `http://` to another host, raises `StackInvalid` (the message shows only scheme and host).
+Relative paths are resolved when the manifest is parsed, so a `Manifest` is portable only as far as its absolute
+paths are.
+
+`base` and `agent` take a bare source string: to download a private base, use a pre-signed link or serve it
+without auth; `headers` exist only on `[[skills]]`, `[[mcp]]` and `[[hooks]]` entries.
+`https://user:password@host/...` userinfo is **not** a supported way to authenticate (it is never shown and is not
+turned into an `Authorization` header); use `headers`.
 
 A local path may be a folder, a single file, or an archive file. A URL is downloaded with the standard library
 (timeout 60 s), then treated like a local file. URLs are fetched fresh on every `resolve` (URLs are mutable; the
@@ -135,17 +144,28 @@ dedupe step below stops identical results piling up).
 | `base` | a whole stack in the [`config/` layout](stacks.md#layout) (folder or archive) with a `stack.json` | none |
 | `agent` | exactly one `.md` file: the file itself, or a folder or archive containing exactly one `.md` | none: it always replaces the base's agent file(s) |
 | `skills` | a folder with `SKILL.md` (plus `references/`, `scripts/`, anything else) | the `name:` in the `SKILL.md` front matter, else the folder name |
-| `mcp` | a folder with `.mcp.json`, or a single JSON file `{"mcpServers": {...}}` | each server key; a folder's own name is the component folder |
+| `mcp` | a folder with `.mcp.json`, or a single JSON file `{"mcpServers": {...}}` | each server key; a folder's own name is the component folder (for a single file, see [below](#single-file-mcp-sources)) |
 | `hooks` | a folder with `hooks.json` plus the files it uses | the bundle (folder) name |
 
 A skill, MCP component or hook bundle name must match `[A-Za-z0-9][A-Za-z0-9._-]*`. A folder with a missing marker
-file raises `StackFetchError`; a malformed one raises `StackInvalid`.
+file raises `StackFetchError`; a malformed one raises `StackInvalid` (including a `SKILL.md` that is not UTF-8). A
+component that cannot be copied into the staging folder raises `StackFetchError` naming the entry (`skills[0]`,
+`base`, ...), not the paths.
+
+### Single-file MCP sources
+
+A single JSON file has no folder, so nothing is copied to `mcp/`; only its servers are merged. Its component name
+(used in provenance and for the clash rules) is the file name without `.json`; when that is not a valid name (for
+example `.mcp` from `weather/.mcp.json`) it is the name of the folder holding the file (`weather`; for a URL, the
+last folder of the URL path), else `mcp`. `${here}` in a single-file source raises `StackInvalid`
+("`${here}` needs a folder source"): there is no folder for it to point to. Use a folder source when a server needs
+its own files.
 
 ### Archives
 
-`.tar.gz`, `.tgz` and `.zip`. An archive is recognised by its file name (the `.zip` match is case-insensitive, so
-`X.ZIP` works) or, when the name does not say, by sniffing the content (a URL such as `.../download` can serve an
-archive). Content may sit at the archive root or inside **one** top-level folder; with a single top-level folder
+`.tar.gz`, `.tgz` and `.zip`. An archive is recognised by its file name (case-insensitive, so `X.ZIP` works). For a
+**URL** only, when the name does not say, the content is also sniffed (a URL such as `.../download` can serve an
+archive); a **local** file is an archive only if its name ends in one of the suffixes. Content may sit at the archive root or inside **one** top-level folder; with a single top-level folder
 that folder is the component (its name is the natural component name), otherwise the archive's file name without
 the suffix is.
 
@@ -154,8 +174,8 @@ An entry that would unpack outside its folder (an absolute path, `..`, a link po
 
 ### `${here}`
 
-In a component's `.mcp.json` and `hooks.json` (and in the base's), `${here}` means "this component's own folder in
-the assembled stack". The resolver rewrites it to `${stack}/mcp/<component>` or `${stack}/hooks/<bundle>`, so a
+In a folder component's `.mcp.json` and `hooks.json` (and in the base's), `${here}` means "this component's own
+folder in the assembled stack" (a [single-file MCP source](#single-file-mcp-sources) may not use it). The resolver rewrites it to `${stack}/mcp/<component>` or `${stack}/hooks/<bundle>`, so a
 stored stack only contains `${stack}` and the materializer is unchanged. In a base stack's files `${here}` becomes
 `${stack}`.
 
@@ -194,8 +214,13 @@ A clash is an error (`StackInvalid`) unless the entry has `replace = true`:
 |---|---|---|
 | skill name already present (base or an earlier entry) | `StackInvalid` | the old skill folder is removed first |
 | MCP server key already present | `StackInvalid` | the server is replaced |
-| MCP component folder `mcp/<component>/` already present | `StackInvalid` | the folder is replaced, **and every earlier server whose config points into that folder (`${stack}/mcp/<component>`) is dropped** so none is left dangling |
-| hook bundle name already present (including one from an earlier entry) | `StackInvalid` | the bundle is replaced |
+| MCP component folder `mcp/<component>/` already present | `StackInvalid` | the folder is replaced, **and every earlier server whose config points into that folder is dropped** so none is left dangling |
+| hook bundle name already present (the base's or an earlier entry's) | `StackInvalid` | the bundle folder is replaced **and the old bundle's entries are dropped**: an earlier entry's, and any base `hooks.json` entry that points into `${stack}/hooks/<bundle>` |
+
+"Points into" is segment-aware: a server or hook entry is dropped when one of its strings contains
+`${stack}/mcp/<component>` (or `${stack}/hooks/<bundle>`) **not followed by another name character**, i.e. the
+folder itself or a path under it. Replacing component `git` drops a server using `${stack}/mcp/git/server.py` but
+keeps one using `${stack}/mcp/github/server.py`.
 
 The agent never clashes: `agent = ...` always replaces the base's agent.
 
@@ -226,19 +251,25 @@ headers = { Authorization = "Bearer ${env:STACKS_TOKEN}" }
 ### Credentials never appear in errors or files
 
 - Error messages, `stack.lock.json` and `index.json` show a URL **without its query string, fragment or userinfo**
-  (`https://host/path/x.tar.gz`), so pre-signed links and `user:password@` URLs do not leak.
+  (`https://host/path/x.tar.gz`), so pre-signed links and `user:password@` URLs do not leak. This holds for any
+  spelling of a URL (`HTTPS://`, leading spaces): every string containing `://` is either a URL or refused, never
+  read as a local path whose error would echo it.
 - Header values never appear in an error. Low-level request errors are reduced to their type name
-  (for example `request failed (TimeoutError)`).
+  (for example `request failed (TimeoutError)`); an HTTP redirect error shows only its status code (its reason
+  can quote the target URL).
 
 ### Redirects
 
 URL downloads follow redirects with these rules:
 
-| Redirect | Behaviour |
+A redirect is followed only to an `https` URL, or to `http` on `localhost` / `127.0.0.1`. Anything else (`ftp`,
+`file`, `http` to any other host, including from a local `http://127.0.0.1` server) is refused with
+`StackFetchError`; the message shows the target without its query string.
+
+| Redirect (allowed target) | Behaviour |
 |---|---|
 | same origin (scheme, host and port equal) | followed; your `headers` are kept |
 | different origin | followed; your `headers` are **dropped** (a token for one host is not sent to another) |
-| `https` to `http` | refused with `StackFetchError`, unless the target is `localhost` or `127.0.0.1` |
 
 The component name comes from the URL **you gave**, not from the redirect target.
 
@@ -248,7 +279,9 @@ The component name comes from the URL **you gave**, not from the redirect target
 
 1. **Read and validate** the manifest (`StackInvalid`). `source` may be a `stack.toml`, a folder containing one, a
    plain `config/` folder (its own `stack.json` supplies name and version and it becomes the `base`), or a
-   `Manifest`.
+   `Manifest`. A **URL string** is refused with `StackInvalid` ("pass a URL as compose(name, version, base=url)"):
+   write `stacks.resolve(stacks.compose("reviewer", "1.3.0", base=url))` to resolve a stack published as one
+   archive.
 2. **Fetch** every source into a work area under the staging folder (`StackFetchError`).
 3. **Assemble** into `<store>/.staging/<uuid>/config/` as above.
 4. **Validate** with the same checks as `Stack.load`: exactly one agent file, a `SKILL.md` per skill, valid MCP
@@ -315,21 +348,34 @@ stacks.resolve(m_changed)            # same name@version, other content: raises 
 stacks.resolve(m_changed, replace=True)   # overwrites reviewer@1.3.0
 ```
 
-A replace moves the new folder in first and updates the index before deleting the old folder; if the move fails the
-old stack is put back.
+A replace runs in this order, under the store lock: the old folder is moved aside (into `.staging/`), the new folder
+is moved in, `index.json` is written, then the old folder is deleted (best effort; `prune` collects a leftover). If
+moving the new folder in fails, the old one is put back and the index is unchanged.
+
+A replace changes the files under `<store>/<name>/<version>/config/` in place. A `Stack` object you loaded earlier
+for that ref (and any `Spec` built from it) points at the same folder, so it now sees the new content while its
+attributes (skills, servers, hash) still describe the old one. Re-`get` the stack after replacing it. Runs already
+planned are unaffected: they copied the stack into their own home.
 
 ### Locking and the index
 
 Every write (`resolve`'s store step, `remove`, `prune`) runs under an OS file lock on `<store>/.store.lock`, so
 concurrent processes serialize and leave a valid `index.json`. The lock is released by the operating system if its
-process dies, so there is no stale lock to clean up. A corrupt or unreadable `index.json` raises `StackInvalid`
-naming the file (fix or delete it; `prune` cannot repair it).
+process dies, so there is no stale lock to clean up. If another process holds the lock for more than 30 s, the call
+raises `StackInvalid` ("stack store is busy"). A store file or folder that stays locked by another program (a
+Windows sharing violation that outlasts the short retry) or is not writable raises `StackInvalid` naming the path. A
+corrupt or unreadable `index.json` raises `StackInvalid` naming the file (fix or delete it; `prune` cannot repair
+it).
+
+If an indexed stack's folder has gone missing (deleted by hand), `get` raises `StackNotFound` ("folder missing from
+the store (run prune)"), and resolving the same content under the same ref again stores it afresh (self-healing).
+An identical stack under another ref is reused only if its folder is still there.
 
 ### `get`, `list`, `remove`, `prune`
 
 | Call | Behaviour |
 |---|---|
-| `stacks.get("reviewer@1.3.0")` | the exact stack, loaded from the store without fetching; `StackNotFound` if unknown |
+| `stacks.get("reviewer@1.3.0")` | the exact stack, loaded from the store without fetching; `StackNotFound` if unknown or its folder is missing |
 | `stacks.get("reviewer")` | the entry of that name with the most recent `created_at` |
 | `stacks.list()` | every `StoreEntry`, sorted by name then storage time |
 | `stacks.remove("a@1", "b@2")` | removes those entries and their folders; if **any** ref is unknown, `StackNotFound` is raised and nothing is removed |

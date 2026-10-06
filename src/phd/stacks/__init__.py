@@ -18,6 +18,7 @@ from ..errors import StackInvalid
 from ..spec import Stack, StoreEntry
 from .assemble import assemble
 from .manifest import ComponentSource, Manifest, compose, load_manifest
+from .sources import display_source
 from .store import StackStore, identity_hash
 
 
@@ -27,14 +28,14 @@ def resolve(source: str | Path | Manifest, *, allow_duplicates: bool = False, re
 
     Args:
         source: A `stack.toml`, a folder containing one, a plain `config/` folder, or a `Manifest`
-            from `compose(...)`.
+            from `compose(...)`. A URL string is refused: pass it as `compose(name, version, base=url)`.
         allow_duplicates: Store a new entry even when an identical stack is stored under another ref.
         replace: Overwrite a stored `name@version` that has different content.
         store_root: Store directory (default `$PHD_STACKS_ROOT` or `~/.phd/stacks`).
 
     Raises:
-        StackInvalid: Bad manifest, a name clash without `replace = true`, or the assembled stack
-            fails the `Stack.load` checks.
+        StackInvalid: Bad manifest (or a URL string as `source`), a name clash without `replace = true`,
+            the assembled stack fails the `Stack.load` checks, or the store is busy or not writable.
         StackFetchError: A source cannot be read or downloaded, or an archive is unusable/unsafe.
         StackConflict: `name@version` is stored with different content and `replace` is False.
     """
@@ -81,6 +82,8 @@ def prune(*, store_root: str | Path | None = None) -> None:
 def _as_manifest(source: str | Path | Manifest) -> Manifest:
     if isinstance(source, Manifest):
         return source
+    if isinstance(source, str) and "://" in source:  # never read a URL as a path (its query would leak)
+        raise StackInvalid(f"{display_source(source.strip())}: pass a URL as compose(name, version, base=url)")
     path = Path(source).expanduser().resolve()
     if path.is_file():
         return load_manifest(path)

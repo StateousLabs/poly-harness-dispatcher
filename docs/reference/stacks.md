@@ -9,8 +9,8 @@ This page is the API reference for `phd.stacks`: composing, resolving and storin
 
 | Member | Purpose |
 |---|---|
-| `resolve(source, *, allow_duplicates=False, replace=False, store_root=None) -> Stack` | fetch, assemble and store a stack (`source`: a `stack.toml`, a folder with one, a `config/` folder, or a `Manifest`); returns it loaded from the store with `stack.store` set |
-| `get(ref, *, store_root=None) -> Stack` | a stored stack by `"name@version"`, or `"name"` for its latest version; `StackNotFound` if unknown |
+| `resolve(source, *, allow_duplicates=False, replace=False, store_root=None) -> Stack` | fetch, assemble and store a stack (`source`: a `stack.toml`, a folder with one, a `config/` folder, or a `Manifest`; a URL string is refused, use `compose(name, version, base=url)`); returns it loaded from the store with `stack.store` set |
+| `get(ref, *, store_root=None) -> Stack` | a stored stack by `"name@version"`, or `"name"` for its latest version; `StackNotFound` if unknown or its folder is missing |
 | `list(*, store_root=None) -> list[StoreEntry]` | every stored stack, sorted by name then storage time |
 | `remove(*refs, store_root=None) -> None` | remove stored stacks; nothing is removed if any ref is unknown |
 | `prune(*, store_root=None) -> None` | delete `.staging` leftovers older than 1 hour and index entries whose folder is gone |

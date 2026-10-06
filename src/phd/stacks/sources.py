@@ -17,7 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from ..errors import StackFetchError, StackInvalid
 from ..spec import hash_tree
-from .manifest import ENV_REF, ComponentSource
+from .manifest import ENV_REF, LOOPBACK_HOSTS, ComponentSource
 
 TIMEOUT_S = 60
 _ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".zip")
@@ -83,16 +83,18 @@ def _fetch_local(src: ComponentSource, work: Path, what: str) -> Fetched:
 
 
 def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
-    shown = display_source(src.source)
-    request = urllib.request.Request(src.source, headers=expand_headers(src.headers, what))
+    url = src.source.strip()
+    shown = display_source(url)
+    request = urllib.request.Request(url, headers=expand_headers(src.headers, what))
     opener = urllib.request.build_opener(_SafeRedirect(src.headers))
     try:
         with opener.open(request, timeout=TIMEOUT_S) as response:
             data = response.read()
     except StackFetchError as e:
         raise StackFetchError(f"{what}: {shown}: {e}") from None
-    except urllib.error.HTTPError as e:
-        raise StackFetchError(f"{what}: {shown}: HTTP {e.code} {e.reason}") from None
+    except urllib.error.HTTPError as e:  # a 30x reason can quote the redirect target (with its query)
+        reason = "" if 300 <= e.code < 400 else f" {e.reason}"
+        raise StackFetchError(f"{what}: {shown}: HTTP {e.code}{reason}") from None
     except urllib.error.URLError as e:
         reason = e.reason if isinstance(e.reason, str) else type(e.reason).__name__
         raise StackFetchError(f"{what}: {shown}: request failed ({reason})") from None
@@ -100,7 +102,7 @@ def _fetch_url(src: ComponentSource, work: Path, what: str) -> Fetched:
         raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
     except (OSError, ValueError) as e:  # never echo str(e): it can carry the URL or header values
         raise StackFetchError(f"{what}: {shown}: request failed ({type(e).__name__})") from None
-    filename = _safe_filename(urlsplit(src.source).path)
+    filename = _safe_filename(urlsplit(url).path)
     if _is_archive_name(filename) or _looks_like_archive(data):
         return _unpack(data, filename, work, what)
     dest = Path(tempfile.mkdtemp(dir=work)) / filename
@@ -125,15 +127,17 @@ def _origin(url: str) -> tuple[str, str, int | None]:
 
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse https->http downgrades (except loopback); drop the user's headers when leaving the origin."""
+    """Follow a redirect only to https (or http on localhost / 127.0.0.1); drop the user's headers when
+    leaving the origin."""
 
     def __init__(self, user_headers: dict[str, str]) -> None:
         self._user_headers = {k.capitalize() for k in user_headers}
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         old, new = _origin(req.full_url), _origin(newurl)
-        if old[0] == "https" and new[0] == "http" and new[1] not in ("localhost", "127.0.0.1"):
-            raise StackFetchError(f"refusing redirect from https to http ({display_source(newurl)})")
+        if not (new[0] == "https" or (new[0] == "http" and new[1] in LOOPBACK_HOSTS)):
+            raise StackFetchError(f"refusing redirect to {display_source(newurl)} "
+                                  "(only https, or http to localhost / 127.0.0.1)")
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None and old != new:
             for key in self._user_headers:
