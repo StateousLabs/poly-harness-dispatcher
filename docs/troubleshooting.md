@@ -76,8 +76,10 @@ Other symptoms:
   of quotes, verified against `cmd.exe` but not against real codex.
 - codex refuses a `CODEX_HOME` under `%TEMP%`: keep `runs_root` elsewhere (`InvalidRunsRoot`).
 - `.cmd` / `.bat` CLI shims are run through `COMSPEC /c`.
-- Killing a run uses `taskkill /T /F`; if the CLI process has already exited, its children cannot be found and may
-  keep running. Look for stray `node` / MCP server processes after a crash.
+- Killing a run terminates its Job Object, which also reaches descendants of a harness that already exited, and the
+  job is closed when the harness exits. Only if protection is unavailable (the `orphan protection unavailable`
+  warning) does PHD fall back to `taskkill /T /F`, which cannot find the children of an exited CLI process; then look
+  for stray `node` / MCP server processes.
 - Run-home cleanup (`resumable=False`) retries on sharing violations; if a file stays locked, the result carries
   `could not remove run home ...` and the home is left behind.
 - Paths with spaces in `runs_root` are supported (`${stack}` is quoted in hook commands).

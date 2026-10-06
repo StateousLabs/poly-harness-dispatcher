@@ -35,7 +35,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 | **Other environment variables** | Only the six prefixes above are stripped. `GITHUB_TOKEN`, `AWS_*`, other `*_API_KEY` variables and the rest of your environment reach the agent (CoreDesign §14.2, open item 11). |
 | **Repo code** | `project_config="full"` loads the repo's hooks, settings and MCP servers: code PHD does not control. |
 | **Hook commands and MCP servers** | Run on the host with the harness's environment, which includes the injected credential variables. |
-| **Leftover processes** | On Windows, descendants of a harness that already exited cannot be killed by `taskkill /T`. |
+| **Leftover processes** | Windows: a Job Object kills descendants on cancel, on timeouts and when the harness exits; children that try to break away from the job are refused. POSIX: `killpg` covers cancel and timeouts, and a reaper process kills the harness's group if the caller dies. Gaps on POSIX: the short window before the reaper starts, descendants that call `setsid`, and a normal finish does not kill leftovers. See [Orphan protection](run-lifecycle.md#orphan-protection). |
 
 ## Secret handling
 
@@ -70,7 +70,7 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 ## Known limitations
 
 - No sandbox; filesystem and network are open (above).
-- Windows orphaned descendants after the direct child exits (no Job Object).
+- POSIX orphan protection has gaps: a short window between harness start and reaper start, descendants that start their own session (`setsid`) escape the reaper, and a normal finish does not kill background processes a tool left running (Windows does). If protection cannot be set up the run continues with the warning `orphan protection unavailable: ...`.
 - Non-prefixed provider keys are passed to the child (open item 11).
 - claude restricted mode has no PHD deny rules for paths outside `cwd` (open item 7).
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet

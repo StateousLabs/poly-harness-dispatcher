@@ -89,7 +89,7 @@ class Event:
 
     run_id: str
     harness: str
-    type: str  # run.started | message | tool_call | tool_result | usage | log | run.finished
+    type: str  # run.started | session.started | message | tool_call | tool_result | usage | log | schema.repair | run.finished
     data: dict
     ts: float
     raw: dict | None = None

@@ -114,12 +114,12 @@ Resume also requires the same harness and `cwd`, and rejects `Inputs.rules` (`Un
 | `Credentials.*(...)` | `MissingCredentials` (file missing), `UnknownHarness` (`from_host`) |
 | `Inputs(...)` | `InputNotFound`, `EmptyTask` |
 | `Spec(...)` | `UnknownHarness`, `InvalidSpec`, `CwdNotFound`, `UnsafeAutonomy`, `MissingCredentials`, `StackIncompatible`, `MissingSecret` |
-| `Dispatcher(spec, ...)` | `HookUnsupported`, `UnsupportedFeature`, `ModelNotSupported`, `InvalidRunsRoot` |
+| `Dispatcher(spec, ...)` | `HookUnsupported`, `ModelNotSupported`, `InvalidRunsRoot` |
 | `plan()` / `start()` / `spawn()` | `MissingCredentials` (credential file unreadable), `MissingSecret`; `start`/`spawn` also `HarnessNotInstalled`; `spawn` inside an event loop: `RuntimeError` |
 | the same with `session_id=` | additionally `NotResumable` (unknown session, other harness, home gone, other `cwd`) and `UnsupportedFeature` (`Inputs.rules` given) |
 | `ModelCatalog.models()` | `UnknownHarness`, `HarnessNotInstalled`, `RuntimeError` |
 
-Returned as data (`RunResult.status` / `error.kind`), never raised: `cancelled`, `timeout`, `budget`,
+Returned as data (`RunResult.status` / `error.kind`), never raised: `cancelled`, `timeout`, `idle_timeout`, `schema`, `budget`,
 `stream_overflow`, `phd_internal`, `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`,
 `no_result`.
 
