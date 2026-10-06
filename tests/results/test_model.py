@@ -25,3 +25,8 @@ def test_run_result_round_trip():
     d = json.loads(json.dumps(r.to_dict()))
     assert d["status"] == "failed"
     assert RunResult.from_dict(d) == r
+
+
+def test_new_error_kinds_map_to_statuses():
+    assert decide_status(RunError("idle_timeout", "x")) is RunStatus.TIMED_OUT
+    assert decide_status(RunError("schema", "x")) is RunStatus.FAILED

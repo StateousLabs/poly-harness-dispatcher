@@ -10,6 +10,7 @@ from ..constants import AUTONOMY_MODES, HARNESSES, PROJECT_CONFIG_MODES
 from ..errors import (CwdNotFound, EmptyTask, InputNotFound, InvalidSpec, MissingCredentials,
                       MissingSecret, UnknownHarness, UnsafeAutonomy)
 from .credentials import Credentials
+from .output_schema import schema_error
 from .placeholders import env_refs
 from .stack import Stack
 
@@ -93,11 +94,17 @@ class Spec:
             deletes it once the result is built.
         harness_builtins: Keep the harness's own bundled skills and plugins. Default `False`
             suppresses them so the agent sees only its stack's skills.
+        idle_timeout_s: Stop the run when the harness prints nothing for this many seconds
+            (`RunError(kind="idle_timeout")`, status `timed_out`). Default `None` (off). Claude and
+            codex print nothing while a tool runs: set it above your longest expected tool call.
+        schema_repair: With `output_schema`, when the answer does not match, resume the session once
+            and ask for a corrected answer. Default `False` (fail at once with `kind="schema"`).
 
     Raises:
         UnknownHarness: `harness` is not supported.
         InvalidSpec: Blank `model`; bad `project_config` / `autonomy`; non-bool
-            `harness_builtins`; non-positive `timeout_s` or `budget_usd`.
+            `harness_builtins`; non-positive `timeout_s` or `budget_usd`; bad `idle_timeout_s` /
+            `schema_repair`; malformed `output_schema`.
         CwdNotFound: `cwd` is not a directory.
         UnsafeAutonomy: `autonomy="full"` without `unsafe=True`.
         MissingCredentials: `credentials.harness` differs from `harness`.
@@ -126,6 +133,8 @@ class Spec:
     output_schema: dict | None = None
     resumable: bool = True
     harness_builtins: bool = False
+    idle_timeout_s: float | None = None
+    schema_repair: bool = False
 
     def __post_init__(self) -> None:
         if self.harness not in HARNESSES:
@@ -150,6 +159,18 @@ class Spec:
             raise InvalidSpec("timeout_s must be positive")
         if self.budget_usd is not None and self.budget_usd <= 0:
             raise InvalidSpec("budget_usd must be positive when set")
+        if self.idle_timeout_s is not None and (isinstance(self.idle_timeout_s, bool)
+                                                or not isinstance(self.idle_timeout_s, (int, float))
+                                                or self.idle_timeout_s <= 0):
+            raise InvalidSpec(f"idle_timeout_s must be a positive number when set, got {self.idle_timeout_s!r}")
+        if not isinstance(self.schema_repair, bool):
+            raise InvalidSpec(f"schema_repair must be a bool, got {self.schema_repair!r}")
+        if self.output_schema is not None:
+            if not isinstance(self.output_schema, dict):
+                raise InvalidSpec("output_schema must be a dict (a JSON Schema)")
+            problem = schema_error(self.output_schema)
+            if problem is not None:
+                raise InvalidSpec(f"output_schema is not a valid JSON Schema: {problem}")
         self.stack.check_harness(self.harness)
         needed = env_refs(self.stack.mcp_servers) | env_refs([h.command for h in self.stack.hooks])
         missing = sorted(needed - set(self.secrets))

@@ -11,7 +11,7 @@ class RunStatus(StrEnum):
     """Overall outcome of a run. Derived from `RunResult.error`.
 
     `SUCCEEDED` when there is no error; `CANCELLED`, `TIMED_OUT`, `BUDGET_EXCEEDED` and
-    `AUTH_FAILED` for error kinds `cancelled`, `timeout`, `budget` and `auth`; `FAILED` for
+    `AUTH_FAILED` for error kinds `cancelled`, `timeout` / `idle_timeout`, `budget` and `auth`; `FAILED` for
     every other error kind. Members compare equal to their string values.
     """
 
@@ -53,18 +53,19 @@ class RunError:
     """Why a run did not succeed.
 
     Attributes:
-        kind: One of `cancelled`, `timeout`, `budget`, `stream_overflow`, `phd_internal`,
+        kind: One of `cancelled`, `timeout`, `idle_timeout`, `schema`, `budget`, `stream_overflow`, `phd_internal`,
             `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`,
             `no_result`. See `docs/concepts/results-and-events.md` for precedence.
         message: Human-readable detail (harness message, or exit code plus scrubbed stderr tail).
     """
 
-    kind: str  # auth | model_unavailable | billing | budget | timeout | cancelled | harness_error | harness_crash | no_result | phd_internal
+    kind: str  # auth | model_unavailable | billing | budget | timeout | idle_timeout | schema | cancelled | harness_error | harness_crash | no_result | phd_internal
     message: str
 
 
 _STATUS_BY_KIND = {"cancelled": RunStatus.CANCELLED, "timeout": RunStatus.TIMED_OUT,
-                   "budget": RunStatus.BUDGET_EXCEEDED, "auth": RunStatus.AUTH_FAILED}
+                   "idle_timeout": RunStatus.TIMED_OUT, "budget": RunStatus.BUDGET_EXCEEDED,
+                   "auth": RunStatus.AUTH_FAILED}
 
 
 def decide_status(error: RunError | None) -> RunStatus:
@@ -78,8 +79,8 @@ class Event:
     Attributes:
         run_id: The run that produced it.
         harness: The harness name.
-        type: `run.started`, `message`, `tool_call`, `tool_result`, `usage`, `log` or
-            `run.finished`.
+        type: `run.started`, `session.started`, `message`, `tool_call`, `tool_result`, `usage`, `log`,
+            `schema.repair` or `run.finished`.
         data: Type-specific payload (for example `{"text": ...}` for `message`).
         ts: Unix timestamp (seconds) when PHD emitted the event.
         raw: The harness JSON line the event came from; `None` for PHD's own events

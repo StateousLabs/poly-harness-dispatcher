@@ -1,0 +1,54 @@
+import pytest
+
+from phd.spec.output_schema import MAX_MESSAGE, answer_instruction, extract_json, schema_error, validate_answer
+
+SCHEMA = {"type": "object", "properties": {"event": {"enum": ["done", "blocked"]}, "n": {"type": "integer"}},
+          "required": ["event"], "additionalProperties": False}
+
+
+def test_schema_error_is_none_for_a_valid_schema():
+    assert schema_error(SCHEMA) is None
+
+
+def test_schema_error_reports_the_problem():
+    message = schema_error({"type": "objekt"})
+    assert message and "objekt" in message
+
+
+def test_draft_comes_from_dollar_schema():
+    assert schema_error({"$schema": "http://json-schema.org/draft-07/schema#", "type": "string"}) is None
+
+
+@pytest.mark.parametrize("text,expected", [
+    ('{"event": "done"}', {"event": "done"}),
+    ("  [1, 2]\n", [1, 2]),
+    ('Here you go:\n```json\n{"event": "done"}\n```\n', {"event": "done"}),
+    ('```\n"x"\n```', "x"),
+])
+def test_extract_json(text, expected):
+    assert extract_json(text) == expected
+
+
+@pytest.mark.parametrize("text", ["not json", "```json\n{}\n```\nand\n```json\n{}\n```", "```json\nnope\n```"])
+def test_extract_json_rejects(text):
+    with pytest.raises(ValueError, match="final answer is not JSON"):
+        extract_json(text)
+
+
+def test_validate_answer_accepts_a_match():
+    assert validate_answer(SCHEMA, {"event": "done", "n": 1}) is None
+
+
+def test_validate_answer_reports_the_path():
+    message = validate_answer(SCHEMA, {"event": "nope"})
+    assert message.startswith("$.event: ") and "nope" in message
+
+
+def test_validate_answer_is_capped():
+    message = validate_answer({"type": "string", "maxLength": 1}, "x" * 5000)
+    assert len(message) <= MAX_MESSAGE
+
+
+def test_answer_instruction_carries_the_schema():
+    text = answer_instruction(SCHEMA)
+    assert "must be only a JSON value that matches this JSON Schema" in text and '"blocked"' in text

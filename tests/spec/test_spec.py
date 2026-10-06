@@ -196,3 +196,30 @@ def test_harness_builtins_defaults_off_and_must_be_bool(make_spec):
     for bad in ("yes", 1, None):
         with pytest.raises(InvalidSpec, match="harness_builtins"):
             make_spec("claude", harness_builtins=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "5"])
+def test_idle_timeout_must_be_a_positive_number(make_spec, bad):
+    with pytest.raises(InvalidSpec, match="idle_timeout_s"):
+        make_spec(idle_timeout_s=bad)
+
+
+def test_idle_timeout_and_schema_repair_defaults(make_spec):
+    spec = make_spec()
+    assert spec.idle_timeout_s is None and spec.schema_repair is False
+    assert make_spec(idle_timeout_s=30).idle_timeout_s == 30
+
+
+def test_schema_repair_must_be_a_bool(make_spec):
+    with pytest.raises(InvalidSpec, match="schema_repair"):
+        make_spec(schema_repair="yes")
+
+
+def test_malformed_output_schema_is_rejected(make_spec):
+    with pytest.raises(InvalidSpec, match="output_schema is not a valid JSON Schema"):
+        make_spec(output_schema={"type": "objekt"})
+
+
+def test_output_schema_must_be_a_dict(make_spec):
+    with pytest.raises(InvalidSpec, match="output_schema must be a dict"):
+        make_spec(output_schema=["x"])
