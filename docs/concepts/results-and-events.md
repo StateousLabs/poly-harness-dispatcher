@@ -41,7 +41,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `raw_final` | `dict` or `None` | claude `result` line; last codex `turn.completed`; last opencode `step_finish` |
 | `events_path` | `str` | `<run_dir>/events.jsonl` |
 | `stderr_path` | `str` | `<run_dir>/stderr.log` |
-| `session_cost_usd` | `float` or `None` | claude only: the harness's own cumulative cost of the whole session after this run (the last `total_cost_usd` it reported); `None` for codex and opencode (their cost is per invocation), when claude reported no cost, and in `result.json` files written before this field existed |
+| `session_cost_usd` | `float` or `None` | claude only: the harness's own cumulative cost of the whole session after this run (the last `total_cost_usd` it reported); `None` for codex and opencode (their cost is per invocation), when claude reported no cost and the session had none before, and in `result.json` files written before this field existed. A turn that reports no cost (cancelled, timed out or crashed before claude's `result` line) carries the previous figure forward, so the next resume is not charged the whole session. If claude reports less than the baseline, that figure is taken as the turn's own cost |
 
 `RunResult.to_dict()` / `RunResult.from_dict()` convert to and from the `result.json` form.
 

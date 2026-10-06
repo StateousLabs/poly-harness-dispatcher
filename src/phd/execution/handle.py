@@ -181,6 +181,7 @@ class RunHandle:
             error=RunError("phd_internal", f"{type(e).__name__}: {e}"), result_text=None, structured_output=None,
             cost_usd=None, cost_source="unknown", usage=Usage(), num_turns=None,
             duration_ms=int((time.monotonic() - self._t0) * 1000), session_id=None, resumable=False,
+            session_cost_usd=(self._cost_before or None) if self._cumulative else None,
             resumed_from=self.resumed_from, run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd),
             project_config=spec.project_config, autonomy=spec.autonomy, unsafe=spec.unsafe,
             credential_kind=spec.credentials.kind, started_at=self._started_at.isoformat(),
@@ -198,7 +199,7 @@ class RunHandle:
             turn = await self._turn(events_file, parser, deadline, cost_before=self._cost_before)
             reported = parser.outcome()
             own = self._own_cost(reported, self._cost_before)
-            result = self._finish(own, turn, session_cost=self._session_cost(reported))
+            result = self._finish(own, turn, session_cost=self._session_cost(reported, self._cost_before))
             if (spec.schema_repair and result.error is not None and result.error.kind == "schema"
                     and result.session_id is not None and not self._cancelled):
                 result = await self._repair(events_file, result, own, reported.cost_usd, deadline)
@@ -234,10 +235,14 @@ class RunHandle:
         """`o` with the cost of this invocation alone (the reported figure minus `before` for a cumulative adapter)."""
         if not self._cumulative or o.cost_usd is None:
             return o
-        return dataclasses.replace(o, cost_usd=max(0.0, round(o.cost_usd - before, 10)))
+        return dataclasses.replace(o, cost_usd=_own_cost(o.cost_usd, before))
 
-    def _session_cost(self, reported: Outcome) -> float | None:
-        return reported.cost_usd if self._cumulative else None
+    def _session_cost(self, reported: Outcome, before: float) -> float | None:
+        """The session's cumulative cost after this invocation: what it reported, else the baseline carried forward
+        (a turn killed before its result line reports nothing; the next resume must not be charged the session)."""
+        if not self._cumulative:
+            return None
+        return reported.cost_usd if reported.cost_usd is not None else (before or None)
 
     async def _repair(self, events_file: TextIO, first: RunResult, first_outcome: Outcome,
                       first_reported: float | None, deadline: float) -> RunResult:
@@ -283,7 +288,7 @@ class RunHandle:
         parser = self._d.adapter.parser()
         turn = await self._turn(events_file, parser, deadline, budget_spent=spent, cost_before=before)
         reported = parser.outcome()
-        session_cost = self._session_cost(reported) if reported.cost_usd is not None else first.session_cost_usd
+        session_cost = self._session_cost(reported, before) if reported.cost_usd is not None else first.session_cost_usd
         result = self._finish(_merge(first_outcome, self._own_cost(reported, before)), turn, session_cost=session_cost)
         result.warnings += [w for w in warnings if w not in result.warnings]  # the first turn's guard warning
         result.warnings.append("schema repair turn used")
@@ -351,7 +356,7 @@ class RunHandle:
             self._note_session(events_file, parser.outcome().session_id)
             cost = parser.running_cost()
             if cost is not None and self._cumulative:
-                cost -= cost_before
+                cost = _own_cost(cost, cost_before)
             if budget is not None and cost is not None and budget_spent + cost > budget:
                 self._proc.kill_tree()
                 return True, False
@@ -407,6 +412,12 @@ class RunHandle:
             started_at=self._started_at.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),
             cli_version=o.cli_version, warnings=[*m.warnings, *self._guard_warnings()], raw_final=o.raw_final,
             events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))
+
+
+def _own_cost(reported: float, before: float) -> float:
+    """One invocation's own cost from a cumulative figure. A figure below the baseline (stale baseline, or a harness
+    reporting per invocation) is itself the turn's cost."""
+    return reported if reported < before else round(reported - before, 10)
 
 
 def _merge(first: Outcome, second: Outcome) -> Outcome:

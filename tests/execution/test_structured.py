@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -255,6 +256,57 @@ def test_resumed_claude_turn_reports_its_own_cost(tmp_path, make_spec, stream):
     assert second.cost_usd == pytest.approx(0.01) and second.session_cost_usd == pytest.approx(0.03)
     third = d.spawn(Inputs(msg="and again"), session_id=first.session_id)
     assert third.cost_usd == pytest.approx(0.02) and third.session_cost_usd == pytest.approx(0.05)
+
+
+def init_only_stream(tmp_path, session="sess-s1"):
+    path = tmp_path / "init_only.jsonl"
+    path.write_text(json.dumps({"type": "system", "subtype": "init", "session_id": session}) + "\n", encoding="utf-8")
+    return path
+
+
+GOOD = {"result": "", "structured": {"event": "done"}}
+
+
+async def test_cancelled_resume_carries_the_baseline_forward(tmp_path, make_spec, stream, monkeypatch):
+    stream(claude_stream(tmp_path, "t1", cost=0.02, **GOOD), init_only_stream(tmp_path),
+           claude_stream(tmp_path, "t3", cost=0.03, **GOOD))
+    d = Dispatcher(make_spec("claude", output_schema=SCHEMA, budget_usd=0.025), runs_root=tmp_path / "runs",
+                   validate_model=False, allow_temp_runs_root=True, executables={"claude": FAKE})
+    first = await (await d.start(Inputs(msg="x"))).wait()
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    handle = await d.start(Inputs(msg="again"), session_id=first.session_id)
+    await asyncio.sleep(1)
+    cancelled = await handle.cancel()
+    assert cancelled.status is RunStatus.CANCELLED and cancelled.cost_usd is None
+    assert cancelled.session_cost_usd == pytest.approx(0.02)
+    monkeypatch.setenv("FAKE_SLEEP", "0")
+    third = await (await d.start(Inputs(msg="and again"), session_id=first.session_id)).wait()
+    assert third.status is RunStatus.SUCCEEDED
+    assert third.cost_usd == pytest.approx(0.01) and third.session_cost_usd == pytest.approx(0.03)
+
+
+def test_crashed_resume_carries_the_baseline_forward(tmp_path, make_spec, stream, monkeypatch):
+    stream(claude_stream(tmp_path, "t1", cost=0.02, **GOOD), init_only_stream(tmp_path),
+           claude_stream(tmp_path, "t3", cost=0.03, **GOOD))
+    d, first = run(tmp_path, make_spec, budget_usd=0.025)
+    monkeypatch.setenv("FAKE_EXIT", "3")
+    crashed = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert crashed.error.kind == "harness_crash" and crashed.cost_usd is None
+    assert crashed.session_cost_usd == pytest.approx(0.02)
+    monkeypatch.setenv("FAKE_EXIT", "0")
+    third = d.spawn(Inputs(msg="and again"), session_id=first.session_id)
+    assert third.status is RunStatus.SUCCEEDED
+    assert third.cost_usd == pytest.approx(0.01) and third.session_cost_usd == pytest.approx(0.03)
+
+
+def test_reported_below_the_baseline_is_the_turns_own_cost(tmp_path, make_spec, stream):
+    stream(claude_stream(tmp_path, "t1", cost=0.05, **GOOD), claude_stream(tmp_path, "t2", cost=0.01, **GOOD))
+    d, first = run(tmp_path, make_spec)
+    d = Dispatcher(make_spec("claude", output_schema=SCHEMA, budget_usd=0.02), runs_root=tmp_path / "runs",
+                   validate_model=False, allow_temp_runs_root=True, executables={"claude": FAKE})
+    second = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert second.status is RunStatus.SUCCEEDED
+    assert second.cost_usd == pytest.approx(0.01) and second.session_cost_usd == pytest.approx(0.01)
 
 
 def test_resume_after_an_old_record_falls_back_to_its_cost(tmp_path, make_spec, stream):
