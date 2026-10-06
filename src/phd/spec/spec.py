@@ -88,7 +88,8 @@ class Spec:
             summed `step_finish` cost exceeds it; codex reports no cost, so it is not enforced
             (a warning is added).
         output_schema: JSON Schema for a structured final answer (claude `--json-schema`, codex
-            `--output-schema`). opencode raises `UnsupportedFeature`.
+            `--output-schema`; opencode gets an instruction in its AGENTS.md). PHD validates the answer
+            on every harness (see `schema_repair`).
         resumable: Keep the run home after the run so its session can be resumed
             (`Dispatcher.start(..., session_id=)`). `False`
             deletes it once the result is built.

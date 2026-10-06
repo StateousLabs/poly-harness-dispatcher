@@ -26,7 +26,10 @@ def main() -> int:
         with open(path, "w") as f:
             f.write(str(os.getpid()))
     if (paths := os.environ.get("FAKE_STREAMS")) and (state := os.environ.get("FAKE_STATE")):
-        n = int(open(state).read() or 0) if os.path.exists(state) else 0
+        n = 0
+        if os.path.exists(state):
+            with open(state) as f:
+                n = int(f.read() or 0)
         with open(state, "w") as f:
             f.write(str(n + 1))
         choices = paths.split(os.pathsep)

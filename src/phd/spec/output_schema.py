@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 import jsonschema
@@ -50,10 +51,13 @@ def extract_json(text: str) -> Any:
     raise ValueError("final answer is not JSON")
 
 
-def validate_answer(schema: dict, value: Any) -> str | None:
-    """`None` when `value` matches `schema`, else `"<json path>: <message>"` (capped)."""
+def validate_answer(schema: dict, value: Any, scrub: Callable[[str], str] | None = None) -> str | None:
+    """`None` when `value` matches `schema`, else `"<json path>: <message>"` (scrubbed, then capped)."""
     error = best_match(_validator(schema)(schema).iter_errors(value))
-    return None if error is None else _cap(f"{error.json_path}: {error.message}")
+    if error is None:
+        return None
+    message = f"{error.json_path}: {error.message}"
+    return _cap(scrub(message) if scrub else message)
 
 
 def answer_instruction(schema: dict) -> str:

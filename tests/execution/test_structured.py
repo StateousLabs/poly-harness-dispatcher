@@ -1,11 +1,13 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
 from conftest import FAKE_HARNESS
 from phd import Dispatcher, Inputs, RunStatus
+from phd.execution.handle import _merge, _with_budget
 
 FAKE = [sys.executable, str(FAKE_HARNESS)]
 SCHEMA = {"type": "object", "properties": {"event": {"enum": ["done", "blocked"]}}, "required": ["event"]}
@@ -134,3 +136,80 @@ def test_schema_error_message_is_scrubbed(tmp_path, make_spec, stream):  # Revie
     stream(claude_stream(tmp_path, "leak", result="", structured={"event": "phd-echo-secret"}))
     _, r = run(tmp_path, make_spec, secrets={"ECHO_PREFIX": "phd-echo-secret"})
     assert r.error.kind == "schema" and "phd-echo-secret" not in r.error.message
+
+
+@pytest.fixture
+def on_second_spawn(monkeypatch):
+    """Run `action(handle)` instead of / before the second harness spawn of a run."""
+    from phd.execution.handle import RunHandle
+    original = RunHandle._new_process
+
+    def install(action):
+        calls = []
+
+        def patched(self, argv, stdin_text):
+            calls.append(argv)
+            if len(calls) == 2:
+                action(self)
+            return original(self, argv, stdin_text)
+        monkeypatch.setattr(RunHandle, "_new_process", patched)
+    return install
+
+
+def two_streams(tmp_path, first_cost=0.01):
+    return (claude_stream(tmp_path, "bad", result="", structured={"event": "nope"}, cost=first_cost),
+            claude_stream(tmp_path, "good", result="", structured={"event": "done"}))
+
+
+def test_cancel_during_repair_start_is_not_lost(tmp_path, make_spec, stream, monkeypatch, on_second_spawn):
+    stream(*two_streams(tmp_path))
+
+    def cancel(handle):
+        monkeypatch.setenv("FAKE_SLEEP", "30")
+        handle._request_cancel()
+    on_second_spawn(cancel)
+    t0 = time.monotonic()
+    _, r = run(tmp_path, make_spec, schema_repair=True)
+    assert r.status is RunStatus.CANCELLED and time.monotonic() - t0 < 15
+
+
+def test_repair_spawn_failure_keeps_the_first_turn(tmp_path, make_spec, stream, on_second_spawn):
+    stream(*two_streams(tmp_path))
+
+    def boom(handle):
+        raise OSError("no such harness")
+    on_second_spawn(boom)
+    _, r = run(tmp_path, make_spec, schema_repair=True, resumable=False)
+    assert r.error.kind == "schema" and r.session_id == "sess-s1" and r.cost_usd == pytest.approx(0.01)
+    assert "schema repair turn could not start: OSError: no such harness" in r.warnings
+    types = [json.loads(line)["type"] for line in open(r.events_path, encoding="utf-8")]
+    assert types[-1] == "run.finished" and not os.path.exists(r.home_dir)
+
+
+def test_repair_gets_only_the_remaining_budget(tmp_path, make_spec, stream, echo):
+    stream(*two_streams(tmp_path))
+    _, r = run(tmp_path, make_spec, schema_repair=True, budget_usd=0.025)
+    assert r.status is RunStatus.SUCCEEDED
+    calls = echo()
+    argv = calls[1]["argv"]
+    assert argv[argv.index("--max-budget-usd") + 1] == "0.015"
+    assert calls[0]["argv"][calls[0]["argv"].index("--max-budget-usd") + 1] == "0.025"
+
+
+def test_no_repair_when_the_budget_is_spent(tmp_path, make_spec, stream, echo):
+    stream(*two_streams(tmp_path, first_cost=0.02))
+    _, r = run(tmp_path, make_spec, schema_repair=True, budget_usd=0.02)
+    assert len(echo()) == 1 and r.error.kind in ("schema", "budget")
+
+
+def test_with_budget_helper():
+    assert _with_budget(["x", "--max-budget-usd", "1.0", "--y"], 0.3) == ["x", "--max-budget-usd", "0.3", "--y"]
+    assert _with_budget(["x"], 0.3) == ["x"]
+
+
+def test_merge_with_one_unpriced_turn_is_unknown():
+    from phd.harnesses import Outcome
+    priced = Outcome(cost_usd=0.01, cost_source="harness")
+    unpriced = Outcome()
+    assert _merge(priced, unpriced).cost_source == "unknown"
+    assert _merge(priced, priced).cost_source == "harness"

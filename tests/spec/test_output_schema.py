@@ -52,3 +52,11 @@ def test_validate_answer_is_capped():
 def test_answer_instruction_carries_the_schema():
     text = answer_instruction(SCHEMA)
     assert "must be only a JSON value that matches this JSON Schema" in text and '"blocked"' in text
+
+
+def test_validate_answer_scrubs_before_capping():
+    secret = "SECRETVALUE"
+    value = {"event": "a" * 480 + secret}
+    message = validate_answer(SCHEMA, value, scrub=lambda text: text.replace(secret, "[X]"))
+    assert "SECRET" not in message and len(message) <= MAX_MESSAGE
+    assert "SECRET" in validate_answer(SCHEMA, value)  # without scrub the cap would split it, not hide it

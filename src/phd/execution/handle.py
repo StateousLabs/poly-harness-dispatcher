@@ -215,8 +215,8 @@ class RunHandle:
                 pass
         if not present:
             return None, RunError("schema", "final answer is not JSON")
-        problem = validate_answer(self._d.spec.output_schema, value)
-        return value, (None if problem is None else RunError("schema", self._scrub(problem)))
+        problem = validate_answer(self._d.spec.output_schema, value, scrub=self._scrub)
+        return value, (None if problem is None else RunError("schema", problem))
 
     def _new_process(self, argv: list[str], stdin_text: str) -> HarnessProcess:
         m = self.materialized
@@ -226,12 +226,25 @@ class RunHandle:
     async def _repair(self, events_file: TextIO, first: RunResult, first_outcome: Outcome,
                       deadline: float) -> RunResult:
         spec, m = self._d.spec, self.materialized
+        if self._cancelled:
+            return first
+        remaining = None if spec.budget_usd is None else spec.budget_usd - (first.cost_usd or 0.0)
+        if remaining is not None and remaining <= 0:
+            return first
         self._emit(events_file, "schema.repair", {"error": first.error.message})
         argv = m.argv if self._resume_session is not None else self._d.adapter.resume_argv(m.argv, first.session_id, spec)
+        if remaining is not None:
+            argv = _with_budget(argv, remaining)
         warnings = self._guard_warnings()
         self._proc.close()
-        self._proc = self._new_process(argv, REPAIR_PROMPT.format(error=first.error.message))
-        await self._proc.start()
+        try:
+            self._proc = self._new_process(argv, REPAIR_PROMPT.format(error=first.error.message))
+            await self._proc.start()
+        except Exception as e:  # keep the first turn's result: its answer was already wrong, not lost
+            first.warnings.append(f"schema repair turn could not start: {type(e).__name__}: {e}")
+            return first
+        if self._cancelled:  # a cancel during start() found no process to kill
+            self._proc.kill_tree()
         parser = self._d.adapter.parser()
         turn = await self._turn(events_file, parser, deadline, budget_spent=first.cost_usd or 0.0)
         result = self._finish(_merge(first_outcome, parser.outcome()), turn)
@@ -358,6 +371,14 @@ def _merge(first: Outcome, second: Outcome) -> Outcome:
     turns = [n for n in (first.num_turns, second.num_turns) if n is not None]
     return dataclasses.replace(
         second, usage=usage, cost_usd=sum(costs) if costs else None,
-        cost_source=second.cost_source if second.cost_usd is not None else first.cost_source,
+        cost_source=second.cost_source if len(costs) == 2 else "unknown",  # one turn unpriced: a sum undercounts
         num_turns=sum(turns) if turns else None, session_id=second.session_id or first.session_id,
         cli_version=second.cli_version or first.cli_version)
+
+
+def _with_budget(argv: list[str], remaining: float) -> list[str]:
+    """`argv` with the value after `--max-budget-usd` (if present) replaced by `remaining`."""
+    out = list(argv)
+    if "--max-budget-usd" in out:
+        out[out.index("--max-budget-usd") + 1] = str(round(remaining, 6))
+    return out
