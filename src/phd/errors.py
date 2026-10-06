@@ -67,7 +67,7 @@ class UnsafeAutonomy(PhdError):
 
 
 class UnsupportedFeature(PhdError):
-    """A feature is not supported here: opencode `output_schema`, or `Inputs.rules` on a resumed turn."""
+    """A feature is not supported here, for example `Inputs.rules` on a resumed turn."""
 
 
 class InvalidSpec(PhdError):

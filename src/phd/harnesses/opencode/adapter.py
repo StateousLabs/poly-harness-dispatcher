@@ -3,9 +3,10 @@
 from pathlib import Path
 
 from ..._util.fs import write_json
-from ...errors import MissingCredentials, UnsupportedFeature
+from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, opencode_plugin, write_runtime
 from ...spec import Spec
+from ...spec.output_schema import answer_instruction
 from .parser import OpencodeParser
 
 # opencode 1.18.18 hardcodes one built-in skill with no disable switch; denying it through permissions
@@ -18,15 +19,14 @@ class OpencodeAdapter:
 
     def validate(self, spec: Spec) -> list[str]:
         check_supported("opencode", spec.stack.hooks)
-        if spec.output_schema is not None:
-            raise UnsupportedFeature("opencode: output_schema is not supported yet")
         return []
 
     def materialize(self, ctx: MaterializeContext) -> tuple[list[str], dict[str, str]]:
         spec, home = ctx.spec, ctx.home
         cfg_dir = home / "config"
         ctx.copy_skills(cfg_dir / "skills")
-        (home / "AGENTS.md").write_text(ctx.prompt.system, encoding="utf-8")
+        system = ctx.prompt.system + (answer_instruction(spec.output_schema) if spec.output_schema is not None else "")
+        (home / "AGENTS.md").write_text(system, encoding="utf-8")
 
         mcp = {}
         for name, server in ctx.mcp_servers().items():

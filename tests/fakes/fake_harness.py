@@ -9,6 +9,8 @@ FAKE_EXIT           exit code (default 0)
 FAKE_NO_STDIN       set to 1 to never read stdin (the writer blocks once the pipe fills)
 FAKE_STDERR         text to write to stderr
 FAKE_PIDFILE        write this process's pid here at start
+FAKE_STREAMS        os.pathsep-separated JSONL paths; invocation N prints the Nth (needs FAKE_STATE)
+FAKE_STATE          counter file for FAKE_STREAMS
 """
 import json
 import os
@@ -23,6 +25,12 @@ def main() -> int:
     if path := os.environ.get("FAKE_PIDFILE"):
         with open(path, "w") as f:
             f.write(str(os.getpid()))
+    if (paths := os.environ.get("FAKE_STREAMS")) and (state := os.environ.get("FAKE_STATE")):
+        n = int(open(state).read() or 0) if os.path.exists(state) else 0
+        with open(state, "w") as f:
+            f.write(str(n + 1))
+        choices = paths.split(os.pathsep)
+        os.environ["FAKE_STREAM"] = choices[min(n, len(choices) - 1)]
     stdin = "" if os.environ.get("FAKE_NO_STDIN") == "1" else sys.stdin.buffer.read().decode("utf-8")
     if text := os.environ.get("FAKE_STDERR"):
         sys.stderr.write(text)

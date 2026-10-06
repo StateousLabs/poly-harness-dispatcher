@@ -5,7 +5,7 @@ import pytest
 from conftest import FIXTURES
 from helpers import materialize_spec
 
-from phd.errors import HookUnsupported, UnsupportedFeature
+from phd.errors import HookUnsupported
 from phd.harnesses import get_adapter
 from phd.spec import Stack
 
@@ -50,9 +50,7 @@ def test_opencode_full_modes_and_user_permission_merge(tmp_path, make_spec, inpu
     assert perm["bash"] == {"*": "deny", "echo *": "allow"}
 
 
-def test_opencode_rejects_output_schema_and_session_hooks(tmp_path, make_spec):
-    with pytest.raises(UnsupportedFeature, match="output_schema"):
-        get_adapter("opencode").validate(make_spec("opencode", output_schema={"type": "object"}))
+def test_opencode_rejects_session_hooks(tmp_path, make_spec):
     stack_dir = tmp_path / "stack"
     shutil.copytree(FIXTURES / "stack", stack_dir)
     (stack_dir / "hooks" / "hooks.json").write_text(json.dumps({"hooks": [{"event": "session_start", "command": "x"}]}))
@@ -78,3 +76,12 @@ def test_opencode_builtin_skill_denied_by_default(tmp_path, make_spec, inputs):
 
 def test_opencode_builtin_skill_opt_in_writes_no_deny(tmp_path, make_spec, inputs):
     assert "skill" not in _permission(tmp_path, make_spec, inputs, harness_builtins=True)
+
+
+def test_opencode_output_schema_goes_into_agents_md(tmp_path, make_spec, inputs):
+    schema = {"type": "object", "properties": {"event": {"enum": ["done"]}}}
+    spec = make_spec("opencode", output_schema=schema)
+    assert get_adapter("opencode").validate(spec) == []
+    m = materialize_spec(spec, inputs, run_id="r1", run_dir=tmp_path / "r1")
+    text = (m.home / "AGENTS.md").read_text(encoding="utf-8")
+    assert "must be only a JSON value that matches this JSON Schema" in text and '"done"' in text

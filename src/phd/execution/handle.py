@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from .._util.fs import robust_rmtree
 from .._util.shell import resolve_argv
@@ -17,7 +18,10 @@ from ..harnesses import Outcome
 from ..materialize import MaterializedHome
 from ..results import Event, RunError, RunResult, Usage
 from ..results.model import decide_status
+from ..spec.output_schema import extract_json, validate_answer
 from .process import HarnessProcess, child_env
+
+REPAIR_PROMPT = "Your final answer did not match the required JSON Schema: {error}. Reply with only the corrected JSON."
 
 if TYPE_CHECKING:
     from .dispatcher import Dispatcher
@@ -71,8 +75,7 @@ class RunHandle:
                      stack_hash: str, lock: SessionLock | None = None,
                      session_id: str | None = None) -> RunHandle:
         handle = cls(d, m, resumed_from, stack_hash, lock, session_id)
-        handle._proc = HarnessProcess(handle._resolve(m.argv), env=child_env(m.env), cwd=d.spec.cwd, stdin_text=m.stdin,
-                                      stderr_path=m.run_dir / "stderr.log")
+        handle._proc = handle._new_process(m.argv, m.stdin)
         await handle._proc.start()
         handle._task = asyncio.create_task(handle._pump())
         return handle
@@ -189,6 +192,9 @@ class RunHandle:
             parser = self._d.adapter.parser()
             turn = await self._turn(events_file, parser, deadline)
             result = self._finish(parser.outcome(), turn)
+            if (spec.schema_repair and result.error is not None and result.error.kind == "schema"
+                    and result.session_id is not None and not self._cancelled):
+                result = await self._repair(events_file, result, parser.outcome(), deadline)
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
             self._release_lock()  # the lock file lives in the home that is about to go
@@ -197,6 +203,42 @@ class RunHandle:
             except OSError as e:
                 result.warnings.append(f"could not remove run home {m.home}: {e}")
             result.resumable = False
+        return result
+
+    def _check_answer(self, o: Outcome) -> tuple[Any, RunError | None]:
+        """(parsed answer, schema error or None) for a run with `output_schema`."""
+        value, present = o.structured_output, o.structured_output is not None
+        if not present and o.result_text:
+            try:
+                value, present = extract_json(o.result_text), True
+            except ValueError:
+                pass
+        if not present:
+            return None, RunError("schema", "final answer is not JSON")
+        problem = validate_answer(self._d.spec.output_schema, value)
+        return value, (None if problem is None else RunError("schema", self._scrub(problem)))
+
+    def _new_process(self, argv: list[str], stdin_text: str) -> HarnessProcess:
+        m = self.materialized
+        return HarnessProcess(self._resolve(argv), env=child_env(m.env), cwd=self._d.spec.cwd,
+                              stdin_text=stdin_text, stderr_path=m.run_dir / "stderr.log")
+
+    async def _repair(self, events_file: TextIO, first: RunResult, first_outcome: Outcome,
+                      deadline: float) -> RunResult:
+        spec, m = self._d.spec, self.materialized
+        self._emit(events_file, "schema.repair", {"error": first.error.message})
+        argv = m.argv if self._resume_session is not None else self._d.adapter.resume_argv(m.argv, first.session_id, spec)
+        warnings = self._guard_warnings()
+        self._proc.close()
+        self._proc = self._new_process(argv, REPAIR_PROMPT.format(error=first.error.message))
+        await self._proc.start()
+        parser = self._d.adapter.parser()
+        turn = await self._turn(events_file, parser, deadline, budget_spent=first.cost_usd or 0.0)
+        result = self._finish(_merge(first_outcome, parser.outcome()), turn)
+        result.warnings += [w for w in warnings if w not in result.warnings]  # the first turn's guard warning
+        result.warnings.append("schema repair turn used")
+        if result.error is not None and result.error.kind == "schema":
+            result.error = RunError("schema", "after one repair turn: " + result.error.message)
         return result
 
     def _finish(self, o: Outcome, t: _Turn) -> RunResult:
@@ -286,11 +328,12 @@ class RunHandle:
         else:
             error = None
         structured = o.structured_output
-        if structured is None and spec.output_schema is not None and o.result_text:
-            try:
-                structured = json.loads(o.result_text)
-            except json.JSONDecodeError:
-                pass
+        if spec.output_schema is not None:
+            checked, schema_err = self._check_answer(o)
+            if checked is not None:
+                structured = checked
+            if error is None:
+                error = schema_err
         return RunResult(
             run_id=m.run_id, harness=spec.harness, model=spec.model, stack=spec.stack.ref,
             stack_hash=self._stack_hash, status=decide_status(error), exit_code=t.exit_code, error=error,
@@ -304,3 +347,17 @@ class RunHandle:
             started_at=self._started_at.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),
             cli_version=o.cli_version, warnings=[*m.warnings, *self._guard_warnings()], raw_final=o.raw_final,
             events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))
+
+
+def _merge(first: Outcome, second: Outcome) -> Outcome:
+    """The repair turn's outcome with usage, cost and turns summed over both turns."""
+    usage = Usage()
+    usage.add(first.usage)
+    usage.add(second.usage)
+    costs = [c for c in (first.cost_usd, second.cost_usd) if c is not None]
+    turns = [n for n in (first.num_turns, second.num_turns) if n is not None]
+    return dataclasses.replace(
+        second, usage=usage, cost_usd=sum(costs) if costs else None,
+        cost_source=second.cost_source if second.cost_usd is not None else first.cost_source,
+        num_turns=sum(turns) if turns else None, session_id=second.session_id or first.session_id,
+        cli_version=second.cli_version or first.cli_version)
