@@ -8,6 +8,7 @@ FAKE_SLEEP          seconds to sleep after printing (simulates a hang)
 FAKE_EXIT           exit code (default 0)
 FAKE_NO_STDIN       set to 1 to never read stdin (the writer blocks once the pipe fills)
 FAKE_STDERR         text to write to stderr
+FAKE_PIDFILE        write this process's pid here at start
 """
 import json
 import os
@@ -19,6 +20,9 @@ PREFIXES = ("CLAUDE_", "CODEX_", "OPENCODE_", "ANTHROPIC_", "OPENAI_", "XDG_", "
 
 
 def main() -> int:
+    if path := os.environ.get("FAKE_PIDFILE"):
+        with open(path, "w") as f:
+            f.write(str(os.getpid()))
     stdin = "" if os.environ.get("FAKE_NO_STDIN") == "1" else sys.stdin.buffer.read().decode("utf-8")
     if text := os.environ.get("FAKE_STDERR"):
         sys.stderr.write(text)

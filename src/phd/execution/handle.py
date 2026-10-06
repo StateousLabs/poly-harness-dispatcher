@@ -146,6 +146,8 @@ class RunHandle:
                 except Exception as e:
                     result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
         finally:
+            if self._proc is not None:
+                self._proc.close()
             self._release_lock()
             self._result = result
             self._queue.put_nowait(None)
@@ -159,6 +161,10 @@ class RunHandle:
         if proc is not None and proc.proc is not None and proc.proc.returncode is None:
             proc.kill_tree()
 
+    def _guard_warnings(self) -> list[str]:
+        guard = self._proc.guard if self._proc is not None else None
+        return [guard.warning] if guard is not None and guard.warning else []
+
     def _minimal_result(self, e: Exception) -> RunResult:
         spec, m = self._d.spec, self.materialized
         return RunResult(
@@ -170,7 +176,7 @@ class RunHandle:
             resumed_from=self.resumed_from, run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd),
             project_config=spec.project_config, autonomy=spec.autonomy, unsafe=spec.unsafe,
             credential_kind=spec.credentials.kind, started_at=self._started_at.isoformat(),
-            finished_at=datetime.now(timezone.utc).isoformat(), warnings=list(m.warnings),
+            finished_at=datetime.now(timezone.utc).isoformat(), warnings=[*m.warnings, *self._guard_warnings()],
             events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))
 
     async def _run_to_result(self) -> RunResult:
@@ -296,5 +302,5 @@ class RunHandle:
             run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd), project_config=spec.project_config,
             autonomy=spec.autonomy, unsafe=spec.unsafe, credential_kind=spec.credentials.kind,
             started_at=self._started_at.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),
-            cli_version=o.cli_version, warnings=list(m.warnings), raw_final=o.raw_final,
+            cli_version=o.cli_version, warnings=[*m.warnings, *self._guard_warnings()], raw_final=o.raw_final,
             events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))

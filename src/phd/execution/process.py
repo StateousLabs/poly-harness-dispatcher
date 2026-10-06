@@ -8,6 +8,8 @@ import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from . import lifetime
+
 HOST_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "OPENCODE_", "XDG_")
 STREAM_LIMIT = 16 * 1024 * 1024  # Claude stream-json lines carry whole tool results
 
@@ -24,6 +26,7 @@ class HarnessProcess:
         self.argv, self.env, self.cwd = argv, env, cwd
         self.stdin_text, self.stderr_path = stdin_text, stderr_path
         self.proc: asyncio.subprocess.Process | None = None
+        self.guard: lifetime.Guard | None = None
         self.killed = False
         self.overflowed = False
         self._stderr_task: asyncio.Task | None = None
@@ -31,12 +34,14 @@ class HarnessProcess:
 
     async def start(self) -> None:
         if os.name == "nt":
-            group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | lifetime.CREATE_SUSPENDED}
         else:
             group = {"start_new_session": True}
         self.proc = await asyncio.create_subprocess_exec(
             *self.argv, cwd=self.cwd, env=self.env, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=STREAM_LIMIT, **group)
+        self.guard = lifetime.new_guard()
+        self.guard.attach(self.proc.pid)  # on Windows this also resumes the suspended harness
         self._stderr_task = asyncio.create_task(self._copy_stderr())
         # The prompt is written in the background: a harness that never reads stdin must not block
         # start() (and so escape timeout_s).
@@ -81,16 +86,24 @@ class HarnessProcess:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), 5)
             except asyncio.TimeoutError:
                 self._stderr_task.cancel()  # a descendant still holds stderr open
+        self.close()
         return code
+
+    def close(self) -> None:
+        """Release the lifetime guard (idempotent)."""
+        if self.guard is not None:
+            self.guard.release()
 
     def kill_tree(self) -> None:
         if self._stdin_task is not None and not self._stdin_task.done():
             self._stdin_task.cancel()
         if self.proc is None:
             return
+        if self.guard is not None and self.guard.kill():  # Windows job: one call, reaches orphaned descendants too
+            self.killed = True
+            return
         if os.name == "nt":
-            # taskkill cannot walk a dead PID's tree: orphaned Windows descendants are a known
-            # limitation (a Job Object would fix it later).
+            # Fallback when there is no job (protection unavailable).
             if self.proc.returncode is not None:
                 return
             self.killed = True
