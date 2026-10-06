@@ -102,7 +102,8 @@ async def test_resumed_turn_announces_its_session_at_once(tmp_path, monkeypatch,
     h = await d.start(Inputs(msg="again"), session_id=first.session_id)
     assert h.session_id == first.session_id
     events = [e async for e in h.events()]
-    assert [e.type for e in events][:2] == ["run.started", "session.started"]
+    types = [e.type for e in events]
+    assert types[:2] == ["run.started", "session.started"] and types.count("session.started") == 1
     await h.wait()
 
 
@@ -118,3 +119,24 @@ def test_steady_output_never_trips_the_idle_limit(tmp_path, monkeypatch, make_sp
     monkeypatch.setenv("FAKE_LINE_DELAY", "0.4")
     r = dispatcher(make_spec("claude", idle_timeout_s=3), tmp_path).spawn(Inputs(msg="x"))
     assert r.status is RunStatus.SUCCEEDED
+
+
+async def test_second_cancel_during_cleanup_still_waits_for_the_run(tmp_path, slow, make_spec):
+    handles = []
+
+    async def body():
+        async with dispatcher(make_spec("claude"), tmp_path).run(Inputs(msg="x")) as h:
+            handles.append(h)
+            await h.wait()
+
+    task = asyncio.create_task(body())
+    while not handles:
+        await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    h = handles[0]
+    assert h.done
+    assert h._d.ledger.get(h.run_id).status is RunStatus.CANCELLED

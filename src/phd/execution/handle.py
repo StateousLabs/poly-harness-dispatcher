@@ -57,7 +57,7 @@ class RunHandle:
         self.run_id = m.run_id
         self.resumed_from = resumed_from
         self.session_id: str | None = session_id  # a resumed turn knows its session before launch
-        self._resume_session = session_id  # set for a resumed turn: the id is known before launch
+        self._resume_session = session_id
         self._queue: asyncio.Queue[Event | None] = asyncio.Queue()
         self._result: RunResult | None = None
         self._cancelled = False
@@ -223,12 +223,16 @@ class RunHandle:
         lines = aiter(self._proc.lines())
         while True:
             try:
-                line = await (asyncio.wait_for(anext(lines), idle) if idle else anext(lines))
+                if idle:
+                    try:
+                        line = await asyncio.wait_for(anext(lines), idle)
+                    except TimeoutError:  # wait_for's own timeout: the harness was silent for idle_timeout_s
+                        self._proc.kill_tree()
+                        return False, True
+                else:
+                    line = await anext(lines)
             except StopAsyncIteration:
                 return False, False
-            except TimeoutError:  # wait_for's own timeout: the harness was silent for idle_timeout_s
-                self._proc.kill_tree()
-                return False, True
             if not line.strip():
                 continue
             try:

@@ -268,7 +268,14 @@ class Dispatcher:
         finally:
             if not handle.done:
                 handle._request_cancel()  # synchronous: the kill is issued before anything can interrupt us
-                await handle.wait()       # shielded: the run finishes even if this task is cancelled again
+                cancelled_again = False
+                while not handle.done:
+                    try:
+                        await handle.wait()
+                    except asyncio.CancelledError:
+                        cancelled_again = True  # keep waiting: the kill is already issued, so this is bounded
+                if cancelled_again:
+                    raise asyncio.CancelledError
 
     def spawn(self, inputs: Inputs, *, session_id: str | None = None) -> RunResult:
         """Blocking wrapper: `start(inputs, session_id=...)` then `wait()`.
