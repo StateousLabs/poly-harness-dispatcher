@@ -14,6 +14,7 @@ Validates the spec against its harness (hooks, features, model, codex runs root)
 |---|---|
 | `.plan(inputs, *, session_id=None) -> MaterializedHome` | dry run: write the run home and `run.json`, launch nothing |
 | `await .start(inputs, *, session_id=None) -> RunHandle` | materialize and launch; returns once the process has started |
+| `async with .run(inputs, *, session_id=None) as handle` | `start` as a context manager: leaving the block cancels a run that has not finished and waits for it to end ([Run lifecycle](../concepts/run-lifecycle.md#using-a-run-run-vs-start)) |
 | `.spawn(inputs, *, session_id=None) -> RunResult` | blocking `start` + `wait`; `RuntimeError` inside a running event loop |
 | `.spec` | the `Spec` |
 | `.ledger` | the `LocalLedger` at `runs_root` |
@@ -36,6 +37,8 @@ Returned by `start`; not constructed directly.
 | `await .wait() -> RunResult` | the result; never raises for a failed run |
 | `await .cancel() -> RunResult` | kill the process tree; status `cancelled` if still running |
 | `.run_id` | this run's id |
+| `.session_id` | the harness session id once reported (set at once for a resumed turn); `None` before. Announced by one `session.started` event |
+| `.done` | `True` once the run has finished and its result exists |
 | `.resumed_from` | for a resumed session, the run it was found in; else `None` |
 | `.materialized` | the launched `MaterializedHome` |
 

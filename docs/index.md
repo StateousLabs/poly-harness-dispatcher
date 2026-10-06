@@ -2,7 +2,7 @@
 
 This page says what PHD is, what is built today and what is only planned, and lists every documentation page.
 
-PHD is a Python SDK (package `phd`, Python 3.12+, no runtime dependencies) that runs a headless AI coding agent
+PHD is a Python SDK (package `phd`, Python 3.12+, one runtime dependency: `jsonschema`) that runs a headless AI coding agent
 through one of three command-line *harnesses*, Claude Code (`claude -p`), Codex (`codex exec`) and OpenCode
 (`opencode run`), from a single harness-neutral description, and returns one normalized result.
 

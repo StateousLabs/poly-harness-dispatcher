@@ -26,7 +26,7 @@ lower-case strings). Derived from `RunResult.error.kind`.
 
 ### RunError
 
-`RunError(kind, message)`: why a run did not succeed. Kinds: `cancelled`, `timeout`, `budget`, `stream_overflow`,
+`RunError(kind, message)`: why a run did not succeed. Kinds: `cancelled`, `timeout`, `idle_timeout`, `schema`, `budget`, `stream_overflow`,
 `phd_internal`, `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`, `no_result`.
 
 ### Usage
@@ -37,7 +37,7 @@ lower-case strings). Derived from `RunResult.error.kind`.
 ### Event
 
 `Event(run_id, harness, type, data, ts, raw=None)`, `.to_dict() -> dict`. Frozen. `type` is one of
-`run.started`, `message`, `tool_call`, `tool_result`, `usage`, `log`, `run.finished`.
+`run.started`, `session.started`, `message`, `tool_call`, `tool_result`, `usage`, `log`, `schema.repair`, `run.finished`.
 
 ### LocalLedger
 

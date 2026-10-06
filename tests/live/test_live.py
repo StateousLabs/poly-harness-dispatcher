@@ -106,3 +106,21 @@ def test_composed_stack_lists_exactly_its_skills(tmp_path, http_server, poisoned
     text = r.result_text or ""
     for name in ("demo-notes", "demo-minimal", "extra-local", "extra-remote"):
         assert name in text, text
+
+
+def test_opencode_structured_output(poisoned_cwd):
+    schema = {"type": "object", "properties": {"answer": {"type": "integer"}}, "required": ["answer"]}
+    spec = Spec(harness="opencode", model=MODELS["opencode"], stack=Stack.load(FIXTURES / "stack"), cwd=poisoned_cwd,
+                credentials=Credentials.from_host("opencode"), secrets={"ECHO_PREFIX": "phd-echo"},
+                output_schema=schema, schema_repair=True, timeout_s=300)
+    r = Dispatcher(spec, runs_root=RUNS).spawn(Inputs(msg="What is 6 times 7? Give the number as `answer`."))
+    assert r.status is RunStatus.SUCCEEDED, r.error
+    assert r.structured_output == {"answer": 42}
+
+
+async def test_claude_session_started_comes_first(poisoned_cwd):
+    h = await dispatcher("claude", poisoned_cwd).start(Inputs(msg="Reply with the word hi."))
+    types = [e.type async for e in h.events()]
+    r = await h.wait()
+    assert r.status is RunStatus.SUCCEEDED, r.error
+    assert types.index("session.started") < types.index("run.finished") and h.session_id == r.session_id

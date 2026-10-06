@@ -51,6 +51,16 @@ spec = Spec(harness="claude", model="haiku", stack=stack, cwd="path/to/repo",
             credentials=Credentials.from_host("claude"))
 ```
 
+In async code, `d.run(...)` ties the run to a block: leaving it cancels a run that has not finished, and a harness
+whose caller dies is killed too (Windows Job Object, POSIX reaper).
+
+```python
+async with d.run(Inputs(msg="List the names of your skills.")) as handle:
+    async for ev in handle.events():
+        print(ev.type)                  # run.started, session.started, message, ..., run.finished
+    result = await handle.wait()
+```
+
 `session_id=` continues that harness session (the home is re-materialized from the current spec).
 `spawn()` blocks; in Jupyter or async code use `await d.start(inputs)`, then
 `async for ev in handle.events()` and `await handle.wait()` (see `examples/quickstart.ipynb`). A failed run does

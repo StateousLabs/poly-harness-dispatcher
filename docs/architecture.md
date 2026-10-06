@@ -29,6 +29,7 @@ src/phd/
     store.py           the store: index.json, identity hash, dedupe, locking, list/remove/prune
   spec/              what to run
     spec.py            Spec, Inputs
+    output_schema.py   output_schema checks, JSON extraction and validation (the only module that imports jsonschema)
     credentials.py     Credentials
     stack.py           Stack, HookDef
     placeholders.py    ${stack} / ${env:NAME} resolution
@@ -52,7 +53,16 @@ src/phd/
     handle.py          RunHandle
     process.py         HarnessProcess, child_env
     session_lock.py    SessionLock: one run at a time per run home
+    lifetime/          tie each harness to its caller (orphan protection)
+      __init__.py        Guard protocol, new_guard(), CREATE_SUSPENDED
+      windows_job.py     JobGuard: Job Object with kill-on-close; harness created suspended, assigned, resumed
+      reaper.py          ReaperGuard (POSIX): starts the reaper and tells it `exit` on a normal finish
+      reaper_main.py     the reaper process; stdlib only, imports nothing from phd
 ```
+
+PHD has **one runtime dependency**, `jsonschema`, imported only in `spec/output_schema.py`; everything else is the
+standard library. `_util` stays stdlib-only, and `lifetime/reaper_main.py` is a standalone script that imports
+nothing from `phd`.
 
 ## Dependency order and import rule
 

@@ -61,8 +61,6 @@ class Dispatcher:
 
         Raises:
             HookUnsupported: A stack hook cannot be expressed for this harness.
-            UnsupportedFeature: The spec uses a feature this harness lacks (opencode
-                `output_schema`).
             ModelNotSupported: `spec.model` is not in the harness catalogue.
             InvalidRunsRoot: codex with a `runs_root` under the system temp dir.
         """

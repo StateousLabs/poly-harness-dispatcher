@@ -54,13 +54,28 @@ Enforcement is after the fact: the step that crosses the budget has already been
 
 ## output_schema
 
-| Harness | Mechanism | `structured_output` comes from |
+A malformed schema raises `InvalidSpec` at `Spec(...)` (checked with `jsonschema`; the draft comes from the
+schema's `$schema`, default 2020-12).
+
+| Harness | How the schema reaches the model | `structured_output` comes from |
 |---|---|---|
 | claude | `--json-schema '<schema JSON>'` | the `structured_output` key of claude's `result` line; else `result_text` parsed as JSON |
-| codex | schema written to `home/output-schema.json`, `--output-schema <path>` (also on resume, from the resuming `Spec`) | `result_text` parsed as JSON (left `None` if not JSON) |
-| opencode | not supported | `UnsupportedFeature` at `Dispatcher(...)` |
+| codex | schema written to `home/output-schema.json`, `--output-schema <path>` (also on resume, from the resuming `Spec`) | `result_text` parsed as JSON |
+| opencode | an instruction appended to the system prompt (`AGENTS.md`, section `## Final answer format`) asking for only a JSON value matching the schema. OpenCode's native `format: json_schema` exists only in its SDK/server API, not in `opencode run` | `result_text` parsed as JSON |
 
-PHD does not validate the answer against the schema.
+**PHD validates the answer on every harness**, whatever the native mechanism, after the run's own error checks:
+
+- The answer is the harness's structured output if it gave one, else `result_text` parsed as JSON. Surrounding text
+  is not tolerated, but a single fenced code block (```` ```json ````) is.
+- Not JSON: `error.kind == "schema"`, message `final answer is not JSON`.
+- JSON that fails the schema: `kind == "schema"`, message `<json path>: <message>` (for example
+  `$.answer: 'x' is not of type 'integer'`), with secret values (`Spec.secrets`, the credential secret) scrubbed first
+  and then capped at 500 characters.
+- `RunResult.structured_output` keeps the parsed value even when it fails validation, so you can inspect it. It is
+  `None` only when no JSON could be extracted.
+- A `schema` error applies only when the run had no other error (it is the last rank in
+  [the precedence list](results-and-events.md#error-kinds-and-precedence)); status is `failed`.
+- With `Spec.schema_repair=True` PHD first tries one repair turn: see [Run lifecycle](run-lifecycle.md#schema-repair-turn).
 
 ## resumable × resume
 

@@ -5,7 +5,7 @@ quickstart notebook, running the test suite, and doing a dry run with `plan()`.
 
 ## 1. Install
 
-PHD needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). It has no runtime dependencies; the harness CLIs
+PHD needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Its one runtime dependency is `jsonschema` (installed for you); the harness CLIs
 you want to use must be installed separately and be on `PATH` (`claude`, `codex`, `opencode`).
 
 ```bash

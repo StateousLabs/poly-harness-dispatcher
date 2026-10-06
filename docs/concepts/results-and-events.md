@@ -20,13 +20,13 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `exit_code` | `int` or `None` | harness exit code (`None` only if PHD failed before it was known) |
 | `error` | `RunError` or `None` | `kind` + `message` ([below](#error-kinds-and-precedence)) |
 | `result_text` | `str` or `None` | final answer: claude `result`; codex last completed `agent_message`; opencode last `text` part |
-| `structured_output` | any | claude's `structured_output`; otherwise, when `Spec.output_schema` is set, `result_text` parsed as JSON (left `None` if it is not JSON) |
+| `structured_output` | any | claude's `structured_output`; otherwise, when `Spec.output_schema` is set, `result_text` parsed as JSON (a single fenced block is accepted). Kept even when it fails validation; `None` if no JSON could be extracted |
 | `cost_usd` | `float` or `None` | cost reported by the harness |
 | `cost_source` | `str` | [below](#cost_source) |
 | `usage` | `Usage` | `input_tokens` (includes cached), `cached_input_tokens`, `output_tokens`, `reasoning_tokens` |
 | `num_turns` | `int` or `None` | claude: reported; codex: count of `turn.completed`; opencode: count of `step_finish` |
 | `duration_ms` | `int` | from launch to result (monotonic clock) |
-| `session_id` | `str` or `None` | claude `session_id`; codex `thread_id`; opencode `sessionID` |
+| `session_id` | `str` or `None` | claude `session_id`; codex `thread_id`; opencode `sessionID` (also available live as `RunHandle.session_id`, see `session.started`) |
 | `resumable` | `bool` | a session id is known and the home is kept: `Spec.resumable` for a fresh run (`False` after the home was deleted); always kept on a resumed turn |
 | `resumed_from` | `str` or `None` | for a turn started with `session_id=`, the run the session was found in (the latest run of that session) |
 | `run_dir` | `str` | `<runs_root>/<run_id>` |
@@ -37,7 +37,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 | `started_at`, `finished_at` | `str` | ISO 8601, UTC (`+00:00`) |
 | `cli_version` | `str` or `None` | claude only (`claude_code_version` from the init event); `None` for codex and opencode |
 | `sandbox` | `None` | reserved for the sandbox layer; always `None` today |
-| `warnings` | `list[str]` | pre-launch warnings, `harness_config` conflicts, home-cleanup and sink failures |
+| `warnings` | `list[str]` | pre-launch warnings, `harness_config` conflicts, `orphan protection unavailable: ...`, `schema repair turn used`, `schema repair turn could not start: ...`, home-cleanup and sink failures |
 | `raw_final` | `dict` or `None` | claude `result` line; last codex `turn.completed`; last opencode `step_finish` |
 | `events_path` | `str` | `<run_dir>/events.jsonl` |
 | `stderr_path` | `str` | `<run_dir>/stderr.log` |
@@ -52,7 +52,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 |---|---|
 | `succeeded` | `error is None` |
 | `cancelled` | `error.kind == "cancelled"` |
-| `timed_out` | `error.kind == "timeout"` |
+| `timed_out` | `error.kind` is `timeout` or `idle_timeout` |
 | `budget_exceeded` | `error.kind == "budget"` |
 | `auth_failed` | `error.kind == "auth"` |
 | `failed` | any other error kind |
@@ -65,15 +65,17 @@ PHD picks **one** error, checking these in order; the first that applies wins:
 |---|---|---|---|
 | 1 | `cancelled` | `RunHandle.cancel()` was called | `run was cancelled` |
 | 2 | `timeout` | `timeout_s` elapsed | `no result within timeout_s=...` |
-| 3 | `budget` | PHD stopped the run on streamed cost | `cost ... exceeded budget_usd=...` |
-| 4 | `stream_overflow` | a stdout line exceeded 16 MiB | |
-| 5 | `phd_internal` | an exception inside PHD after launch | exception type and text |
-| 6 | parser error | the harness reported an error in its stream (classified below) | the harness's message |
-| 7 | `harness_crash` | exit code is not 0 | `exit code N; stderr: <last 2000 chars, secrets scrubbed>` |
-| 8 | `no_result` | exit code 0 but no final text and no final event | `harness exited without a final result` |
+| 3 | `idle_timeout` | no stdout line for `idle_timeout_s` | `no output for idle_timeout_s=<n>` |
+| 4 | `budget` | PHD stopped the run on streamed cost | `cost ... exceeded budget_usd=...` |
+| 5 | `stream_overflow` | a stdout line exceeded 16 MiB | |
+| 6 | `phd_internal` | an exception inside PHD after launch | exception type and text |
+| 7 | parser error | the harness reported an error in its stream (classified below) | the harness's message |
+| 8 | `harness_crash` | exit code is not 0 | `exit code N; stderr: <last 2000 chars, secrets scrubbed>` |
+| 9 | `no_result` | exit code 0 but no final text and no final event | `harness exited without a final result` |
+| 10 | `schema` | the run was otherwise fine but `Spec.output_schema` is set and the answer is not JSON or does not match | `final answer is not JSON`, or `<json path>: <message>` (scrubbed of secrets, capped at 500 characters); after a [repair turn](run-lifecycle.md#schema-repair-turn) prefixed `after one repair turn: ` |
 
 A run is `succeeded` only when none of these apply. A claude run whose final reported cost exceeds `budget_usd`
-gets `budget` (rank 3) even if claude itself finished normally.
+gets `budget` (rank 4) even if claude itself finished normally.
 
 **Parser error classification.** claude: the `result` line has `is_error` or a `subtype` starting with `error`
 (subtypes containing `budget` give `budget`). codex: a `turn.failed` or `error` event (a later
@@ -105,10 +107,12 @@ own events.
 | `type` | Emitted by | `data` |
 |---|---|---|
 | `run.started` | PHD, first | `{"argv": [...], "resumed_from": ...}` |
+| `session.started` | PHD | `{"session_id": ...}`: once per run, when the harness first reports its session id (a resumed turn: right after `run.started`) |
 | `message` | parser | `{"text": ...}` |
 | `tool_call` | parser | claude `{"tool", "input", "id"}`; codex and opencode `{"tool", "id", "status"}` |
 | `tool_result` | parser | claude `{"id", "is_error"}`; codex `{"tool", "id", "status"}` |
 | `usage` | parser | `Usage` fields so far + `"cost_usd"` |
+| `schema.repair` | PHD | `{"error": ...}`: the schema error that triggered the [repair turn](run-lifecycle.md#schema-repair-turn); emitted before the repair process starts |
 | `log` | PHD or parser | non-JSON stdout line: `{"text": line}`; parser warning: `{"text", "level": "warning"}`; unparsable event: `{"text": "unparsed <harness> event", "raw_type"}` |
 | `run.finished` | PHD, last | `{"status": "<status>"}` |
 
@@ -119,7 +123,7 @@ Per harness, which native stream items produce which events:
 
 | Native item | claude | codex | opencode |
 |---|---|---|---|
-| session start | `system` / `init`: no event (sets `session_id`, `cli_version`) | `thread.started`: no event (sets `session_id`) | `sessionID` on any event |
+| session start | `system` / `init`: sets `session_id`, `cli_version`; PHD emits `session.started` | `thread.started`: sets `session_id`; PHD emits `session.started` | `sessionID` on any event; PHD emits `session.started` on the first one |
 | assistant text | `assistant` text item → `message` | `item.completed` `agent_message` → `message` | `text` → `message` |
 | tool call | `assistant` `tool_use` item → `tool_call` | `item.started` of `command_execution`, `mcp_tool_call` (tool `mcp:<server>/<tool>`), `file_change`, `web_search` → `tool_call` | `tool_use` → `tool_call` |
 | tool result | `user` `tool_result` item → `tool_result` | `item.completed` of those types → `tool_result` | none |
@@ -135,7 +139,7 @@ again after the run finished yields nothing; read `events.jsonl` instead.
 | Value | Meaning |
 |---|---|
 | `harness` | the cost came from the harness: claude when the `result` line has `total_cost_usd`; opencode always (sum of `step_finish.cost`; `cost_usd` is `None` if no step finished, `0` for free models) |
-| `unknown` | no cost: always for codex; claude without `total_cost_usd`; PHD-internal failures |
+| `unknown` | no cost: always for codex; claude without `total_cost_usd`; PHD-internal failures; a run with a schema repair turn in which only one turn reported a cost |
 | `estimated` | reserved for a price table; never produced today |
 
 ## Ledger, ResultSink, phd.runs

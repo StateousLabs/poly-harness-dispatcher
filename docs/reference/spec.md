@@ -7,7 +7,7 @@ behaviour per harness: [Spec, Inputs, Credentials](../concepts/spec-and-inputs.m
 
 ### Spec
 
-`Spec(harness, model, stack, cwd, credentials, harness_config={}, project_config="ignore", autonomy="restricted", unsafe=False, secrets={}, timeout_s=1800.0, budget_usd=None, output_schema=None, resumable=True, harness_builtins=False)`
+`Spec(harness, model, stack, cwd, credentials, harness_config={}, project_config="ignore", autonomy="restricted", unsafe=False, secrets={}, timeout_s=1800.0, budget_usd=None, output_schema=None, resumable=True, harness_builtins=False, idle_timeout_s=None, schema_repair=False)`
 Mutable dataclass describing what runs, where and how; validates everything in its constructor.
 
 ### Inputs

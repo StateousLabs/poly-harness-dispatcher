@@ -1,8 +1,9 @@
 # Run lifecycle
 
 This page follows one run from `Dispatcher(...)` to the ledger: validation, planning, materialization, launch,
-stream parsing, result and sinks; the run-directory layout; the resume flow and what must persist for it; and how
-cancel, timeout, budget, stream overflow and interrupts end a run.
+stream parsing, result and sinks; the run-directory layout; the resume flow and what must persist for it; how
+cancel, timeout, idle timeout, budget, stream overflow and interrupts end a run; how a harness is tied to its caller
+(orphan protection); and the optional schema repair turn.
 
 ## Overview
 
@@ -24,16 +25,21 @@ sequenceDiagram
     M->>M: mkdir home/, copy stack → home/stack/, assemble prompt
     M->>M: adapter writes config files, returns argv + env
     D->>L: write run.json (env redacted)
-    D->>P: resolve argv[0] on PATH, start (own process group), write prompt to stdin
+    D->>P: resolve argv[0] on PATH, start (own process group), attach the lifetime guard, write prompt to stdin
     D->>H: create pump task, return RunHandle
     H->>H: emit run.started
-    loop each stdout line (within timeout_s)
+    loop each stdout line (within timeout_s; idle_timeout_s resets on each line)
         P-->>H: line
         H->>H: JSON → parser.feed → events (events.jsonl + queue)
+        H->>H: first session id → emit session.started (once)
         H->>H: running cost > budget_usd? → kill tree
     end
     P-->>H: exit code
-    H->>H: build RunResult, emit run.finished
+    H->>H: build RunResult (output_schema checked here)
+    opt schema error and Spec.schema_repair
+        H->>P: one resumed repair turn (same run)
+    end
+    H->>H: emit run.finished
     H->>H: resumable=False → delete home/
     H->>L: put(result) → result.json
     H->>H: extra sinks put(result)
@@ -47,13 +53,57 @@ sequenceDiagram
 | 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, output_schema, warnings), model catalogue, codex temp `runs_root` | `execution/dispatcher.py` | `HookUnsupported`, `UnsupportedFeature`, `ModelNotSupported`, `InvalidRunsRoot` |
 | 2 | **Plan**: with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
 | 3 | **Materialize**: create `home/` (or, [resuming](#resume), clear the PHD-owned paths of the session's home), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
-| 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background | `RunHandle.launch`, `execution/process.py` | `HarnessNotInstalled` |
+| 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background; attach the [orphan-protection](#orphan-protection) guard | `RunHandle.launch`, `execution/process.py`, `execution/lifetime/` | `HarnessNotInstalled` |
 | 5 | **Stream / parse**: read stdout line by line; non-JSON lines become `log` events; JSON objects go to the harness parser, which yields normalized events and accumulates the outcome; stderr is copied to `stderr.log` | `RunHandle._consume` | never (data) |
-| 6 | **Result**: decide the error (precedence below), build `RunResult`, emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result` | never (data) |
+| 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result`, `_repair` | never (data) |
 | 7 | **Sinks**: `LocalLedger.put` writes `result.json` atomically, then each extra sink | `RunHandle._pump` | never: sink errors become warnings |
 
 `plan(inputs)` runs steps 2 and 3 only. Note that a `HarnessNotInstalled` at step 4 leaves a run directory with
 `run.json` and `home/` but no `result.json`.
+
+## Using a run: `run()` vs `start()`
+
+Both launch the same way and return a `RunHandle`; they differ in who ends the run.
+
+```python
+# run(): leaving the block ends the run
+async with d.run(inputs) as handle:
+    async for ev in handle.events():
+        print(ev.type)
+    result = await handle.wait()
+
+# start(): you own the handle; wait() or cancel() it yourself
+handle = await d.start(inputs)
+result = await handle.wait()
+```
+
+| | `await d.start(inputs)` | `async with d.run(inputs) as handle` |
+|---|---|---|
+| returns | a `RunHandle` | a `RunHandle` (same object) |
+| leaving the scope | nothing happens; the run continues until it finishes or you `cancel()` it | a run that has not finished is cancelled (status `cancelled`, tree killed, result in the ledger) |
+| exception or task cancellation in the block | the run keeps going | the run is cancelled, then the exception continues |
+| `wait()` | shielded: cancelling the awaiting task does not stop the run | the same, but the block's exit cancels the run anyway |
+
+On exit `run()` issues the kill first and then **awaits** the run until it has finished (the harness is dead and the
+result recorded) before the exception continues. If the awaiting task is cancelled again while it waits, `run()`
+keeps waiting (the kill is already issued, so the wait is bounded) and re-raises `asyncio.CancelledError` once the
+cancelled run has finished. `handle.done` is `True` once the result exists. Errors raised before launch
+(`start`'s list) are raised on entering the block.
+
+### Session id and `session.started`
+
+`RunHandle.session_id` is `None` until the harness reports its session id; then it is set and PHD emits one
+`session.started` event (`{"session_id": ...}`), exactly once per run. For a resumed turn (`session_id=` given) the
+id is known before launch: `RunHandle.session_id` is set at once and `session.started` is emitted right after
+`run.started`. The same id ends up in `RunResult.session_id`; a repair turn does not emit it again.
+
+### Idle timeout
+
+`Spec.idle_timeout_s` (default `None`, off) ends a run whose harness prints no stdout line for that many seconds:
+the tree is killed and the result has `error.kind == "idle_timeout"`, message `no output for idle_timeout_s=<n>`,
+status `timed_out`. The timer restarts on **every** stdout line (blank and non-JSON lines included). It is
+independent of `timeout_s`, which still bounds the whole run. Claude and codex print nothing while a tool runs, so
+set `idle_timeout_s` above your longest expected tool call; a lower value kills healthy runs.
 
 ## Run directory
 
@@ -180,9 +230,11 @@ Hooks on a resumed turn log to the **new** run: `shim_config.json` is rewritten,
 | harness exits normally | waits for exit, builds the result from the parser outcome | none → `succeeded`, or the parser's error |
 | `await handle.cancel()` | sets a flag, kills the process tree, waits | `cancelled` / `cancelled` |
 | `timeout_s` elapses (measured from the start of streaming; covers the stdin write) | kills the tree, waits | `timeout` / `timed_out` |
+| no stdout line for `idle_timeout_s` | kills the tree, waits | `idle_timeout` / `timed_out` |
 | streamed cost > `budget_usd` | kills the tree as soon as the parser's running cost exceeds the budget (opencode: after any `step_finish`; claude: only at its final `result` line, since that is where it reports cost) | `budget` / `budget_exceeded` |
 | a stdout line longer than 16 MiB | marks overflow, kills the tree | `stream_overflow` / `failed` |
 | an exception inside PHD while streaming or building the result | kills the tree, still returns a (minimal) result | `phd_internal` / `failed` |
+| the answer does not match `output_schema` (and no other error applies) | none, or one [repair turn](#schema-repair-turn) if `schema_repair=True` | `schema` / `failed` |
 | the pump task is cancelled or interrupted (`KeyboardInterrupt`, `asyncio.CancelledError`, e.g. Ctrl-C during `spawn()`) | kills the tree if still running and re-raises; **no result is built and no `result.json` is written** | none |
 
 Precedence when several apply is listed in [Results and events](results-and-events.md#error-kinds-and-precedence).
@@ -191,16 +243,68 @@ Precedence when several apply is listed in [Results and events](results-and-even
 ## Process-tree kill
 
 The harness is started in its own process group so the whole tree (the CLI, its MCP servers, shell commands) can
-be killed.
+be killed by `cancel()`, `timeout_s`, `idle_timeout_s`, budget or stream overflow.
 
 | | Windows | POSIX |
 |---|---|---|
-| start | `CREATE_NEW_PROCESS_GROUP` | `start_new_session=True` |
-| kill | `taskkill /PID <pid> /T /F`; if that fails and the process still runs, `Process.kill()` | `os.killpg(pid, SIGKILL)` |
-| limitation | if the direct child has already exited, `taskkill` cannot walk its tree, so surviving descendants are orphaned (a Job Object would fix this; not implemented) | none known |
+| start | `CREATE_NEW_PROCESS_GROUP`, created suspended and put in a Job Object before it runs | `start_new_session=True`, then a reaper process is started |
+| kill | `TerminateJobObject`: reaches every process in the job, including orphaned descendants. Without a job (protection unavailable): `taskkill /PID <pid> /T /F`, then `Process.kill()` if that failed | `os.killpg(pid, SIGKILL)` |
 
 Waiting for exit polls the return code every 50 ms instead of `Process.wait()`, because a descendant that still
 holds stdout/stderr open would otherwise hang the wait; the stderr copier then gets up to 5 s to finish.
+
+## Orphan protection
+
+Killing on cancel or timeout needs PHD to be alive. Orphan protection covers the other case: **the caller dies**
+(crash, `kill -9`, closed terminal) and must not leave an agent running. Each platform uses a different mechanism,
+and they are not equivalent.
+
+| | Windows | POSIX |
+|---|---|---|
+| mechanism | a Job Object with kill-on-close | a small reaper process (`execution/lifetime/reaper_main.py`, stdlib only) |
+| when the caller dies | the OS closes PHD's job handle and kills every process in the job | the reaper sees EOF on its stdin and sends `SIGKILL` to the harness's process group |
+| setup | the harness is created **suspended**, assigned to the job, then resumed: there is no window in which it runs unprotected | the reaper starts right **after** the harness, so there is a short window before it is up |
+| `cancel()` / timeouts | terminate the job, reaching orphaned descendants | `killpg` on the harness's group |
+| normal finish | the job is closed as soon as the harness exits, **before** the stderr grace period, so leftover descendants (for example a background process a tool left running) are killed at once | PHD tells the reaper `exit` and it leaves quietly; background processes a tool left running are **not** killed (the reaper acts only if the caller dies) |
+| escape | children that ask to break away from the job are refused | descendants that start their own session (`setsid`) leave the harness's process group and escape the reaper |
+
+POSIX details: the reaper runs in its own session (a terminal Ctrl+C aimed at the caller's group must not take it
+too) and reads its stdin: a line `exit` means "the run ended normally" (leave quietly), EOF without it means "the
+caller died". It also exits by itself once the harness's group is gone. PHD reaps the reaper in a background thread,
+so finishing a run never blocks the event loop.
+
+**When protection cannot be set up** the run continues, unprotected, and `RunResult.warnings` gets
+`orphan protection unavailable: <Type>: <msg>` (on POSIX: `orphan protection unavailable: reaper did not start
+(<Type>: <msg>)`). Two cases are handled differently:
+
+- If the guard crashes outright, `start()` kills the harness and raises, so a harness is never left running that
+  nothing owns.
+- On Windows, a suspended harness that cannot be resumed is terminated and the run fails; the reason is in
+  `warnings`.
+
+## Schema repair turn
+
+With `Spec.output_schema` and `Spec.schema_repair=True`, a run whose answer fails the schema check
+(`error.kind == "schema"`) gets **one** more turn in the same run: PHD emits a `schema.repair` event
+(`{"error": ...}`) and resumes the harness session with the prompt `Your final answer did not match the required
+JSON Schema: <error>. Reply with only the corrected JSON.`
+
+- The repair turn is a second process of the **same run**: same `run_id`, run directory, `events.jsonl` and
+  `RunResult`. It is not a new run and emits no second `session.started`.
+- It shares the run's limits: the same `timeout_s` deadline, `idle_timeout_s` per turn, and the budget. Claude's
+  repair process gets `--max-budget-usd` set to the **remaining** budget (`budget_usd` minus what the first turn
+  cost); streamed-cost enforcement (opencode) counts the first turn's cost too. If nothing remains, no repair runs
+  and the first result is returned.
+- It is skipped when the run was cancelled, or when the first turn reported no session id.
+- Cost, usage and turns are **summed** over both turns. If only one turn reports a cost, `cost_source` is
+  `"unknown"` (a sum would undercount).
+- The result gets the warning `schema repair turn used`. If the repaired answer still fails, the error is a
+  `schema` error whose message starts with `after one repair turn: `. Any other failure of the repair turn
+  (timeout, crash) is reported as usual.
+- If the repair process cannot be started, the first turn's result is kept with the warning
+  `schema repair turn could not start: <Type>: <msg>`.
+
+Messages and per-harness mechanisms: [Option combinations](combinations.md#output_schema).
 
 ## Host environment stripping
 

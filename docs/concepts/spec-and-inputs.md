@@ -10,7 +10,7 @@ run; **`Credentials`** is how that run authenticates; the **`Stack`** ([Stacks](
 
 `Spec` is a mutable dataclass that validates everything in its constructor, in this order:
 harness, model, cwd, project_config, autonomy, unsafe, credentials, harness_builtins, timeout_s, budget_usd,
-stack compatibility, secrets.
+idle_timeout_s, schema_repair, output_schema, stack compatibility, secrets.
 
 | Field | Type | Default | Validation (exception) | Effect |
 |---|---|---|---|---|
@@ -26,7 +26,9 @@ stack compatibility, secrets.
 | `secrets` | `dict[str, str]` | `{}` | every `${env:NAME}` in the stack's `.mcp.json` and hook commands must have a key (`MissingSecret`) | substituted into MCP / hook config; scrubbed from the crash stderr tail; hidden from `repr()` |
 | `timeout_s` | `float` | `1800.0` | `> 0` (`InvalidSpec`) | wall-clock limit from process start; on expiry the tree is killed, status `timed_out` |
 | `budget_usd` | `float or None` | `None` | `> 0` when set (`InvalidSpec`) | claude `--max-budget-usd` + PHD check; opencode PHD check; codex warning only. See [combinations](combinations.md#budget-enforcement) |
-| `output_schema` | `dict or None` | `None` | opencode: `UnsupportedFeature` at `Dispatcher(...)` | claude `--json-schema '<json>'`; codex `--output-schema home/output-schema.json` |
+| `idle_timeout_s` | `float or None` | `None` | a positive number when set (`InvalidSpec`) | kill the run when the harness prints no stdout line for this long: `idle_timeout`, status `timed_out`. Claude and codex are silent during tool calls: set it above your longest tool call. See [Run lifecycle](run-lifecycle.md#idle-timeout) |
+| `output_schema` | `dict or None` | `None` | a dict that is a valid JSON Schema (`InvalidSpec`) | claude `--json-schema '<json>'`; codex `--output-schema home/output-schema.json`; opencode: an instruction in `AGENTS.md`. PHD validates the answer on every harness (error kind `schema`). See [combinations](combinations.md#output_schema) |
+| `schema_repair` | `bool` | `False` | must be a real `bool` (`InvalidSpec`) | with `output_schema`: on a schema error, resume the session once and ask for a corrected answer. See [Run lifecycle](run-lifecycle.md#schema-repair-turn) |
 | `resumable` | `bool` | `True` | none | `False`: the run home is deleted after the result is built, so the session cannot be resumed (a resumed turn never deletes the shared home) |
 | `harness_builtins` | `bool` | `False` | must be a real `bool` (`InvalidSpec`) | `False` suppresses the harness's bundled skills/plugins; see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) |
 

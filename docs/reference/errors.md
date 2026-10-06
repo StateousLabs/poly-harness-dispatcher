@@ -27,8 +27,8 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `MissingSecret` | `${env:NAME}` without `Spec.secrets["NAME"]` |
 | `MissingCredentials` | credentials missing, unreadable, for another harness, or of an unusable kind |
 | `UnsafeAutonomy` | `autonomy="full"` without `unsafe=True` |
-| `UnsupportedFeature` | feature unsupported by the harness (opencode `output_schema`); `Inputs.rules` on a resumed turn |
-| `InvalidSpec` | invalid `Spec` field value |
+| `UnsupportedFeature` | `Inputs.rules` on a resumed turn (rules are part of the session's system prompt) |
+| `InvalidSpec` | invalid `Spec` field value, including a malformed `output_schema` and a bad `idle_timeout_s` / `schema_repair` |
 | `InvalidRunsRoot` | codex `runs_root` under the system temp dir |
 | `NotResumable` | a `session_id` cannot be continued (no run has it, other harness, home gone, other `cwd`) |
 | `ModelNotSupported(harness, model, supported, hint=None)` | model not in the catalogue; attributes `harness`, `model`, `supported`, `hint` |

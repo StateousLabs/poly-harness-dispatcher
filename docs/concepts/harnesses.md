@@ -237,7 +237,9 @@ step finished). Because cost streams, PHD stops the run as soon as it exceeds `b
 
 **Quirks**
 
-- `output_schema` is not supported: `UnsupportedFeature` at `Dispatcher(...)`.
+- `output_schema` has no native flag in `opencode run` (its `format: json_schema` exists only in the SDK/server API):
+  PHD appends an instruction to the system prompt (`AGENTS.md`) and validates the answer itself, like for every
+  harness ([combinations](combinations.md#output_schema)).
 - Only `pre_tool` and `post_tool` hooks; `session_start` / `stop` raise `HookUnsupported`.
 - `customize-opencode` is hardcoded with no off switch; the permission deny removes it from the model's skill list,
   but `opencode debug skill` still lists it.
