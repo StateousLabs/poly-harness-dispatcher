@@ -23,28 +23,29 @@ def _group_alive(pgid: int) -> bool:
 
 def main() -> int:
     pgid = int(sys.argv[1])
-    told_exit, eof = threading.Event(), threading.Event()
+    done = threading.Event()
+    reason: list[str] = []  # "exit" or "eof", appended once by the reader just before `done` is set
 
     def read() -> None:
         for line in sys.stdin:
             if line.strip() == "exit":
-                told_exit.set()
+                reason.append("exit")
+                done.set()
                 return
-        eof.set()
+        reason.append("eof")
+        done.set()
 
     threading.Thread(target=read, daemon=True).start()
-    while not told_exit.is_set():
-        if eof.wait(timeout=1.0):
-            if told_exit.is_set():
-                break
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+    while True:
+        if done.wait(timeout=1.0):  # wakes at once on "exit" or EOF
+            if reason[0] == "eof":
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
             return 0
         if not _group_alive(pgid):
             return 0
-    return 0
 
 
 if __name__ == "__main__":

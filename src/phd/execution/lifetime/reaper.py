@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("reaper_main.py")
@@ -21,8 +22,8 @@ class ReaperGuard:
             self._proc = subprocess.Popen([sys.executable, "-I", str(SCRIPT), str(pid)], stdin=subprocess.PIPE,
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                           start_new_session=True, env={"PATH": os.environ.get("PATH", "")})
-        except OSError as e:
-            self.warning = f"orphan protection unavailable: reaper did not start ({e})"
+        except Exception as e:
+            self.warning = f"orphan protection unavailable: reaper did not start ({type(e).__name__}: {e})"
 
     def kill(self) -> bool:
         return False  # PHD kills the group itself (killpg); the reaper only covers PHD's own death
@@ -33,10 +34,19 @@ class ReaperGuard:
             return
         try:
             proc.stdin.write(b"exit\n")
+        except OSError:
+            pass  # the reaper already left (its group was gone)
+        try:
             proc.stdin.close()
         except OSError:
             pass
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        # Reap off the event loop: release() runs on every run end and must not block.
+        threading.Thread(target=_reap, args=(proc,), name="phd-reaper-reap", daemon=True).start()
+
+
+def _reap(proc: subprocess.Popen) -> None:
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()

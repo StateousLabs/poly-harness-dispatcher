@@ -40,8 +40,14 @@ class HarnessProcess:
         self.proc = await asyncio.create_subprocess_exec(
             *self.argv, cwd=self.cwd, env=self.env, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=STREAM_LIMIT, **group)
-        self.guard = lifetime.new_guard()
-        self.guard.attach(self.proc.pid)  # on Windows this also resumes the suspended harness
+        try:
+            self.guard = lifetime.new_guard()
+            self.guard.attach(self.proc.pid)  # on Windows this also resumes the suspended harness
+        except BaseException:
+            # Never leak a harness. It has spawned nothing yet (on Windows it is still suspended),
+            # so killing the one process is enough.
+            self.proc.kill()
+            raise
         self._stderr_task = asyncio.create_task(self._copy_stderr())
         # The prompt is written in the background: a harness that never reads stdin must not block
         # start() (and so escape timeout_s).
@@ -76,6 +82,7 @@ class HarnessProcess:
         # holding stdout/stderr would hang it; poll the transport's returncode instead.
         while self.proc.returncode is None:
             await asyncio.sleep(0.05)
+        self.close()  # at once: the job ends orphaned descendants without waiting for the stderr grace
         code = self.proc.returncode
         if self._stdin_task is not None and not self._stdin_task.done():
             self._stdin_task.cancel()  # the process is gone; a pending write can never finish

@@ -41,22 +41,41 @@ def _kernel32():
     k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     k.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     k.CloseHandle.argtypes = [wintypes.HANDLE]
     return k
 
 
 def resume(pid: int) -> None:
-    """Resume a process created with CREATE_SUSPENDED (ntdll's NtResumeProcess)."""
+    """Resume a process created with CREATE_SUSPENDED (ntdll's NtResumeProcess). Raises OSError on failure."""
     k = _kernel32()
     handle = k.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
     if not handle:
-        return
+        raise ctypes.WinError(ctypes.get_last_error())
     try:
         ntdll = ctypes.WinDLL("ntdll")
         ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
-        ntdll.NtResumeProcess(handle)
+        ntdll.NtResumeProcess.restype = ctypes.c_long  # NTSTATUS
+        status = ntdll.NtResumeProcess(handle)
+        if status != 0:
+            raise OSError(f"NtResumeProcess failed with NTSTATUS 0x{status & 0xFFFFFFFF:08X}")
     finally:
         k.CloseHandle(handle)
+
+
+def _terminate(pid: int) -> None:
+    """Best-effort TerminateProcess (works on a suspended process too)."""
+    k = _kernel32()
+    handle = k.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if handle:
+        try:
+            k.TerminateProcess(handle, 1)
+        finally:
+            k.CloseHandle(handle)
+
+
+def _describe(e: BaseException) -> str:
+    return f"orphan protection unavailable: {type(e).__name__}: {e}"
 
 
 class JobGuard:
@@ -67,10 +86,15 @@ class JobGuard:
     def attach(self, pid: int) -> None:
         try:
             self._job = self._assign(pid)
-        except OSError as e:
-            self.warning = f"orphan protection unavailable: {e}"
-        finally:
-            resume(pid)  # created suspended: it must run whether or not the job worked
+        except Exception as e:
+            self.warning = _describe(e)
+        # Created suspended: it must run whether or not the job worked. A harness that cannot be
+        # resumed would only hang until timeout_s, so it is terminated instead.
+        try:
+            resume(pid)
+        except Exception as e:
+            self.warning = _describe(e)
+            _terminate(pid)
 
     def _assign(self, pid: int):
         k = _kernel32()
@@ -87,7 +111,7 @@ class JobGuard:
             proc = k.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
             if not proc or not k.AssignProcessToJobObject(job, proc):
                 raise ctypes.WinError(ctypes.get_last_error())
-        except OSError:
+        except BaseException:
             k.CloseHandle(job)
             raise
         finally:
