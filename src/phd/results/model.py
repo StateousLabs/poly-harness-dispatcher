@@ -11,7 +11,7 @@ class RunStatus(StrEnum):
     """Overall outcome of a run. Derived from `RunResult.error`.
 
     `SUCCEEDED` when there is no error; `CANCELLED`, `TIMED_OUT`, `BUDGET_EXCEEDED` and
-    `AUTH_FAILED` for error kinds `cancelled`, `timeout` / `idle_timeout`, `budget` and `auth`; `FAILED` for
+    `AUTH_FAILED` for error kinds `cancelled`, `timeout` / `idle`, `budget` and `auth`; `FAILED` for
     every other error kind. Members compare equal to their string values.
     """
 
@@ -48,23 +48,32 @@ class Usage:
         self.reasoning_tokens += other.reasoning_tokens
 
 
+# Every error kind, in the order PHD picks one (first that applies wins). `session` sits with the kinds the
+# harness stream reports (it is also raised before launch for a session that cannot be resumed). Stable:
+# kinds may be added, never renamed or removed.
+ERROR_KINDS: tuple[str, ...] = (
+    "cancelled", "timeout", "idle", "budget", "stream_overflow", "phd_internal", "session", "auth", "billing",
+    "model_unavailable", "harness_error", "harness_crash", "no_result", "schema")
+
+
 @dataclass
 class RunError:
     """Why a run did not succeed.
 
     Attributes:
-        kind: One of `cancelled`, `timeout`, `idle_timeout`, `schema`, `budget`, `stream_overflow`, `phd_internal`,
-            `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`,
-            `no_result`. See `docs/concepts/results-and-events.md` for precedence.
+        kind: One of `ERROR_KINDS`: `cancelled`, `timeout`, `idle`, `budget`, `stream_overflow`, `phd_internal`,
+            `session`, `auth`, `billing`, `model_unavailable`, `harness_error`, `harness_crash`, `no_result`,
+            `schema`. The kinds are a stable contract (new ones may be added, none renamed or removed); read
+            `kind`, never `message`. See `docs/concepts/results-and-events.md` for precedence.
         message: Human-readable detail (harness message, or exit code plus scrubbed stderr tail).
     """
 
-    kind: str  # auth | model_unavailable | billing | budget | timeout | idle_timeout | schema | cancelled | harness_error | harness_crash | no_result | phd_internal
+    kind: str  # one of ERROR_KINDS
     message: str
 
 
 _STATUS_BY_KIND = {"cancelled": RunStatus.CANCELLED, "timeout": RunStatus.TIMED_OUT,
-                   "idle_timeout": RunStatus.TIMED_OUT, "budget": RunStatus.BUDGET_EXCEEDED,
+                   "idle": RunStatus.TIMED_OUT, "budget": RunStatus.BUDGET_EXCEEDED,
                    "auth": RunStatus.AUTH_FAILED}
 
 

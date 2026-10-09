@@ -46,7 +46,7 @@ harness lines and `log` events), `result.run_dir/run.json` (exact argv, redacted
 | `billing` (`failed`) | out of credit (for example opencode `402 Insufficient account funds`) | top up or use another model / provider |
 | `budget` (`budget_exceeded`) | this turn's cost passed `budget_usd` (for claude on a resumed turn: its cumulative figure minus the session's earlier cost) | raise the budget; `cost_usd` shows what this run spent, `session_cost_usd` (claude) the whole session |
 | `timeout` (`timed_out`) | `timeout_s` elapsed | the last events in `events.jsonl`; a tool waiting for input; raise `timeout_s` |
-| `idle_timeout` (`timed_out`) | the harness printed nothing for `idle_timeout_s` | claude and codex print nothing while a tool runs, so a long build or test trips a small value: set `idle_timeout_s` above your longest tool call (or leave it unset and rely on `timeout_s`); `events.jsonl` shows the last event before the silence |
+| `idle` (`timed_out`) | the harness printed nothing for `idle_timeout_s` | claude and codex print nothing while a tool runs, so a long build or test trips a small value: set `idle_timeout_s` above your longest tool call (or leave it unset and rely on `timeout_s`); `events.jsonl` shows the last event before the silence |
 | `schema` (`failed`) | the answer is not JSON (`final answer is not JSON`) or does not match `output_schema` (`<json path>: <message>`, secrets scrubbed, at most 500 characters) | `result.structured_output` holds the parsed value if there was one, and `result_text` the raw answer; the message names the failing path. Make the schema or prompt clearer, or set `schema_repair=True` for one corrected turn (then the message starts with `after one repair turn: ` if it still fails, and `warnings` has `schema repair turn used`) |
 | `cancelled` (`cancelled`) | `cancel()` was called | |
 | `harness_crash` (`failed`) | non-zero exit with no error in the stream | `error.message` has the last 2000 characters of stderr (secrets scrubbed); full text in `stderr.log` |
@@ -54,6 +54,7 @@ harness lines and `log` events), `result.run_dir/run.json` (exact argv, redacted
 | `no_result` (`failed`) | exit 0 without a final answer or final event | `events.jsonl` (did the stream format change?), `stderr.log` |
 | `stream_overflow` (`failed`) | a stdout line over 16 MiB | very large tool results |
 | `phd_internal` (`failed`) | an exception inside PHD after launch | `error.message` has the exception; please report it |
+| `session` (`failed`) | the `session_id` you asked to resume cannot be resumed (unknown, another harness or `cwd`, home gone, not resumable), or the harness reports that the session no longer exists | start a fresh session; resume only with the same harness, `runs_root` and `cwd`, and keep `resumable=True` on the run that starts a session |
 
 Other symptoms:
 

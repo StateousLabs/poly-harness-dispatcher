@@ -392,7 +392,7 @@ class RunHandle:
         elif t.timed_out:
             error = RunError("timeout", f"no result within timeout_s={spec.timeout_s}")
         elif t.idle_hit:
-            error = RunError("idle_timeout", f"no output for idle_timeout_s={spec.idle_timeout_s:g}")
+            error = RunError("idle", f"no output for idle_timeout_s={spec.idle_timeout_s:g}")
         elif t.budget_hit:
             error = RunError("budget", f"cost {o.cost_usd} exceeded budget_usd={spec.budget_usd}")
         elif self._proc.overflowed:

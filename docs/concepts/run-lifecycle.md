@@ -108,7 +108,7 @@ id is known before launch: `RunHandle.session_id` is set at once and `session.st
 ### Idle timeout
 
 `Spec.idle_timeout_s` (default `None`, off) ends a run whose harness prints no stdout line for that many seconds:
-the tree is killed and the result has `error.kind == "idle_timeout"`, message `no output for idle_timeout_s=<n>`,
+the tree is killed and the result has `error.kind == "idle"`, message `no output for idle_timeout_s=<n>`,
 status `timed_out`. The timer restarts on **every** stdout line (blank and non-JSON lines included). It is
 independent of `timeout_s`, which still bounds the whole run. Claude and codex print nothing while a tool runs, so
 set `idle_timeout_s` above your longest expected tool call; a lower value kills healthy runs.
@@ -245,7 +245,7 @@ Hooks on a resumed turn log to the **new** run: `shim_config.json` is rewritten,
 | harness exits normally | waits for exit, builds the result from the parser outcome | none → `succeeded`, or the parser's error |
 | `await handle.cancel()` | sets a flag, kills the process tree, waits | `cancelled` / `cancelled` |
 | `timeout_s` elapses (measured from the start of streaming; covers the stdin write) | kills the tree, waits | `timeout` / `timed_out` |
-| no stdout line for `idle_timeout_s` | kills the tree, waits | `idle_timeout` / `timed_out` |
+| no stdout line for `idle_timeout_s` | kills the tree, waits | `idle` / `timed_out` |
 | streamed cost > `budget_usd` | kills the tree as soon as the parser's running cost exceeds the budget (opencode: after any `step_finish`; claude: only at its final `result` line, since that is where it reports cost) | `budget` / `budget_exceeded` |
 | a stdout line longer than 16 MiB | marks overflow, kills the tree | `stream_overflow` / `failed` |
 | an exception inside PHD while streaming or building the result | kills the tree, still returns a (minimal) result | `phd_internal` / `failed` |

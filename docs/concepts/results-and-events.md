@@ -53,7 +53,7 @@ exception is an interrupted pump task (see [Run lifecycle](run-lifecycle.md#how-
 |---|---|
 | `succeeded` | `error is None` |
 | `cancelled` | `error.kind == "cancelled"` |
-| `timed_out` | `error.kind` is `timeout` or `idle_timeout` |
+| `timed_out` | `error.kind` is `timeout` or `idle` |
 | `budget_exceeded` | `error.kind == "budget"` |
 | `auth_failed` | `error.kind == "auth"` |
 | `failed` | any other error kind |
@@ -66,14 +66,19 @@ PHD picks **one** error, checking these in order; the first that applies wins:
 |---|---|---|---|
 | 1 | `cancelled` | `RunHandle.cancel()` was called | `run was cancelled` |
 | 2 | `timeout` | `timeout_s` elapsed | `no result within timeout_s=...` |
-| 3 | `idle_timeout` | no stdout line for `idle_timeout_s` | `no output for idle_timeout_s=<n>` |
+| 3 | `idle` | no stdout line for `idle_timeout_s` | `no output for idle_timeout_s=<n>` |
 | 4 | `budget` | PHD stopped the run on streamed cost | `cost ... exceeded budget_usd=...` |
 | 5 | `stream_overflow` | a stdout line exceeded 16 MiB | |
 | 6 | `phd_internal` | an exception inside PHD after launch | exception type and text |
-| 7 | parser error | the harness reported an error in its stream (classified below) | the harness's message |
+| 7 | `session` or parser error | the `session_id` cannot be resumed (reported before launch), or the harness reported that the session no longer exists; otherwise the harness reported an error in its stream (classified below) | what cannot be resumed, or the harness's message |
 | 8 | `harness_crash` | exit code is not 0 | `exit code N; stderr: <last 2000 chars, secrets scrubbed>` |
 | 9 | `no_result` | exit code 0 but no final text and no final event | `harness exited without a final result` |
 | 10 | `schema` | the run was otherwise fine but `Spec.output_schema` is set and the answer is not JSON or does not match | `final answer is not JSON`, or `<json path>: <message>` (scrubbed of secrets, capped at 500 characters); after a [repair turn](run-lifecycle.md#schema-repair-turn) prefixed `after one repair turn: ` |
+
+!!! note "Stable contract"
+    The error kinds (`phd.ERROR_KINDS`, listed in precedence order) and the statuses are a stable public contract:
+    new kinds may be added, existing ones are never renamed or removed. Branch on `error.kind`, never on
+    `error.message`. `session` maps to status `failed`.
 
 A run is `succeeded` only when none of these apply. A claude run whose final reported cost exceeds `budget_usd`
 gets `budget` (rank 4) even if claude itself finished normally.

@@ -26,8 +26,8 @@ lower-case strings). Derived from `RunResult.error.kind`.
 
 ### RunError
 
-`RunError(kind, message)`: why a run did not succeed. Kinds: `cancelled`, `timeout`, `idle_timeout`, `schema`, `budget`, `stream_overflow`,
-`phd_internal`, `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`, `no_result`.
+`RunError(kind, message)`: why a run did not succeed. Kinds: `cancelled`, `timeout`, `idle`, `schema`, `budget`, `stream_overflow`,
+`phd_internal`, `session`, `auth`, `model_unavailable`, `billing`, `harness_error`, `harness_crash`, `no_result`.
 
 ### Usage
 

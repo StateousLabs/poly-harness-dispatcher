@@ -110,7 +110,7 @@ async def test_resumed_turn_announces_its_session_at_once(tmp_path, monkeypatch,
 def test_idle_limit_stops_a_silent_run(tmp_path, slow, make_spec):
     t0 = time.monotonic()
     r = dispatcher(make_spec("claude", idle_timeout_s=1), tmp_path).spawn(Inputs(msg="x"))
-    assert r.status is RunStatus.TIMED_OUT and r.error.kind == "idle_timeout"
+    assert r.status is RunStatus.TIMED_OUT and r.error.kind == "idle"
     assert r.error.message == "no output for idle_timeout_s=1" and time.monotonic() - t0 < 20
 
 

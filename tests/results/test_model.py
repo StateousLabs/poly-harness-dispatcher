@@ -28,7 +28,7 @@ def test_run_result_round_trip():
 
 
 def test_new_error_kinds_map_to_statuses():
-    assert decide_status(RunError("idle_timeout", "x")) is RunStatus.TIMED_OUT
+    assert decide_status(RunError("timeout", "x")) is RunStatus.TIMED_OUT
     assert decide_status(RunError("schema", "x")) is RunStatus.FAILED
 
 
@@ -45,3 +45,25 @@ def test_old_records_without_session_cost_still_load():
     assert d["session_cost_usd"] == 0.03 and RunResult.from_dict(d) == r
     del d["session_cost_usd"]
     assert RunResult.from_dict(d).session_cost_usd is None
+
+
+def test_error_kinds_cover_every_kind_the_code_can_produce():
+    import re
+    from pathlib import Path
+
+    import phd
+    from phd.results import ERROR_KINDS
+
+    src = Path(phd.__file__).parent
+    found = set()
+    for path in src.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        found |= set(re.findall(r'RunError\(\s*"(\w+)"', text))
+        found |= set(re.findall(r'RunError\(kind="(\w+)"', text))
+    found |= set(re.findall(r'return "(\w+)"', (src / "harnesses" / "outcome.py").read_text(encoding="utf-8")))
+    found.add("budget")  # claude: kind_ = "budget" if "budget" in subtype
+    assert found and found <= set(ERROR_KINDS), found - set(ERROR_KINDS)
+    assert len(set(ERROR_KINDS)) == len(ERROR_KINDS) and phd.ERROR_KINDS is ERROR_KINDS
+    assert "idle" in ERROR_KINDS and "session" in ERROR_KINDS and "idle_timeout" not in ERROR_KINDS
+    assert decide_status(RunError("idle", "x")) is RunStatus.TIMED_OUT
+    assert decide_status(RunError("session", "x")) is RunStatus.FAILED

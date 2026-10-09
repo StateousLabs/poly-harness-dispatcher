@@ -97,7 +97,7 @@ class Spec:
         harness_builtins: Keep the harness's own bundled skills and plugins. Default `False`
             suppresses them so the agent sees only its stack's skills.
         idle_timeout_s: Stop the run when the harness prints nothing for this many seconds
-            (`RunError(kind="idle_timeout")`, status `timed_out`). Default `None` (off). Claude and
+            (`RunError(kind="idle")`, status `timed_out`). Default `None` (off). Claude and
             codex print nothing while a tool runs: set it above your longest expected tool call.
         schema_repair: With `output_schema`, when the answer does not match, resume the session once
             and ask for a corrected answer. Default `False` (fail at once with `kind="schema"`).
