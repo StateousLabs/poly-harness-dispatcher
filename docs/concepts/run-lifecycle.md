@@ -345,6 +345,27 @@ JSON Schema: <error>. Reply with only the corrected JSON.`
 
 Messages and per-harness mechanisms: [Option combinations](combinations.md#output_schema).
 
+## Stateous contract
+
+The downstream user Stateous lists requirements B1 to B10. Each is proven by a test; B5, B6, B7, B8 and B10 run
+live, once per harness (`PHD_LIVE=1 uv run pytest tests/live/test_stateous_contract.py -v`, a few cents).
+
+| # | Requirement | Offline test (fake harness) | Live test (per harness: `[claude]`, `[codex]`, `[opencode]`) |
+|---|---|---|---|
+| B1 | Leaving `async with` stops the run | `tests/execution/test_lifecycle.py`: `test_leaving_the_block_without_wait_cancels`, `test_exception_in_the_block_cancels_and_reraises`, `test_outer_cancellation_while_waiting_cancels_run`, `test_outer_cancellation_during_events_cancels_run` | |
+| B2 | The stop is fast | `tests/execution/test_fast_stop.py`: `test_cancelled_task_stops_fast`, `test_exception_in_block_stops_fast` | |
+| B3 | The harness dies with the caller | `tests/execution/test_lifetime.py`: `test_harness_and_grandchild_die_with_their_caller` | |
+| B4 | The event loop is never blocked | `tests/execution/test_no_loop_blocking.py`: `test_ticker_keeps_beating_through_a_run` | |
+| B5 | `handle.session_id` is set at start | `tests/execution/test_lifecycle.py`: `test_session_started_is_emitted_once` | `test_b5_session_id_at_start` |
+| B6 | `session_id=X` resumes X; unknown gives `kind="session"` | `tests/execution/test_session_result.py`, `tests/execution/test_crash_resume.py` | `test_b6_unknown_session`, `test_b6_resume_after_crash` |
+| B7 | `output_schema` with a root `oneOf` works | `tests/execution/test_output_schema_dispatch.py`, `tests/harnesses/test_schema_translation.py` | `test_b7_root_oneof` |
+| B8 | A schema mismatch gives `kind="schema"` | `tests/execution/test_structured.py`: `test_native_structured_output_that_does_not_match` | `test_b8_schema_mismatch` (a successful answer validates against the original schema) |
+| B9 | `idle_timeout_s` stops a silent run | `tests/execution/test_lifecycle.py`: `test_idle_limit_stops_a_silent_run` | |
+| B10 | `Event.summary` is one line, at most 500 characters | `tests/harnesses/test_summaries.py` | `test_b10_summaries` |
+
+The live tests are in `tests/live/test_stateous_contract.py`; the crash test kills a caller subprocess
+(`tests/live/live_crash_caller.py`) mid-turn and resumes its session from a new process.
+
 ## Host environment stripping
 
 The child environment is `os.environ` minus every variable whose upper-cased name starts with `ANTHROPIC_`,
