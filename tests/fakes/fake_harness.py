@@ -10,10 +10,12 @@ FAKE_NO_STDIN       set to 1 to never read stdin (the writer blocks once the pip
 FAKE_STDERR         text to write to stderr
 FAKE_PIDFILE        write this process's pid here at start
 FAKE_STREAMS        os.pathsep-separated JSONL paths; invocation N prints the Nth (needs FAKE_STATE)
+FAKE_IGNORE_SIGNALS set to 1 to ignore SIGTERM, SIGINT and (Windows) SIGBREAK, so only a hard kill stops it
 FAKE_STATE          counter file for FAKE_STREAMS
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -22,6 +24,10 @@ PREFIXES = ("CLAUDE_", "CODEX_", "OPENCODE_", "ANTHROPIC_", "OPENAI_", "XDG_", "
 
 
 def main() -> int:
+    if os.environ.get("FAKE_IGNORE_SIGNALS") == "1":
+        for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+            if hasattr(signal, name):
+                signal.signal(getattr(signal, name), signal.SIG_IGN)
     if path := os.environ.get("FAKE_PIDFILE"):
         with open(path, "w") as f:
             f.write(str(os.getpid()))

@@ -280,6 +280,15 @@ be killed by `cancel()`, `timeout_s`, `idle_timeout_s`, budget or stream overflo
 Waiting for exit polls the return code every 50 ms instead of `Process.wait()`, because a descendant that still
 holds stdout/stderr open would otherwise hang the wait; the stderr copier then gets up to 5 s to finish.
 
+### Stop bound
+
+Leaving `async with d.run(...)` (cancellation, an exception, or the end of the block) returns in about 5 s at worst,
+plus the time any user-supplied result sinks take. The harness is never asked to stop: it is force-killed
+(`TerminateJobObject` / `SIGKILL`), so a harness that ignores `SIGTERM`, `SIGINT` and Ctrl+Break still dies at once
+(measured: under 0.1 s in the test suite). The 5 s is the stderr grace period. On Windows the job is closed first, so
+every descendant is already dead and there is no stderr wait. On POSIX the wait applies only to a descendant that
+escaped the kill (for example by starting its own session) and still holds stderr open.
+
 ## Orphan protection
 
 Killing on cancel or timeout needs PHD to be alive. Orphan protection covers the other case: **the caller dies**
