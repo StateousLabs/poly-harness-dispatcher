@@ -1,5 +1,10 @@
 # poly-harness-dispatcher (PHD)
 
+[![CI](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml/badge.svg)](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/poly-harness-dispatcher.svg)](https://pypi.org/project/poly-harness-dispatcher/)
+[![Python](https://img.shields.io/pypi/pyversions/poly-harness-dispatcher.svg)](https://pypi.org/project/poly-harness-dispatcher/)
+[![License](https://img.shields.io/pypi/l/poly-harness-dispatcher.svg)](LICENSE)
+
 Spawn headless AI coding agents (**Claude Code** `claude -p`, **Codex** `codex exec`, **OpenCode** `opencode run`)
 from one harness-neutral spec, and get back one normalized result.
 
@@ -13,7 +18,13 @@ run, launches the CLI, parses its stream into events and a `RunResult`, and reco
 
 ## Install
 
-Python 3.12+ and [uv](https://docs.astral.sh/uv/); the harness CLIs you use must be on `PATH`.
+Python 3.12+; the harness CLIs you use must be on `PATH`.
+
+```bash
+pip install poly-harness-dispatcher    # import name: phd
+```
+
+From a clone (development, with [uv](https://docs.astral.sh/uv/)):
 
 ```bash
 uv sync --extra dev        # or: uv venv && uv pip install -e ".[dev]"

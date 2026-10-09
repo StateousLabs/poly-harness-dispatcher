@@ -2,11 +2,36 @@
 name = "poly-harness-dispatcher"
 version = "0.1.0"
 description = "Spawn headless AI coding agents (Claude Code, Codex, OpenCode) from one harness-neutral spec."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Stateous Labs" }]
+keywords = ["ai", "agents", "claude-code", "codex", "opencode", "harness", "coding-agent", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = ["jsonschema>=4.18"]
 
+[project.urls]
+Homepage = "https://github.com/StateousLabs/poly-harness-dispatcher"
+Documentation = "https://github.com/StateousLabs/poly-harness-dispatcher/tree/main/docs"
+Source = "https://github.com/StateousLabs/poly-harness-dispatcher"
+Issues = "https://github.com/StateousLabs/poly-harness-dispatcher/issues"
+Changelog = "https://github.com/StateousLabs/poly-harness-dispatcher/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=5"]
 examples = ["ipykernel>=6"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
 
@@ -21,3 +46,11 @@ packages = ["src/phd"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["live: runs real harness CLIs (set PHD_LIVE=1; costs money)"]
+
+[tool.coverage.run]
+source = ["phd"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.12", experimental: false, cov_min: 85 }
+          - { os: ubuntu-latest, python: "3.13", experimental: false, cov_min: 85 }
+          - { os: ubuntu-latest, python: "3.14", experimental: false, cov_min: 85 }
+          - { os: windows-latest, python: "3.12", experimental: false, cov_min: 90 }
+          - { os: windows-latest, python: "3.14", experimental: false, cov_min: 90 }
+          # macOS is untested locally: informational only.
+          - { os: macos-latest, python: "3.12", experimental: true, cov_min: 85 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-extras
+      # Offline suite: it uses the fake harness; live tests stay skipped (no PHD_LIVE).
+      - run: uv run pytest -q --cov=phd --cov-report=term-missing --cov-fail-under=${{ matrix.cov_min }}
+      - if: runner.os == 'Linux' && matrix.python == '3.12'
+        run: uv run mkdocs build --strict
+
+  build:
+    name: build and check the distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - run: uvx twine check dist/*
+      - name: Install the wheel in a fresh venv and smoke-test it
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke/bin/python" -c "import phd; print(phd.__all__); assert phd.ERROR_KINDS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

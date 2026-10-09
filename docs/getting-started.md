@@ -5,6 +5,14 @@ quickstart notebook, running the test suite, and doing a dry run with `plan()`.
 
 ## 1. Install
 
+To use PHD in your own project, install it from PyPI (the import name is `phd`):
+
+```bash
+pip install poly-harness-dispatcher     # or: uv add poly-harness-dispatcher
+```
+
+The rest of this section is for working on PHD itself from a clone.
+
 PHD needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Its one runtime dependency is `jsonschema` (installed for you); the harness CLIs
 you want to use must be installed separately and be on `PATH` (`claude`, `codex`, `opencode`).
 
@@ -20,7 +28,7 @@ Extras defined in `pyproject.toml`:
 
 | Extra | Contents | Needed for |
 |---|---|---|
-| `dev` | `pytest`, `pytest-asyncio` | the test suite |
+| `dev` | `pytest`, `pytest-asyncio`, `pytest-cov` | the test suite |
 | `examples` | `ipykernel` | `examples/quickstart.ipynb` |
 | `docs` | `mkdocs-material`, `mkdocstrings[python]` | `uv run mkdocs serve` / `build` |
 

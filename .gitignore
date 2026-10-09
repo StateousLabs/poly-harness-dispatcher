@@ -24,3 +24,8 @@ docs/superpowers/
 
 # MkDocs build output
 site/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/

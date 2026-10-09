@@ -1,0 +1,48 @@
+# Publishes poly-harness-dispatcher to PyPI when a GitHub release is published.
+#
+# One-time setup the owner must do (no token is stored anywhere):
+#   1. On https://pypi.org, under "Publishing", add a pending trusted publisher for the new
+#      project "poly-harness-dispatcher":
+#        owner:        StateousLabs
+#        repository:   poly-harness-dispatcher
+#        workflow:     publish.yml
+#        environment:  pypi
+#   2. In the GitHub repo, create an environment named "pypi" (Settings > Environments);
+#      optionally require a reviewer so every release needs a manual approval.
+#   3. Create a GitHub release for tag vX.Y.Z (the tag must match the version in pyproject.toml).
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
