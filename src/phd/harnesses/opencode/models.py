@@ -18,6 +18,7 @@ from ..._util.paths import phd_cache_dir
 from ..._util.shell import resolve_argv
 from ...errors import HarnessNotInstalled
 from ...spec import Credentials
+from . import deps
 
 STALE_TMP_S = 3600  # opencode's models.json.<pid>.<ts>.tmp left by an interrupted refresh
 
@@ -101,7 +102,9 @@ def catalog_session(credentials: Credentials | None, identity: str, executable: 
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
     seed_models_cache(cache)
+    deps.seed_home(home)  # `opencode models` starts the same per-config-folder install as a run
     env = {k: str(v) for k, v in dirs.items()}
+    env.update(deps.npm_env())
     env.update({"OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_AUTOUPDATE": "1",
                 "OPENCODE_DISABLE_CLAUDE_CODE": "1", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1"})
     if credentials is not None and credentials.kind == "opencode_auth_file":

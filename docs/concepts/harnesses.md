@@ -71,6 +71,19 @@ claude -p --output-format stream-json --verbose --model <model>
 `--strict-mcp-config` ignores every other MCP source. **Hooks:** `settings.json` `hooks`
 ([Hooks](hooks.md#per-harness-translation)).
 
+**Dependency seed.** On every start opencode (1.18.18) runs an in-process npm install of `@opencode-ai/plugin`
+into each config folder it loads, `config/` (`OPENCODE_CONFIG_DIR`) and `xdg-config/opencode/`, and when any plugin
+is configured it waits for both before loading plugins. PHD's hooks are a plugin, so a fresh home with hooks spent
+17 to 100+ seconds (and 122 MB) on that install before the first event; an install cut off by a kill also left a
+lock that made the next turn in the same home wait about 60 s more. opencode skips the install when the folder has
+`node_modules/` and its `package-lock.json` lists, under `packages[""]`, every dependency of `package.json` plus
+`@opencode-ai/plugin` (names only). So PHD writes exactly that into both folders: an empty `node_modules/`, a
+`package.json` and a minimal `package-lock.json`, only when no `package-lock.json` exists yet (a resumed home, or a
+real install by opencode, is never touched; a `package.json` left by a cut-off install is kept and listed). The
+generated `phd-hooks.js` imports nothing from that package, so nothing is lost. The catalogue home gets the same seed.
+If a later opencode checks more than names, it just installs again: slower, but correct. The npm variables above keep
+such an install in PHD's cache (see [Security and isolation](security-and-isolation.md#the-phd-cache-phdcache)).
+
 **Resume:** the home is re-materialized from the resuming `Spec`, and the argv is that fresh argv plus `--resume <session_id>`, same `CLAUDE_CONFIG_DIR` (sessions live under `projects/`, which PHD never touches); see [what a resumed turn reuses](run-lifecycle.md#what-a-resumed-turn-reuses-vs-takes-from-the-new-spec).
 
 **Stream and result:** JSONL. `system/init` gives `session_id` and `claude_code_version` (`cli_version`); the
@@ -196,8 +209,10 @@ home/
     opencode.json            OPENCODE_CONFIG: instructions, mcp, permission, autoupdate, merged harness_config
     skills/<name>/           stack skills
     plugin/phd-hooks.js      generated hook plugin (only with hooks)
+    package.json, package-lock.json, node_modules/   dependency seed (below)
   data/                      XDG_DATA_HOME (sessions; needed for resume)
   xdg-config/                XDG_CONFIG_HOME
+    opencode/                package.json, package-lock.json, node_modules/: dependency seed
   state/                     XDG_STATE_HOME
   phd/                       hook runtime (only with hooks)
   stack/                     stack copy
@@ -221,6 +236,9 @@ opencode run --format json -m <provider/model> --dir <cwd> [--auto]     (--auto 
 | `OPENCODE_DISABLE_PROJECT_CONFIG` | `1`, unless `project_config="full"` |
 | `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | `<home>/data`, `<home>/xdg-config`, `<home>/state` |
 | `OPENCODE_AUTH_CONTENT` | the auth file as JSON, filtered to `providers` |
+| `XDG_CACHE_HOME` | the shared PHD cache of this opencode install ([PHD cache](security-and-isolation.md#the-phd-cache-phdcache)) |
+| `npm_config_cache` | `~/.phd/cache/opencode/npm-cache` (also as `NPM_CONFIG_CACHE`) |
+| `npm_config_userconfig`, `npm_config_globalconfig` | the empty file `~/.phd/cache/opencode/npmrc` (also upper-case) |
 
 **`opencode.json`** (before `harness_config`):
 
@@ -250,7 +268,8 @@ so the run goes ahead and a truly unknown model fails after launch as `error.kin
 isolated: the run's stripped
 environment, the spec's credentials as `OPENCODE_AUTH_CONTENT` (without them only free models are listed), data,
 config and state folders under `~/.phd/cache/opencode/catalog-home/` (also its cwd, so no project is registered for
-your directory), project config off, and the shared PHD cache of that opencode install as `XDG_CACHE_HOME`. The
+your directory), project config off, the dependency seed and npm variables of a run, and the shared PHD cache of that opencode
+install as `XDG_CACHE_HOME`. The
 same shared cache is every run's `XDG_CACHE_HOME` ([Security and isolation](security-and-isolation.md#the-phd-cache-phdcache)).
 
 **Quirks**

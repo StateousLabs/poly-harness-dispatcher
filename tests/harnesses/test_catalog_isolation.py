@@ -278,3 +278,17 @@ def test_install_key_ignores_the_comspec_wrapper(monkeypatch, tmp_path):
     assert keys[0] == keys[1]
     monkeypatch.setattr(opencode_models, "resolve_argv", lambda argv: [str(cmd_a), "/c", str(tmp_path / "other.cmd")])
     assert opencode_models.install_key(None) != keys[0]
+
+
+def test_opencode_catalogue_home_is_seeded_and_npm_is_phd_owned(captured, credentials, phd_cache_dir):
+    """`opencode models` starts the same per-config-folder install as a run (item 9): the shared catalogue home
+    gets the same seed, and any real install would use PHD's npm cache, never the host's."""
+    ModelCatalog().models("opencode", credentials["opencode"])
+    env = captured[0]["env"]
+    home = phd_cache_dir / "opencode" / "catalog-home"
+    for folder in (home / "config", home / "xdg-config" / "opencode"):
+        assert (folder / "node_modules").is_dir(), folder
+        lock = json.loads((folder / "package-lock.json").read_text(encoding="utf-8"))
+        assert "@opencode-ai/plugin" in lock["packages"][""]["dependencies"], folder
+    assert Path(env["npm_config_cache"]).is_relative_to(phd_cache_dir)
+    assert Path(env["npm_config_userconfig"]).is_relative_to(phd_cache_dir)
