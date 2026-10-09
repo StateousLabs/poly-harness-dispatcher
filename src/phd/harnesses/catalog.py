@@ -5,7 +5,8 @@ import difflib
 import hashlib
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 from .._util.env import clean_env
@@ -22,9 +23,15 @@ _LOADERS: dict[str, Callable[[Runner], list[str]]] = {
     "claude": claude_models.load, "codex": codex_models.load, "opencode": opencode_models.load}
 # harnesses with no catalogue command: classify() returns warnings if acceptable, None if unknown
 _STATIC_CHECKS: dict[str, Callable[[str], list[str] | None]] = {"claude": claude_models.classify}
-# isolated environment overrides and cwd for each catalogue command (never the host's harness folders)
-_CATALOG_ENVS: dict[str, Callable[[Credentials | None, str], tuple[dict[str, str], Path]]] = {
-    "codex": codex_models.catalog_env, "opencode": opencode_models.catalog_env}
+# isolated environment overrides and cwd for each catalogue command (never the host's harness folders); a context
+# manager so per-load folders (codex's credential copy) are removed when the command ends
+_CatalogSession = Callable[[Credentials | None, str, Sequence[str] | None],
+                           AbstractContextManager[tuple[dict[str, str], Path]]]
+_CATALOG_SESSIONS: dict[str, _CatalogSession] = {
+    "codex": codex_models.catalog_session, "opencode": opencode_models.catalog_session}
+# catalogues that can lag behind what the harness accepts (opencode: a seeded or bundled models.dev snapshot);
+# a miss there is a warning, and a truly unknown model fails after launch as error.kind="model_unavailable"
+_LAGGING = frozenset({"opencode"})
 
 
 # Catalogues of codex / opencode, loaded once per process and shared by every ModelCatalog that uses the
@@ -38,7 +45,10 @@ _KEY_LOCKS_GUARD = threading.Lock()  # only protects creating entries of _KEY_LO
 
 def credential_identity(credentials: Credentials | None) -> str:
     """A short, one-way identity of a credential for cache keys and folder names: a hash of its kind, file,
-    provider filter and secret. Neither the secret nor the path appears in clear. `"none"` without credentials."""
+    provider filter and secret. Neither the secret nor the path appears in clear. `"none"` without credentials.
+
+    For the file kinds the identity covers the file's *path*, not its contents: re-logging into the same file keeps
+    the identity (and the cached list) for the rest of the process."""
     if credentials is None:
         return "none"
     parts = [credentials.harness, credentials.kind, str(credentials.path or ""),
@@ -95,9 +105,9 @@ class ModelCatalog:
 
     def _default_runner(self, credentials: Credentials | None, identity: str) -> Runner:
         def run(argv: list[str]) -> str:
-            overrides, cwd = _CATALOG_ENVS[argv[0]](credentials, identity)
             prefix = self._executables.get(argv[0])
-            return _run_cli([*prefix, *argv[1:]] if prefix else argv, env=clean_env(overrides), cwd=cwd)
+            with _CATALOG_SESSIONS[argv[0]](credentials, identity, prefix) as (overrides, cwd):
+                return _run_cli([*prefix, *argv[1:]] if prefix else argv, env=clean_env(overrides), cwd=cwd)
         return run
 
     def is_static(self, harness: str) -> bool:
@@ -169,10 +179,16 @@ class ModelCatalog:
             raise ModelNotSupported(harness, model, known, _closest(model, known))
         try:
             known = self.models(harness, credentials)
-        except (HarnessNotInstalled, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+        except (HarnessNotInstalled, RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as e:
             return [f"could not load the {harness} model catalogue ({e}); model {model!r} was not checked"]
         if model in known:
             return []
+        if harness in _LAGGING:
+            hint = _closest(model, known)
+            return [f"model {model!r} is not in the {harness} model catalogue"
+                    + (f" (closest: {hint!r})" if hint else "")
+                    + "; the catalogue can lag behind, so the run goes ahead and an unknown model fails as "
+                      "error.kind='model_unavailable'"]
         raise ModelNotSupported(harness, model, known, _closest(model, known))
 
 

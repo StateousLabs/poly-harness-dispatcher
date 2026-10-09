@@ -91,7 +91,9 @@ def test_opencode_runs_share_one_phd_owned_xdg_cache(tmp_path, make_spec, inputs
     """Runs never use the host's ~/.cache/opencode (models.json refresh, ripgrep) nor a per-run cache."""
     a = materialize_spec(make_spec("opencode"), inputs, run_id="r1", run_dir=tmp_path / "r1")
     b = materialize_spec(make_spec("opencode"), inputs, run_id="r2", run_dir=tmp_path / "r2")
-    shared = phd_cache_dir / "opencode" / "xdg-cache"
+    from phd.harnesses.opencode.models import shared_cache_dir
+    shared = shared_cache_dir(None)
+    assert shared.parent == phd_cache_dir / "opencode" / "xdg-cache"
     assert a.env["XDG_CACHE_HOME"] == b.env["XDG_CACHE_HOME"] == str(shared)
     assert shared.is_dir()
     assert "HOME" not in a.env and "USERPROFILE" not in a.env

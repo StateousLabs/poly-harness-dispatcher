@@ -2,16 +2,20 @@
 
     PHD_LIVE=1 uv run pytest tests/live/test_host_isolation.py -v
 
-What is snapshotted (path, size, mtime; recursive, bounded):
-- `~/.codex`, `~/.local/share/opencode`, `~/.cache/opencode`, `~/.local/state/opencode`: in full. These are written
-  only by codex/opencode processes, so any change during the run is a leak (from the run or the model catalogue).
+What is snapshotted (every file and directory with size and mtime; recursive, bounded):
+- `~/.codex`, `~/.local/share/opencode`, `~/.cache/opencode`, `~/.local/state/opencode`, `~/.config/opencode`: in
+  full. These are written only by codex/opencode processes, so any change during the run is a leak (from the run or
+  the model catalogue). Do not run other host (non-PHD) codex/opencode processes at the same time.
 - `~/.claude`: not file by file. The test itself usually runs inside a Claude Code session that keeps writing its
-  own transcripts, history and telemetry there. Instead: no new folder in `~/.claude/projects` (Claude would create
-  one for the run's cwd), and neither `~/.claude.json` nor `~/.claude/history.jsonl` mentions the run's cwd.
+  own transcripts, history and telemetry there. Instead the run's cwd carries a unique marker: no folder in
+  `~/.claude/projects` may contain it (Claude names project folders after the encoded cwd), and neither
+  `~/.claude.json` nor `~/.claude/history.jsonl` may mention the cwd.
 """
 
 import os
+import re
 import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -29,15 +33,15 @@ MODELS = {"claude": os.environ.get("PHD_LIVE_CLAUDE_MODEL", "haiku"),
           "opencode": os.environ.get("PHD_LIVE_OPENCODE_MODEL", "opencode/space-bunny-free")}
 HOME = Path.home()
 SNAPSHOT_ROOTS = [HOME / ".codex", HOME / ".local" / "share" / "opencode", HOME / ".cache" / "opencode",
-                  HOME / ".local" / "state" / "opencode"]
+                  HOME / ".local" / "state" / "opencode", HOME / ".config" / "opencode"]
 MAX_FILES = 200_000
 
 
 def snapshot() -> dict[str, tuple[int, int]]:
     seen: dict[str, tuple[int, int]] = {}
     for root in SNAPSHOT_ROOTS:
-        for dirpath, _dirs, files in os.walk(root):
-            for name in files:
+        for dirpath, dirs, files in os.walk(root):
+            for name in [*dirs, *files]:
                 path = os.path.join(dirpath, name)
                 try:
                     st = os.stat(path)
@@ -48,9 +52,10 @@ def snapshot() -> dict[str, tuple[int, int]]:
     return seen
 
 
-def claude_projects() -> set[str]:
+def claude_projects_with(marker: str) -> list[str]:
+    """Claude project folders whose (encoded-cwd) name contains `marker`."""
     projects = HOME / ".claude" / "projects"
-    return {p.name for p in projects.iterdir()} if projects.is_dir() else set()
+    return [p.name for p in projects.iterdir() if marker in p.name] if projects.is_dir() else []
 
 
 def mentions(path: Path, needle: str) -> bool:
@@ -71,19 +76,21 @@ def hookless_stack(tmp_path: Path) -> Stack:
 
 @pytest.mark.parametrize("harness", ["claude", "codex", "opencode"])
 def test_a_run_leaves_the_host_harness_folders_untouched(harness, tmp_path):
-    cwd = tmp_path / f"isolation-{harness}"
+    marker = f"phdiso{uuid.uuid4().hex[:12]}"  # survives Claude's cwd encoding (non-alphanumerics become '-')
+    cwd = tmp_path / f"isolation-{harness}-{marker}"
     cwd.mkdir()
+    assert re.sub(r"[^A-Za-z0-9]", "-", marker) == marker
     stack = hookless_stack(tmp_path) if harness == "opencode" else Stack.load(FIXTURES / "stack")
     spec = Spec(harness=harness, model=MODELS[harness], stack=stack, cwd=cwd,
                 credentials=Credentials.from_host(harness), secrets={"ECHO_PREFIX": "phd-echo"}, timeout_s=180)
-    before, projects_before = snapshot(), claude_projects()
+    before = snapshot()
 
     r = Dispatcher(spec, runs_root=RUNS).spawn(Inputs(msg="Reply with the word hi."))  # includes the catalogue
 
     assert r.status is RunStatus.SUCCEEDED, (r.error, r.stderr_path)
     after = snapshot()
     changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
-    assert changed == [], f"host harness files changed: {changed}"
-    assert claude_projects() - projects_before == set()
+    assert changed == [], "host harness files changed: " + "; ".join(f"{p} {before.get(p)} -> {after.get(p)}" for p in changed)
+    assert claude_projects_with(marker) == []
     for f in (HOME / ".claude.json", HOME / ".claude" / "history.jsonl"):
         assert not mentions(f, str(cwd)), f"{f} mentions the run's cwd"

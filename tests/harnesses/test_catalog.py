@@ -29,8 +29,8 @@ def test_codex_catalogue():
 def test_opencode_catalogue_ignores_non_model_lines():
     cat = ModelCatalog(runner)
     assert cat.models("opencode") == ["opencode/big-pickle", "opencode/deepseek-v4-flash"]
-    with pytest.raises(ModelNotSupported):
-        cat.validate("opencode", "big-pickle")
+    # an opencode miss only warns: a seeded or bundled catalogue can lag behind models.dev
+    assert "not in the opencode model catalogue" in cat.validate("opencode", "big-pickle")[0]
 
 
 def test_claude_rules():

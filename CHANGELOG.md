@@ -40,10 +40,21 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
 - **Host isolation of the model catalogue and caches.** `codex debug models` / `opencode models` run with the
   stripped environment, PHD-owned homes under `~/.phd/cache` (`PHD_CACHE_DIR`) and the spec's credentials, so
   they no longer touch the host's `opencode.db` or `~/.codex/models_cache.json`; the catalogue cache is keyed
-  per credential. OpenCode runs share one PHD-owned `XDG_CACHE_HOME` instead of the host's `~/.cache/opencode`.
+  per credential. OpenCode runs share one PHD-owned `XDG_CACHE_HOME` per opencode install instead of the host's
+  `~/.cache/opencode`. The codex catalogue copies `auth.json` (refresh token included) into a throwaway
+  `CODEX_HOME` under `~/.phd/cache` only while `codex debug models` runs, and deletes it afterwards.
 - **`Event.summary`.** A one-line, secret-scrubbed summary of messages and tool events.
 - **Stable error kinds.** `ERROR_KINDS` and the `PhdError` hierarchy (`InvalidSpec`, `MissingCredentials`,
   `NotResumable`, `HarnessNotInstalled`, `UnsafeAutonomy`, ...); problems detectable before launch raise.
 - Typed package (`py.typed`), a documentation site (mkdocs) and an offline test suite built on a fake harness.
+
+### Changed
+
+- `ModelCatalog.models()` / `validate()` take the credentials to list with. `ModelCatalog().models("opencode")`
+  without credentials lists only the free models (it used to use the host login).
+- An opencode model missing from the catalogue is a warning, not `ModelNotSupported` (the catalogue can lag behind);
+  an unknown model then fails after launch as `error.kind="model_unavailable"`. Codex still raises.
+- A catalogue that cannot be set up (unusable `PHD_CACHE_DIR`, disk errors) is the usual "could not load the model
+  catalogue" warning.
 
 [0.1.0]: https://github.com/StateousLabs/poly-harness-dispatcher/releases/tag/v0.1.0

@@ -72,8 +72,8 @@ class Dispatcher:
 
         Raises:
             HookUnsupported: A stack hook cannot be expressed for this harness.
-            ModelNotSupported: Claude only: `spec.model` is not a known claude model. For codex and opencode
-                the check is lazy and `start()` / `run()` / `plan()` raise it.
+            ModelNotSupported: Claude only: `spec.model` is not a known claude model. For codex the
+                check is lazy and `start()` / `run()` / `plan()` raise it; an opencode miss is only a warning.
             InvalidRunsRoot: codex with a `runs_root` under the system temp dir.
         """
         self.spec = spec
@@ -149,7 +149,7 @@ class Dispatcher:
         try:
             rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # session's rules
             m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
-                            rules_text=rules_text)
+                            rules_text=rules_text, executable=self.executables.get(self.spec.harness))
             if lock is None and not dry_run:  # a fresh run locks its new home for as long as it runs
                 lock = SessionLock(m.home, run_id).acquire(f"run home {m.home}")
             warnings = list(self.warnings)
@@ -253,8 +253,8 @@ class Dispatcher:
         materialization and the ledger writes run in worker threads.
 
         Raises:
-            ModelNotSupported: `spec.model` is not in the harness catalogue (codex / opencode; raised before
-                anything is launched or written).
+            ModelNotSupported: `spec.model` is not in the harness catalogue (codex; raised before
+                anything is launched or written). An opencode miss is a warning.
             HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
             StackNotFound: The stack's folder no longer exists (removed from the store).
             MissingCredentials: A credential file cannot be read.

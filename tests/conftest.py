@@ -111,6 +111,8 @@ def phd_cache_dir(request, tmp_path, monkeypatch):
     if request.node.get_closest_marker("live"):
         yield None
         return
+    from phd.harnesses.codex import models as codex_models
     path = tmp_path / "phd-cache"
     monkeypatch.setenv("PHD_CACHE_DIR", str(path))
+    monkeypatch.setattr(codex_models, "_warned_temp", True)  # tmp_path is under the temp dir on purpose here
     yield path

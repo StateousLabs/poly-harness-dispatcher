@@ -143,7 +143,7 @@ Resume also requires the same harness and `cwd`, and rejects `Inputs.rules` (`Un
 | `Inputs(...)` | `InputNotFound`, `EmptyTask` |
 | `Spec(...)` | `UnknownHarness`, `InvalidSpec`, `CwdNotFound`, `UnsafeAutonomy`, `MissingCredentials`, `StackIncompatible`, `MissingSecret` |
 | `Dispatcher(spec, ...)` | `HookUnsupported`, `InvalidRunsRoot`; `ModelNotSupported` for claude only |
-| `plan()` / `start()` / `spawn()` | `ModelNotSupported` (codex / opencode: the catalogue is checked here, not in `Dispatcher(...)`), `MissingCredentials` (credential file unreadable), `MissingSecret`; `start`/`spawn` also `HarnessNotInstalled`; `spawn` inside an event loop: `RuntimeError` |
+| `plan()` / `start()` / `spawn()` | `ModelNotSupported` (codex: the catalogue is checked here, not in `Dispatcher(...)`; an opencode miss is a warning), `MissingCredentials` (credential file unreadable), `MissingSecret`; `start`/`spawn` also `HarnessNotInstalled`; `spawn` inside an event loop: `RuntimeError` |
 | the same with `session_id=` | additionally `NotResumable` (session busy, tampered home) and `UnsupportedFeature` (`Inputs.rules` given) |
 | `ModelCatalog.models()` | `UnknownHarness`, `HarnessNotInstalled`, `RuntimeError` |
 

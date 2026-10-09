@@ -165,9 +165,10 @@ item is `result_text`; each `turn.completed` adds `usage` and counts a turn (and
 added and the model is not checked. The lookup is lazy (first `start()` / `plan()`, in a worker thread) and cached
 per process, so `ModelNotSupported` comes from `start()` / `run()` / `plan()`, not from `Dispatcher(...)`. The default catalogue uses the same executable as the run
 (`executables[harness]`), so a wrapper script must support `debug models` / `models`, or pass `validate_model=False`.
-The command runs isolated: the run's stripped environment, `CODEX_HOME` = `~/.phd/cache/codex/catalog-home/<id>/`
-(one per credential, holding a copy of the spec's `auth.json`; without it codex lists only its bundled models), and
-that folder as cwd. It never touches the host's `~/.codex`
+The command runs isolated: the run's stripped environment, a throwaway
+`CODEX_HOME` = `~/.phd/cache/codex/catalog-home/<id>/<uuid>/` per load (holding a copy of the spec's `auth.json`,
+deleted when the command ends; without it codex lists only its bundled models), and that folder as cwd. It never
+touches the host's `~/.codex`
 ([Security and isolation](security-and-isolation.md#the-phd-cache-phdcache)).
 
 **Quirks**
@@ -243,11 +244,14 @@ opencode run --format json -m <provider/model> --dir <cwd> [--auto]     (--auto 
 **Cost:** the running sum of `step_finish.cost`; `cost_source = "harness"` always (`cost_usd` stays `None` if no
 step finished). Because cost streams, PHD stops the run as soon as it exceeds `budget_usd`.
 
-**Model catalogue:** `opencode models` (lines containing `/` and no space). It runs isolated: the run's stripped
+**Model catalogue:** `opencode models` (lines containing `/` and no space). A model missing from it is only a
+**warning**, not `ModelNotSupported`: the list comes from a seeded or bundled models.dev snapshot that can lag behind,
+so the run goes ahead and a truly unknown model fails after launch as `error.kind="model_unavailable"`. It runs
+isolated: the run's stripped
 environment, the spec's credentials as `OPENCODE_AUTH_CONTENT` (without them only free models are listed), data,
 config and state folders under `~/.phd/cache/opencode/catalog-home/` (also its cwd, so no project is registered for
-your directory), project config off, and the shared PHD cache as `XDG_CACHE_HOME`. The same shared cache is every
-run's `XDG_CACHE_HOME` ([Security and isolation](security-and-isolation.md#the-phd-cache-phdcache)).
+your directory), project config off, and the shared PHD cache of that opencode install as `XDG_CACHE_HOME`. The
+same shared cache is every run's `XDG_CACHE_HOME` ([Security and isolation](security-and-isolation.md#the-phd-cache-phdcache)).
 
 **Quirks**
 

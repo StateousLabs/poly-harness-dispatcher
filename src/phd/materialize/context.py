@@ -25,6 +25,7 @@ class MaterializeContext:
     run_dir: Path
     home: Path
     stack_dir: Path
+    executable: list[str] | None = None  # `Dispatcher(executables=...)` for this harness; None = the CLI on PATH
     warnings: list[str] = field(default_factory=list)
 
     def mcp_servers(self) -> dict:

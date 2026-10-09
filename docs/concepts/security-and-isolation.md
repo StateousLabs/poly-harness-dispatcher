@@ -15,7 +15,7 @@ layer is planned ([Architecture](../architecture.md#roadmap-components)).
 | Host user-level skills | separate config home; codex: every `~/.agents/skills/*/SKILL.md` disabled by path in `config.toml` (codex resolves the user home via the OS); opencode: `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1` | all harnesses |
 | Other MCP sources | claude `--strict-mcp-config` (only `home/mcp.json`); codex and opencode: their user-level config is the generated one in the run home | all harnesses |
 | Host harness/auth environment variables | the child env drops every `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`, `OPENAI_*`, `OPENCODE_*`, `XDG_*` variable before PHD adds its own | all harnesses |
-| Host harness caches | opencode: `XDG_CACHE_HOME` is the shared PHD cache `~/.phd/cache/opencode/xdg-cache/` (models.json, ripgrep), never the host's `~/.cache/opencode`; codex and claude keep their caches in the run home | all harnesses |
+| Host harness caches | opencode: `XDG_CACHE_HOME` is the shared PHD cache `~/.phd/cache/opencode/xdg-cache/<install>/` (models.json, ripgrep, plugin packages), never the host's `~/.cache/opencode`; codex and claude keep their caches in the run home | all harnesses |
 | Model catalogue lookup (`codex debug models`, `opencode models`) | runs isolated too: same stripped environment, PHD-owned homes and cwd under `~/.phd/cache/<harness>/catalog-home/`, and the spec's credentials. It never opens the host's `opencode.db` or `~/.codex/models_cache.json` and registers no project for your directory | codex, opencode |
 | Repo instructions and config in `cwd` | `project_config="ignore"` (default): claude `--setting-sources user`; codex `project_doc_max_bytes=0`, `--ignore-rules`, repo `.agents/skills` disabled; opencode `OPENCODE_DISABLE_PROJECT_CONFIG=1` | unless `project_config="full"` |
 | Harness built-in skills and plugins | `harness_builtins=False` (default); see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) | residual: claude `design`/`doctor` listed but denied |
@@ -28,9 +28,9 @@ PHD keeps a small persistent cache outside every run home. `PHD_CACHE_DIR` moves
 
 | Folder | Used by | Contents |
 |---|---|---|
-| `opencode/xdg-cache/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes) and `opencode/bin/` (ripgrep). Shared, so it is downloaded once, not per run. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete. |
-| `opencode/catalog-home/` | `opencode models` | the catalogue's own data, config and state folders (its `opencode.db`, logs, locks) |
-| `codex/catalog-home/<id>/` | `codex debug models` | a `CODEX_HOME` per credential (`<id>` is a hash, never the secret or path) with a copy of that `auth.json` and codex's `models_cache.json`. Not under the temp dir: codex refuses a temp `CODEX_HOME`. |
+| `opencode/xdg-cache/<install>/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) of one opencode install | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes), `opencode/bin/` (ripgrep) and the npm packages opencode installs for plugins named in its config. `<install>` is a short hash of the resolved executable (path, size, mtime), so different installs never overwrite each other's cache. Shared by all runs of that install, so everything is downloaded once, not per run; this also means **plugins named via `harness_config` are installed once and shared across runs**. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete; refresh temp files older than an hour are pruned. |
+| `opencode/catalog-home/` | `opencode models` | the catalogue's own data, config and state folders (its `opencode.db`, logs, locks). No credential: the login travels in `OPENCODE_AUTH_CONTENT`. |
+| `codex/catalog-home/<id>/<uuid>/` | `codex debug models` | a throwaway `CODEX_HOME` per catalogue load (`<id>` is a hash of the credential, never the secret or path) holding a copy of the spec's `auth.json`. Deleted as soon as the command finishes, also when it fails. Not under the temp dir: codex refuses a temp `CODEX_HOME` (PHD warns once if `PHD_CACHE_DIR` is under it). |
 
 The catalogue list depends on the login (opencode lists only free models without one), so it is cached per
 process per harness, executable **and credential**.
@@ -79,6 +79,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 |---|---|
 | run home config files | `${env:NAME}` values from `Spec.secrets`, resolved into claude `mcp.json`, codex `config.toml`, opencode `opencode.json`, and `phd/hooks.resolved.json` |
 | `home/auth.json` (codex) | the full codex auth file, including any refresh token |
+| `~/.phd/cache/codex/catalog-home/<id>/<uuid>/auth.json` | the full codex auth file, including the refresh token, copied for the model catalogue. It exists only while `codex debug models` runs and is deleted right after (a crash of the PHD process in that window can leave it behind) |
 | the harness process environment | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `OPENCODE_AUTH_CONTENT` |
 | `events.jsonl`, `stderr.log`, `result_text` | whatever the harness prints, unfiltered: if the agent echoes a secret it is recorded |
 
@@ -97,7 +98,8 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - Non-prefixed provider keys are passed to the child (open item 11).
 - The PHD cache is shared by concurrent runs. opencode writes `models.json` through a temp file and a rename, so a
   reader sees the old or the new file; an interrupted refresh can leave a `models.json.<pid>.<ts>.tmp` file behind
-  (harmless, delete at will). Two runs downloading ripgrep at the same moment on a cold cache was not stress-tested.
+  (harmless; PHD prunes those older than an hour). Two runs downloading ripgrep or installing the same plugin
+  package at the same moment on a cold cache was not stress-tested.
 - claude restricted mode has no PHD deny rules for paths outside `cwd` (open item 7).
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet
   (open item 5).

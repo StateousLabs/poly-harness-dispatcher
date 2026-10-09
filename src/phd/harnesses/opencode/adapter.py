@@ -50,7 +50,8 @@ class OpencodeAdapter:
             (cfg_dir / "plugin").mkdir(parents=True, exist_ok=True)
             (cfg_dir / "plugin" / "phd-hooks.js").write_text(opencode_plugin(hooks, shim), encoding="utf-8")
         write_json(cfg_dir / "opencode.json", ctx.merge_harness_config(config))
-        xdg_cache = shared_cache_dir()  # shared by all runs; never the host's ~/.cache/opencode, never per run
+        # shared by all runs of this opencode install; never the host's ~/.cache/opencode, never per run
+        xdg_cache = shared_cache_dir(ctx.executable)
         xdg_cache.mkdir(parents=True, exist_ok=True)
 
         env = {"OPENCODE_CONFIG": str(cfg_dir / "opencode.json"), "OPENCODE_CONFIG_DIR": str(cfg_dir),
