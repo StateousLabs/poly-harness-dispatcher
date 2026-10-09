@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,16 @@ def dispatcher(spec, tmp_path):
                       executables={spec.harness: FAKE})
 
 
+def read_line(stream, timeout: float) -> str:
+    """One line from `stream`, failing (not hanging) when none arrives within `timeout` seconds."""
+    box: list[str] = []
+    reader = threading.Thread(target=lambda: box.append(stream.readline().strip()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert box, f"no line within {timeout}s"
+    return box[0]
+
+
 def crash_a_run(tmp_path, workdir, *flags) -> Path:
     """Run a caller whose harness reports session `sess-crash` and hangs; kill the caller. Returns the run dir."""
     init = tmp_path / "init.jsonl"
@@ -34,7 +46,7 @@ def crash_a_run(tmp_path, workdir, *flags) -> Path:
                               env=env)
     harness = None
     try:
-        assert caller.stdout.readline().strip() == "READY"
+        assert read_line(caller.stdout, 30) == "READY"
         harness = read_pid(tmp_path / "harness.pid")
         caller.kill()
         caller.wait(timeout=10)
@@ -82,7 +94,9 @@ async def test_a_session_held_by_a_live_run_is_busy(tmp_path, monkeypatch, make_
     d = dispatcher(make_spec("claude"), tmp_path)
     live = await d.start(Inputs(msg="x"))
     try:
+        deadline = time.monotonic() + 30
         while live.session_id is None:
+            assert time.monotonic() < deadline, "the session id was never reported"
             await asyncio.sleep(0.05)
         with pytest.raises(NotResumable, match="is busy with run"):
             await d.start(Inputs(msg="again"), session_id=live.session_id)
@@ -116,3 +130,20 @@ def test_a_failed_record_write_is_a_warning(tmp_path, monkeypatch, make_spec, in
     r = d.spawn(inputs)
     assert r.status is RunStatus.SUCCEEDED
     assert any("session record" in w and "disk full" in w for w in r.warnings)
+
+
+async def test_an_internal_error_after_the_session_started_keeps_the_session(tmp_path, monkeypatch, make_spec, inputs):
+    from phd.execution import RunHandle
+
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+
+    def boom(self, *a, **k):
+        raise ValueError("bad outcome")
+    monkeypatch.setattr(RunHandle, "_build_result", boom)
+    d = dispatcher(make_spec("claude"), tmp_path)
+    first = await (await d.start(inputs)).wait()
+    assert first.error.kind == "phd_internal" and first.session_id == "sess-claude-1" and first.resumable
+    monkeypatch.undo()
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
+    again = await (await d.start(Inputs(msg="again"), session_id="sess-claude-1")).wait()
+    assert again.status is RunStatus.SUCCEEDED and again.resumed_from == first.run_id

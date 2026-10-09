@@ -1,5 +1,6 @@
-"""Run ledger (CoreDesign §11): ~/.phd/runs/<run_id>/{home/, run.json, result.json,
-events.jsonl, stderr.log}. ResultSink is the seam for pushing results elsewhere later."""
+"""Run ledger (CoreDesign §11): ~/.phd/runs/<run_id>/{home/, run.json, session.json,
+result.json, events.jsonl, stderr.log}. `session.json` is written when the harness reports its session id
+(session_id, harness, cwd, home, stack, resumable, started_at) so a run that dies before `result.json` can be resumed. ResultSink is the seam for pushing results elsewhere later."""
 
 import builtins
 import json
@@ -171,7 +172,7 @@ class LocalLedger:
             try:
                 self.get(run_id)
                 continue  # finished after all (its result.json is the authority)
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError, OSError):
                 pass
             found.append((started, ref))
         return max(found, key=lambda pair: pair[0])[1] if found else None

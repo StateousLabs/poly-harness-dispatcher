@@ -118,6 +118,7 @@ set `idle_timeout_s` above your longest expected tool call; a lower value kills 
 ```
 <runs_root>/<run_id>/          runs_root defaults to ~/.phd/runs; run_id = YYYYmmdd-HHMMSS-<6 hex> (local time)
   run.json                     launch record, written before launch (also by plan())
+  session.json                 the session record, written when session.started fires (absent until then)
   events.jsonl                 one normalized Event per line
   stderr.log                   the harness's stderr, raw
   result.json                  the RunResult, written after the run
@@ -129,6 +130,7 @@ set `idle_timeout_s` above your longest expected tool call; a lower value kills 
 | File | Written by | Contents |
 |---|---|---|
 | `run.json` | `Dispatcher` (plan / start) | `run_id`, `harness`, `model`, `cwd`, `argv`, `env` (values of names matching `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET`, `PASSWORD` replaced by `<redacted>`), `stdin` (the full first message), `warnings`, `session_id` (the session being resumed, else `null`), `resumed_from`, `home`, `rules_text` (the session's rules block content, or `null`) |
+| `session.json` | `RunHandle` (via `LocalLedger.write_session`) | written when `session.started` fires: `session_id`, `harness`, `cwd`, `home`, `stack` (ref), `resumable` (the spec's), `started_at` (ISO); lets a run that crashed before `result.json` be resumed |
 | `events.jsonl` | `RunHandle` | `{"run_id", "harness", "type", "data", "ts", "raw"}` per line ([events](results-and-events.md#events)) |
 | `stderr.log` | `HarnessProcess` | unfiltered stderr bytes |
 | `result.json` | `LocalLedger.put` | `RunResult.to_dict()` |
@@ -163,8 +165,9 @@ Checks, in this order, all made before anything is written:
 | Check | Why | If it fails |
 |---|---|---|
 | `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
-| a run in **this** dispatcher's ledger has that session: a finished run with `RunResult.session_id == session_id`, else a run whose `session.json` names it and that never wrote `result.json` (it crashed) | PHD finds the session's home through the ledger; the latest finished run (by `started_at`) is used, whatever its status; without one, the newest crashed run is. A crashed run started with `resumable=False` is refused | `NotResumable` ("no run with session"; "was not resumable (resumable=False) and did not finish") |
+| a run in **this** dispatcher's ledger has that session: a finished run with `RunResult.session_id == session_id`, else a run whose `session.json` names it and that never wrote `result.json` (it crashed) | PHD finds the session's home through the ledger; the latest finished run (by `started_at`) is used, whatever its status; without one, the newest crashed run is | `NotResumable` ("no run with session") |
 | that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
+| a run that never finished was not started with `resumable=False` | such a run asked for its home to be discarded | `NotResumable` ("was not resumable (resumable=False) and did not finish") |
 | its `home_dir` is `<runs_root>/<run_id>/home` of a run in this ledger (resolved; the run dir has a `run.json`) and not a symlink or junction | `home_dir` is read from `result.json`, and resuming deletes PHD-owned paths under it | `NotResumable` ("is not a run home", "is a symlink or junction") |
 | its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
 | no PHD-owned path in the home (or a parent of one inside it) is a symlink or junction | deletion must never leave the home | `NotResumable` ("is a symlink or junction") |
