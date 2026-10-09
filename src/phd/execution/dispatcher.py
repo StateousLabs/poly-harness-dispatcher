@@ -18,6 +18,12 @@ from .handle import RunHandle
 from .session_lock import SessionLock
 
 
+class _SessionUnavailable(NotResumable):
+    """The requested session is gone (unknown, other harness or cwd, home removed, not resumable). `start` turns it
+    into a failed run with `kind="session"`; `plan` lets it propagate. Busy sessions and integrity problems stay
+    plain `NotResumable`."""
+
+
 class Dispatcher:
     """Runs agents described by one `Spec`: dry runs, fresh runs and resumed sessions.
 
@@ -152,21 +158,21 @@ class Dispatcher:
                                      "they are part of the session's system prompt")
         prev = self.ledger.find_session(session_id)
         if prev is None:
-            raise NotResumable(f"no run with session {session_id!r} in {self.ledger.root}")
+            raise _SessionUnavailable(f"no run with session {session_id!r} in {self.ledger.root}")
         if prev.harness != self.spec.harness:
-            raise NotResumable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
+            raise _SessionUnavailable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
                                f"this dispatcher runs {self.spec.harness!r}")
         if not prev.finished and not prev.resumable:
-            raise NotResumable(f"session {session_id!r}: its run {prev.run_id} was not resumable (resumable=False) "
+            raise _SessionUnavailable(f"session {session_id!r}: its run {prev.run_id} was not resumable (resumable=False) "
                                "and did not finish")
         home = Path(prev.home_dir)
         self._check_home_contained(session_id, home)
         if not home.is_dir():
-            raise NotResumable(f"session {session_id!r}: run home {home} no longer exists "
+            raise _SessionUnavailable(f"session {session_id!r}: run home {home} no longer exists "
                                "(resumable=False or cleaned up)")
         self._check_no_links(session_id, home)
         if Path(prev.cwd) != self.spec.cwd:
-            raise NotResumable(f"session {session_id!r} ran in cwd {prev.cwd}; this spec's cwd is {self.spec.cwd} "
+            raise _SessionUnavailable(f"session {session_id!r} ran in cwd {prev.cwd}; this spec's cwd is {self.spec.cwd} "
                                "(harnesses key sessions by directory)")
         if not (self.ledger.root / prev.run_id / "run.json").is_file():
             raise NotResumable(f"session {session_id!r}: run {prev.run_id} has no run.json (its rules are unknown)")
@@ -209,17 +215,20 @@ class Dispatcher:
             session_id: Continue this harness session instead of starting a new one.
 
         Returns:
-            A `RunHandle` to stream events from, wait on, or cancel.
+            A `RunHandle` to stream events from, wait on, or cancel. When `session_id` cannot be resumed
+            (unknown to the ledger, another harness, another `cwd`, its home gone, or a crashed run with
+            `resumable=False`) nothing is launched: the handle is already done and its result is a failed run
+            with `error.kind == "session"` (the reason is in `error.message`). Such a run still gets a run id,
+            a run directory, `result.json` and `events.jsonl` (`run.started`, `run.finished`), and reaches the sinks.
 
         Raises:
             HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
             StackNotFound: The stack's folder no longer exists (removed from the store).
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
-            NotResumable: No run has `session_id` (or its only run crashed with `resumable=False`); it belongs to another harness; its
-                home no longer exists; it ran in a different `cwd`; or another live run is using
-                the session right now (`<home>/.phd-session.lock`; a lock left by a dead process is
-                taken over automatically).
+            NotResumable: Another live run is using the session right now (`<home>/.phd-session.lock`; a lock
+                left by a dead process is taken over automatically), or the session's recorded home is not a
+                run home of this ledger or contains a link (tampering), or its `run.json` is gone.
             UnsupportedFeature: `session_id` together with `inputs.rules` (rules are part of the
                 session's system prompt).
 
@@ -232,7 +241,10 @@ class Dispatcher:
             nxt = await (await d.start(Inputs(msg="now fix it"), session_id=result.session_id)).wait()
             ```
         """
-        m, stack_hash, resumed_from, lock, cost_before = self._plan(inputs, session_id)
+        try:
+            m, stack_hash, resumed_from, lock, cost_before = self._plan(inputs, session_id)
+        except _SessionUnavailable as e:
+            return await self._unavailable_session(session_id, str(e))
         try:
             return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock,
                                           session_id=session_id, session_cost_before=cost_before)
@@ -298,6 +310,17 @@ class Dispatcher:
 
     async def _spawn(self, inputs: Inputs, session_id: str | None) -> RunResult:
         return await (await self.start(inputs, session_id=session_id)).wait()
+
+    async def _unavailable_session(self, session_id: str, reason: str) -> RunHandle:
+        """A finished, failed run (`error.kind == "session"`) for a session that cannot be resumed; nothing is
+        launched, no home is created. It has a run directory with `run.json`, `events.jsonl` and `result.json`."""
+        stack_hash = self.spec.stack.content_hash()
+        run_id, run_dir = self.ledger.allocate()
+        self.ledger.write_record(run_dir, {
+            "run_id": run_id, "harness": self.spec.harness, "model": self.spec.model, "cwd": str(self.spec.cwd),
+            "argv": [], "env": {}, "stdin": "", "warnings": list(self.warnings), "session_id": session_id,
+            "resumed_from": None, "home": "", "rules_text": None})
+        return await RunHandle.unlaunched(self, run_id, run_dir, stack_hash, reason)
 
     def _record(self, m: MaterializedHome, *, session_id: str | None, resumed_from: str | None) -> dict:
         return {"run_id": m.run_id, "harness": self.spec.harness, "model": self.spec.model,

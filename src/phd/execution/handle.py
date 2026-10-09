@@ -15,6 +15,7 @@ from .._util.fs import robust_rmtree
 from .._util.shell import resolve_argv
 from ..constants import REDACTED
 from ..harnesses import Outcome
+from ..harnesses.outcome import classify_error
 from ..materialize import MaterializedHome
 from ..results import Event, RunError, RunResult, Usage
 from ..results.model import decide_status
@@ -25,6 +26,8 @@ REPAIR_PROMPT = "Your final answer did not match the required JSON Schema: {erro
 REPAIR_MIN_TIME_S = 1.0  # a repair turn needs at least this much of timeout_s left
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .dispatcher import Dispatcher
     from .session_lock import SessionLock
 
@@ -84,6 +87,33 @@ class RunHandle:
         handle._proc = handle._new_process(m.argv, m.stdin)
         await handle._proc.start()
         handle._task = asyncio.create_task(handle._pump())
+        return handle
+
+    @classmethod
+    async def unlaunched(cls, d: Dispatcher, run_id: str, run_dir: Path, stack_hash: str, reason: str) -> RunHandle:
+        """A handle for a run that was never launched: `session_id` cannot be resumed, so the run is finished
+        at once with `error.kind == "session"` (`reason` is the message). No home is created and no lock taken
+        (`home_dir` is `""`). `events.jsonl` holds `run.started` and `run.finished`; `result.json` is written
+        and every sink receives the result, as for any run."""
+        m = MaterializedHome(run_id=run_id, run_dir=run_dir, home=run_dir / "home", argv=[], env={}, stdin="",
+                             warnings=list(d.warnings))
+        handle = cls(d, m, None, stack_hash)
+        error = RunError("session", reason)
+        now = datetime.now(timezone.utc).isoformat()
+        result = dataclasses.replace(handle._minimal_result(RuntimeError(reason)), error=error,
+                                     status=decide_status(error), home_dir="", finished_at=now, warnings=list(m.warnings))
+        with open(run_dir / "events.jsonl", "a", encoding="utf-8") as events_file:
+            handle._emit(events_file, "run.started", {"argv": [], "resumed_from": None})
+            handle._emit(events_file, "run.finished", {"status": str(result.status)})
+        for sink in d.sinks:
+            try:
+                await sink.put(result)
+            except Exception as e:
+                result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
+        handle._result = result
+        handle._task = asyncio.get_running_loop().create_future()
+        handle._task.set_result(None)
+        handle._queue.put_nowait(None)
         return handle
 
     def _resolve(self, argv: list[str]) -> list[str]:
@@ -402,7 +432,10 @@ class RunHandle:
         elif o.error is not None:
             error = o.error
         elif t.exit_code != 0:
-            error = RunError("harness_crash", f"exit code {t.exit_code}; stderr: {self._scrub(self._proc.stderr_tail())}")
+            tail = self._scrub(self._proc.stderr_tail())
+            # a resumed turn whose CLI says it no longer has the session (codex, opencode: stderr only)
+            kind = "session" if self._resume_session and classify_error(tail) == "session" else "harness_crash"
+            error = RunError(kind, f"exit code {t.exit_code}; stderr: {tail}")
         elif o.result_text is None and o.raw_final is None:
             error = RunError("no_result", "harness exited without a final result")
         else:

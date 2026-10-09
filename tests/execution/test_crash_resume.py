@@ -81,11 +81,11 @@ def test_a_session_whose_only_run_crashed_can_be_resumed(tmp_path, monkeypatch, 
 def test_a_crashed_run_that_was_not_resumable_is_refused(tmp_path, make_spec, workdir):
     run_dir = crash_a_run(tmp_path, workdir, "not-resumable")
     before = sorted((tmp_path / "runs").iterdir())
-    with pytest.raises(NotResumable) as e:
-        dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="again"), session_id="sess-crash")
-    assert str(e.value) == (f"session 'sess-crash': its run {run_dir.name} was not resumable (resumable=False) "
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="again"), session_id="sess-crash")
+    assert r.status is RunStatus.FAILED and r.error.kind == "session"
+    assert r.error.message == (f"session 'sess-crash': its run {run_dir.name} was not resumable (resumable=False) "
                             "and did not finish")
-    assert sorted((tmp_path / "runs").iterdir()) == before
+    assert sorted((tmp_path / "runs").iterdir()) == sorted([*before, Path(r.run_dir)])
 
 
 async def test_a_session_held_by_a_live_run_is_busy(tmp_path, monkeypatch, make_spec):

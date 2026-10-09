@@ -85,7 +85,7 @@ Resuming means `start(inputs, session_id=result.session_id)` / `spawn(..., sessi
 |---|---|---|---|---|---|
 | fresh | `True` (default) | yes | `True` | kept | works |
 | fresh | `True` | no (for example crash before init) | `False` | kept | nothing to resume (`session_id` is `None`) |
-| fresh | `False` | any | `False` | deleted (a failure to delete becomes a warning) | `NotResumable` ("no longer exists"): the chain ends |
+| fresh | `False` | any | `False` | deleted (a failure to delete becomes a warning) | a failed run with `error.kind == "session"` ("no longer exists"): the chain ends |
 | resumed turn | any | yes | `True` | never deleted by a resumed turn | works (same shared home) |
 | any | any | yes, but the run failed | as above | as above | works: status does not matter, only the session id |
 
@@ -116,7 +116,7 @@ Resume also requires the same harness and `cwd`, and rejects `Inputs.rules` (`Un
 | `Spec(...)` | `UnknownHarness`, `InvalidSpec`, `CwdNotFound`, `UnsafeAutonomy`, `MissingCredentials`, `StackIncompatible`, `MissingSecret` |
 | `Dispatcher(spec, ...)` | `HookUnsupported`, `ModelNotSupported`, `InvalidRunsRoot` |
 | `plan()` / `start()` / `spawn()` | `MissingCredentials` (credential file unreadable), `MissingSecret`; `start`/`spawn` also `HarnessNotInstalled`; `spawn` inside an event loop: `RuntimeError` |
-| the same with `session_id=` | additionally `NotResumable` (unknown session, other harness, home gone, other `cwd`) and `UnsupportedFeature` (`Inputs.rules` given) |
+| the same with `session_id=` | additionally `NotResumable` (session busy, tampered home) and `UnsupportedFeature` (`Inputs.rules` given) |
 | `ModelCatalog.models()` | `UnknownHarness`, `HarnessNotInstalled`, `RuntimeError` |
 
 Returned as data (`RunResult.status` / `error.kind`), never raised: `cancelled`, `timeout`, `idle`, `schema`, `budget`,

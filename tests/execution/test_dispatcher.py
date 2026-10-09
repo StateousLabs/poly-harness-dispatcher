@@ -120,20 +120,22 @@ def test_resume_rejects_rules_before_writing(tmp_path, monkeypatch, make_spec, i
 
 
 def test_resume_unknown_session(tmp_path, make_spec):
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id="no-such-session")
+    assert r.status is RunStatus.FAILED and r.error.kind == "session" and "no-such-session" in r.error.message
+    assert [p.name for p in (tmp_path / "runs").iterdir()] == [r.run_id]  # only the failed run itself
     with pytest.raises(NotResumable, match="no-such-session"):
-        dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id="no-such-session")
-    assert not (tmp_path / "runs").exists() or not list((tmp_path / "runs").iterdir())
+        dispatcher(make_spec("claude"), tmp_path).plan(Inputs(msg="hi"), session_id="no-such-session")
 
 
 def test_resume_other_harness_or_cwd(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "claude_ok.jsonl"))
     first = dispatcher(make_spec("claude"), tmp_path).spawn(inputs)
-    with pytest.raises(NotResumable, match="'claude'"):
-        dispatcher(make_spec("opencode"), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    r = dispatcher(make_spec("opencode"), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    assert r.error.kind == "session" and "'claude'" in r.error.message
     other = tmp_path / "elsewhere"
     other.mkdir()
-    with pytest.raises(NotResumable, match="cwd"):
-        dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    r = dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+    assert r.error.kind == "session" and "cwd" in r.error.message
 
 
 SYSTEM_FILE = {"claude": "system-prompt.md", "codex": "AGENTS.md", "opencode": "AGENTS.md"}
@@ -203,8 +205,8 @@ def test_not_resumable_without_home(tmp_path, monkeypatch, make_spec, inputs):
     r = d.spawn(inputs)
     assert not r.resumable
     assert not Path(r.home_dir).exists() and (Path(r.run_dir) / "result.json").is_file()
-    with pytest.raises(NotResumable, match="no longer exists"):
-        d.spawn(Inputs(msg="more"), session_id=r.session_id)
+    again = d.spawn(Inputs(msg="more"), session_id=r.session_id)
+    assert again.error.kind == "session" and "no longer exists" in again.error.message
 
 
 def test_resume_applies_the_new_spec(tmp_path, monkeypatch, make_spec, inputs, echo, stack):
@@ -326,17 +328,15 @@ def test_refused_resumes_write_nothing(tmp_path, monkeypatch, make_spec, inputs)
     other = tmp_path / "elsewhere"
     other.mkdir()
     before, home_before = _run_dirs(tmp_path), _snapshot(first.home_dir)
-    with pytest.raises(NotResumable, match="belongs to"):
-        dispatcher(make_spec("opencode"), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
-    with pytest.raises(NotResumable, match="ran in cwd"):
-        dispatcher(make_spec("claude", cwd=other), tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
-    assert _run_dirs(tmp_path) == before and _snapshot(first.home_dir) == home_before
+    for spec in (make_spec("opencode"), make_spec("claude", cwd=other)):
+        r = dispatcher(spec, tmp_path).spawn(Inputs(msg="hi"), session_id=first.session_id)
+        assert r.error.kind == "session"
+    # only the two failed runs' own directories were added; the session's home is untouched
+    assert len(_run_dirs(tmp_path)) == len(before) + 2 and _snapshot(first.home_dir) == home_before
     # a fresh resumable=False run reporting the same session id becomes its latest run, and deletes its home
     gone = dispatcher(make_spec("claude", resumable=False), tmp_path).spawn(Inputs(msg="x"))
-    before = _run_dirs(tmp_path)
-    with pytest.raises(NotResumable, match="no longer exists"):
-        dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id=gone.session_id)
-    assert _run_dirs(tmp_path) == before
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"), session_id=gone.session_id)
+    assert r.error.kind == "session" and "no longer exists" in r.error.message
 
 
 def test_opencode_resume_argv(tmp_path, monkeypatch, make_spec, inputs, echo):

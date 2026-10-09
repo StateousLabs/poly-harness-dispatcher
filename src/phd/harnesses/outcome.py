@@ -37,8 +37,17 @@ def as_int(v: Any) -> int:
     return 0
 
 
+# What each CLI prints when asked to resume a session it does not have (captured from the real CLIs):
+#   claude   result line, errors: ["No conversation found with session ID: <id>"]
+#   codex    stderr, exit 1: "Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)"
+#   opencode stderr, exit 1: "Error: Session not found"
+SESSION_GONE = re.compile(r"no conversation found|no rollout found|session not found")
+
+
 def classify_error(message: str) -> str:
     m = message.lower()
+    if SESSION_GONE.search(m):  # the harness no longer has the session we asked it to resume
+        return "session"
     if "do not have access" in m or ("model" in m and ("does not exist" in m or "not found" in m or "not supported" in m)):
         return "model_unavailable"
     if ("insufficient" in m and ("fund" in m or "credit" in m)) or re.search(r"\b402\b", m) or "billing" in m:

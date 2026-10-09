@@ -151,7 +151,7 @@ sequenceDiagram
     U->>D: start(inputs, session_id=sid) / spawn(inputs, session_id=sid)
     D->>D: inputs.rules set? → UnsupportedFeature (nothing written)
     D->>L: find_session(sid) → SessionRef (latest finished run, else the newest crashed run's session.json)
-    D->>D: found? same harness? home inside this ledger, no links? exists? same cwd? run.json? (else NotResumable, nothing written)
+    D->>D: found? same harness? home inside this ledger, no links? exists? same cwd? run.json? (session gone: a failed `session` run, nothing launched; tampering or busy: NotResumable, nothing written)
     D->>L: allocate() → new run_id, run_dir (no home/ of its own)
     D->>M: materialize(..., home=previous.home_dir)
     M->>M: delete PHD-owned paths in the home, write them again from the new Spec
@@ -160,18 +160,25 @@ sequenceDiagram
     D->>D: launch in spec.cwd with the shared home, stdin = first message from inputs
 ```
 
-Checks, in this order, all made before anything is written:
+Checks, in this order, all made before anything is written. A check marked **`session` result** does not raise:
+`start` / `run` / `spawn` return a finished, failed run with `error.kind == "session"` (status `failed`, reason in
+`error.message`). That run gets a run id, a run directory with `run.json`, `events.jsonl` (`run.started`,
+`run.finished`) and `result.json` (so it is listed by `phd.runs.list()`), reaches the sinks, and has `home_dir == ""`;
+no harness is started, no home is created, no lock is taken. `plan()` always raises `NotResumable`. The other
+checks (rules, containment, links, `run.json`, busy) raise, because they are caller errors or integrity problems.
+If the harness itself reports that the session no longer exists (claude `No conversation found`, codex
+`no rollout found for thread`, opencode `Session not found`), the run's error kind is `session` too.
 
 | Check | Why | If it fails |
 |---|---|---|
 | `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
-| a run in **this** dispatcher's ledger has that session: a finished run with `RunResult.session_id == session_id`, else a run whose `session.json` names it and that never wrote `result.json` (it crashed) | PHD finds the session's home through the ledger; the latest finished run (by `started_at`) is used, whatever its status; without one, the newest crashed run is | `NotResumable` ("no run with session") |
-| that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
-| a run that never finished was not started with `resumable=False` | such a run asked for its home to be discarded | `NotResumable` ("was not resumable (resumable=False) and did not finish") |
+| a run in **this** dispatcher's ledger has that session: a finished run with `RunResult.session_id == session_id`, else a run whose `session.json` names it and that never wrote `result.json` (it crashed) | PHD finds the session's home through the ledger; the latest finished run (by `started_at`) is used, whatever its status; without one, the newest crashed run is | run with `error.kind == "session"` ("no run with session") |
+| that run's harness is `spec.harness` | sessions are harness-specific | `session` result ("belongs to") |
+| a run that never finished was not started with `resumable=False` | such a run asked for its home to be discarded | `session` result ("was not resumable (resumable=False) and did not finish") |
 | its `home_dir` is `<runs_root>/<run_id>/home` of a run in this ledger (resolved; the run dir has a `run.json`) and not a symlink or junction | `home_dir` is read from `result.json`, and resuming deletes PHD-owned paths under it | `NotResumable` ("is not a run home", "is a symlink or junction") |
-| its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |
+| its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `session` result ("no longer exists"); happens after `resumable=False` |
 | no PHD-owned path in the home (or a parent of one inside it) is a symlink or junction | deletion must never leave the home | `NotResumable` ("is a symlink or junction") |
-| its `cwd` is `spec.cwd` | claude keys sessions by working directory | `NotResumable` ("ran in cwd") |
+| its `cwd` is `spec.cwd` | claude keys sessions by working directory | `session` result ("ran in cwd") |
 | the session run's `run.json` exists | it carries the session's `rules_text` | `NotResumable` ("has no run.json") |
 | no live run holds the session's lock | two turns must never rewrite and use the same home at once | `NotResumable` ("is busy with run …"); the empty run directory that was just allocated is removed, the home is untouched |
 

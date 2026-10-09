@@ -30,7 +30,7 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `UnsupportedFeature` | `Inputs.rules` on a resumed turn (rules are part of the session's system prompt) |
 | `InvalidSpec` | invalid `Spec` field value, including a malformed `output_schema` and a bad `idle_timeout_s` / `schema_repair` |
 | `InvalidRunsRoot` | codex `runs_root` under the system temp dir |
-| `NotResumable` | a `session_id` cannot be continued (no run has it, other harness, home gone, other `cwd`) |
+| `NotResumable` | a `session_id` cannot be continued right now (session busy, tampered home or missing `run.json`, or `plan()` with an unresumable session); other unresumable sessions come back as `error.kind == "session"` results |
 | `ModelNotSupported(harness, model, supported, hint=None)` | model not in the catalogue; attributes `harness`, `model`, `supported`, `hint` |
 
 ```python
