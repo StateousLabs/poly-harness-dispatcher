@@ -3,6 +3,7 @@ account may use it is known only after launch (error.kind="model_unavailable")."
 
 import difflib
 import hashlib
+import os
 import subprocess
 import threading
 from collections.abc import Callable, Sequence
@@ -10,6 +11,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 
 from .._util.env import clean_env
+from .._util.proc import kill_tree
 from .._util.shell import resolve_argv
 from ..errors import HarnessNotInstalled, ModelNotSupported, UnknownHarness
 from ..spec import Credentials
@@ -25,7 +27,7 @@ _LOADERS: dict[str, Callable[[Runner], list[str]]] = {
 _STATIC_CHECKS: dict[str, Callable[[str], list[str] | None]] = {"claude": claude_models.classify}
 # isolated environment overrides and cwd for each catalogue command (never the host's harness folders); a context
 # manager so per-load folders (codex's credential copy) are removed when the command ends
-_CatalogSession = Callable[[Credentials | None, str, Sequence[str] | None],
+_CatalogSession = Callable[[Credentials | None, str, Sequence[str] | None, list[str]],
                            AbstractContextManager[tuple[dict[str, str], Path]]]
 _CATALOG_SESSIONS: dict[str, _CatalogSession] = {
     "codex": codex_models.catalog_session, "opencode": opencode_models.catalog_session}
@@ -56,12 +58,28 @@ def credential_identity(credentials: Credentials | None) -> str:
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+CATALOG_TIMEOUT_S = 60
+
+
 def _run_cli(argv: list[str], *, env: dict[str, str], cwd: Path) -> str:
-    proc = subprocess.run(resolve_argv(argv), capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=60, env=env, cwd=cwd)
+    """Run a catalogue command; on timeout kill its whole process tree (on Windows `cmd.exe /c` would otherwise
+    leave the real CLI running, still holding its CODEX_HOME) and re-raise `TimeoutExpired`."""
+    group = {} if os.name == "nt" else {"start_new_session": True}
+    proc = subprocess.Popen(resolve_argv(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env, cwd=cwd,
+                            **group)
+    try:
+        stdout, stderr = proc.communicate(timeout=CATALOG_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
     if proc.returncode != 0:
-        raise RuntimeError(f"{' '.join(argv)} exited {proc.returncode}: {proc.stderr.strip()[:300]}")
-    return proc.stdout
+        raise RuntimeError(f"{' '.join(argv)} exited {proc.returncode}: {stderr.strip()[:300]}")
+    return stdout
 
 
 class ModelCatalog:
@@ -102,11 +120,12 @@ class ModelCatalog:
         self._executables = {k: list(v) for k, v in (executables or {}).items()}
         self._runner = runner
         self._cache: dict[tuple[str, str], list[str]] = {}
+        self._notes: list[str] = []  # cleanup problems of this instance's loads, reported by the next validate()
 
     def _default_runner(self, credentials: Credentials | None, identity: str) -> Runner:
         def run(argv: list[str]) -> str:
             prefix = self._executables.get(argv[0])
-            with _CATALOG_SESSIONS[argv[0]](credentials, identity, prefix) as (overrides, cwd):
+            with _CATALOG_SESSIONS[argv[0]](credentials, identity, prefix, self._notes) as (overrides, cwd):
                 return _run_cli([*prefix, *argv[1:]] if prefix else argv, env=clean_env(overrides), cwd=cwd)
         return run
 
@@ -155,7 +174,9 @@ class ModelCatalog:
         """Check `model` for `harness`; return warnings, raise if it is unknown.
 
         For codex and opencode, a catalogue that cannot be loaded (CLI missing, command failing,
-        unparsable output, timeout) yields a warning instead of an error.
+        unparsable output, timeout, an unusable PHD cache folder) yields a warning instead of an error;
+        on timeout the command's whole process tree is killed. A loaded list whose temporary codex home could not
+        be removed is kept, with a warning.
 
         Args:
             harness: Harness name.
@@ -170,6 +191,11 @@ class ModelCatalog:
             ModelNotSupported: The model is not in the catalogue (carries `supported` and a
                 closest-match `hint`).
         """
+        warnings = self._check(harness, model, credentials)
+        notes, self._notes[:] = list(self._notes), []
+        return [*warnings, *notes]
+
+    def _check(self, harness: str, model: str, credentials: Credentials | None) -> list[str]:
         static_check = _STATIC_CHECKS.get(harness)
         if static_check is not None:
             warnings = static_check(model)

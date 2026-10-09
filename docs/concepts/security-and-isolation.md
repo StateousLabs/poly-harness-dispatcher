@@ -28,9 +28,9 @@ PHD keeps a small persistent cache outside every run home. `PHD_CACHE_DIR` moves
 
 | Folder | Used by | Contents |
 |---|---|---|
-| `opencode/xdg-cache/<install>/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) of one opencode install | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes), `opencode/bin/` (ripgrep) and the npm packages opencode installs for plugins named in its config. `<install>` is a short hash of the resolved executable (path, size, mtime), so different installs never overwrite each other's cache. Shared by all runs of that install, so everything is downloaded once, not per run; this also means **plugins named via `harness_config` are installed once and shared across runs**. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete; refresh temp files older than an hour are pruned. |
+| `opencode/xdg-cache/<install>/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) of one opencode install | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes), `opencode/bin/` (ripgrep) and the npm packages opencode installs for plugins named in its config. `<install>` is a short hash of the resolved executable (path, size, mtime; the `cmd.exe /c` wrapper of a `.cmd` shim is left out, so a Windows update keeps the cache), so different installs never overwrite each other's cache. Shared by all runs of that install, so everything is downloaded once, not per run; this also means **plugins named via `harness_config` are installed once and shared across runs**. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete; refresh temp files older than an hour are pruned. |
 | `opencode/catalog-home/` | `opencode models` | the catalogue's own data, config and state folders (its `opencode.db`, logs, locks). No credential: the login travels in `OPENCODE_AUTH_CONTENT`. |
-| `codex/catalog-home/<id>/<uuid>/` | `codex debug models` | a throwaway `CODEX_HOME` per catalogue load (`<id>` is a hash of the credential, never the secret or path) holding a copy of the spec's `auth.json`. Deleted as soon as the command finishes, also when it fails. Not under the temp dir: codex refuses a temp `CODEX_HOME` (PHD warns once if `PHD_CACHE_DIR` is under it). |
+| `codex/catalog-home/<id>/<uuid>/` | `codex debug models` | a throwaway `CODEX_HOME` per catalogue load (`<id>` is a hash of the credential, never the secret or path) holding a copy of the spec's `auth.json`. Deleted as soon as the command finishes, also when it fails or times out (a timeout kills the command's whole process tree); folders left by a killed PHD process are swept by the next load once they are 10 minutes old, and a failed deletion is reported as a catalogue warning. Not under the temp dir: codex refuses a temp `CODEX_HOME` (PHD warns once if `PHD_CACHE_DIR` is under it). |
 
 The catalogue list depends on the login (opencode lists only free models without one), so it is cached per
 process per harness, executable **and credential**.
@@ -40,8 +40,8 @@ config must keep working. Harness state is isolated with the variables above ins
 
 The live test `test_a_run_leaves_the_host_harness_folders_untouched` (`tests/live/test_host_isolation.py`) runs
 one real `spawn` per harness, catalogue included, and checks that nothing in `~/.codex`, `~/.local/share/opencode`,
-`~/.cache/opencode` or `~/.local/state/opencode` changed and that Claude registered no project for the run's
-`cwd`.
+`~/.cache/opencode`, `~/.local/state/opencode` or `~/.config/opencode` changed (files by size and mtime, folders by
+presence) and that Claude registered no project for the run's `cwd`.
 
 The live test `test_self_check_is_hermetic` runs each harness in a `cwd` with poisoned `CLAUDE.md` and
 `AGENTS.md` and checks that the agent ignores them while identity, rules, both skills, the MCP server, the shell
@@ -79,7 +79,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 |---|---|
 | run home config files | `${env:NAME}` values from `Spec.secrets`, resolved into claude `mcp.json`, codex `config.toml`, opencode `opencode.json`, and `phd/hooks.resolved.json` |
 | `home/auth.json` (codex) | the full codex auth file, including any refresh token |
-| `~/.phd/cache/codex/catalog-home/<id>/<uuid>/auth.json` | the full codex auth file, including the refresh token, copied for the model catalogue. It exists only while `codex debug models` runs and is deleted right after (a crash of the PHD process in that window can leave it behind) |
+| `~/.phd/cache/codex/catalog-home/<id>/<uuid>/auth.json` | the full codex auth file, including the refresh token, copied for the model catalogue. It exists only while `codex debug models` runs and is deleted right after (a crash of the PHD process in that window can leave it behind; the next catalogue load deletes it once it is 10 minutes old) |
 | the harness process environment | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `OPENCODE_AUTH_CONTENT` |
 | `events.jsonl`, `stderr.log`, `result_text` | whatever the harness prints, unfiltered: if the agent echoes a secret it is recorded |
 

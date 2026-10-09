@@ -2,7 +2,7 @@
 
     PHD_LIVE=1 uv run pytest tests/live/test_host_isolation.py -v
 
-What is snapshotted (every file and directory with size and mtime; recursive, bounded):
+What is snapshotted (every file with size and mtime, every directory as present or absent; recursive, bounded):
 - `~/.codex`, `~/.local/share/opencode`, `~/.cache/opencode`, `~/.local/state/opencode`, `~/.config/opencode`: in
   full. These are written only by codex/opencode processes, so any change during the run is a leak (from the run or
   the model catalogue). Do not run other host (non-PHD) codex/opencode processes at the same time.
@@ -37,11 +37,14 @@ SNAPSHOT_ROOTS = [HOME / ".codex", HOME / ".local" / "share" / "opencode", HOME 
 MAX_FILES = 200_000
 
 
-def snapshot() -> dict[str, tuple[int, int]]:
-    seen: dict[str, tuple[int, int]] = {}
+def snapshot() -> dict[str, tuple[int, int] | str]:
+    """Files by (size, mtime); directories only by presence (their mtimes moved without any PHD involvement once)."""
+    seen: dict[str, tuple[int, int] | str] = {}
     for root in SNAPSHOT_ROOTS:
         for dirpath, dirs, files in os.walk(root):
-            for name in [*dirs, *files]:
+            for name in dirs:
+                seen[os.path.join(dirpath, name)] = "dir"
+            for name in files:
                 path = os.path.join(dirpath, name)
                 try:
                     st = os.stat(path)

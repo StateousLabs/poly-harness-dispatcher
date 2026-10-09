@@ -43,6 +43,8 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
   per credential. OpenCode runs share one PHD-owned `XDG_CACHE_HOME` per opencode install instead of the host's
   `~/.cache/opencode`. The codex catalogue copies `auth.json` (refresh token included) into a throwaway
   `CODEX_HOME` under `~/.phd/cache` only while `codex debug models` runs, and deletes it afterwards.
+  A catalogue timeout kills the command's whole process tree; homes left by a killed process are swept
+  after 10 minutes.
 - **`Event.summary`.** A one-line, secret-scrubbed summary of messages and tool events.
 - **Stable error kinds.** `ERROR_KINDS` and the `PhdError` hierarchy (`InvalidSpec`, `MissingCredentials`,
   `NotResumable`, `HarnessNotInstalled`, `UnsafeAutonomy`, ...); problems detectable before launch raise.

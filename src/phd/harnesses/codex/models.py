@@ -8,6 +8,7 @@ and with it the credential copy, is deleted as soon as the command finishes."""
 import contextlib
 import json
 import tempfile
+import time
 import uuid
 import warnings
 from collections.abc import Callable, Iterator, Sequence
@@ -19,6 +20,7 @@ from ...errors import MissingCredentials
 from ...spec import Credentials
 
 _warned_temp = False
+STALE_HOME_S = 600  # a catalogue home this old belongs to a process killed mid-load (the command times out at 60 s)
 
 
 def load(run: Callable[[list[str]], str]) -> list[str]:
@@ -41,14 +43,28 @@ def _warn_if_temp(cache: Path) -> None:
                       "catalogue will fail (set PHD_CACHE_DIR elsewhere)", RuntimeWarning, stacklevel=2)
 
 
+def _sweep_stale_homes(root: Path) -> None:
+    """Delete catalogue homes (`<identity>/<uuid>/`, any identity) left by a process killed mid-load."""
+    if not root.is_dir():
+        return
+    cutoff = time.time() - STALE_HOME_S
+    for home in root.glob("*/*"):
+        with contextlib.suppress(OSError):
+            if home.is_dir() and home.stat().st_mtime < cutoff:
+                robust_rmtree(home)
+
+
 @contextlib.contextmanager
-def catalog_session(credentials: Credentials | None, identity: str,
-                    executable: Sequence[str] | None) -> Iterator[tuple[dict[str, str], Path]]:
-    """PHD's environment overrides and cwd for one `codex debug models`; the home is removed afterwards."""
+def catalog_session(credentials: Credentials | None, identity: str, executable: Sequence[str] | None,
+                    notes: list[str]) -> Iterator[tuple[dict[str, str], Path]]:
+    """PHD's environment overrides and cwd for one `codex debug models`; the home is removed afterwards. A
+    failed removal does not discard a loaded list: it is appended to `notes` (reported as a catalogue warning)."""
     auth = _read_auth(credentials) if credentials is not None and credentials.kind == "codex_auth_file" else None
     cache = phd_cache_dir()
     _warn_if_temp(cache)
-    home = cache / "codex" / "catalog-home" / identity / uuid.uuid4().hex
+    root = cache / "codex" / "catalog-home"
+    _sweep_stale_homes(root)
+    home = root / identity / uuid.uuid4().hex
     try:
         home.mkdir(parents=True)
         if auth is not None:
@@ -56,4 +72,8 @@ def catalog_session(credentials: Credentials | None, identity: str,
         yield {"CODEX_HOME": str(home)}, home
     finally:
         if home.exists():
-            robust_rmtree(home)
+            try:
+                robust_rmtree(home)
+            except OSError as e:
+                notes.append(f"could not remove the codex catalogue home {home} (it holds a copy of auth.json; "
+                             f"PHD deletes it on a later load once it is 10 minutes old): {e}")

@@ -228,3 +228,53 @@ def test_dispatcher_runs_a_real_catalogue_process_isolated(host_env, tmp_path, m
     assert_no_host_values(seen["env"], host_env)
     assert Path(seen["cwd"]) == phd_cache_dir / "opencode" / "catalog-home"
     assert json.loads(seen["env"]["OPENCODE_AUTH_CONTENT"]) == {"opencode": {"type": "api", "key": "oc-test"}}
+
+
+def test_codex_load_sweeps_leftover_homes_older_than_ten_minutes(captured, credentials, phd_cache_dir):
+    root = phd_cache_dir / "codex" / "catalog-home"
+    old, fresh = root / "someid" / "deadbeef", root / "someid" / "cafef00d"
+    for d in (old, fresh):
+        d.mkdir(parents=True)
+        (d / "auth.json").write_text("{}", encoding="utf-8")
+    long_ago = time.time() - 3600
+    os.utime(old, (long_ago, long_ago))
+    ModelCatalog().models("codex", credentials["codex"])
+    assert not old.exists() and fresh.is_dir()
+
+
+def test_codex_home_removal_failure_is_a_warning_and_keeps_the_list(monkeypatch, captured, credentials):
+    def broken_rmtree(path):
+        raise PermissionError(13, "in use", str(path))
+    monkeypatch.setattr(codex_models, "robust_rmtree", broken_rmtree)
+    cat = ModelCatalog()
+    warns = cat.validate("codex", "gpt-5.6-terra", credentials["codex"])
+    assert len(warns) == 1 and "could not remove" in warns[0] and "auth.json" in warns[0]
+    assert cat.models("codex", credentials["codex"]) == ["gpt-5.6-terra"]
+
+
+def test_catalogue_timeout_kills_the_whole_process_tree(monkeypatch, tmp_path, credentials, phd_cache_dir):
+    from helpers import wait_dead
+    pid_file = tmp_path / "child.pid"
+    monkeypatch.setenv("FAKE_CHILD_PID", str(pid_file))
+    monkeypatch.setattr(catalog, "CATALOG_TIMEOUT_S", 3)
+    hanging = [sys.executable, str(Path(FAKE_HARNESS).parent / "hanging_catalog.py")]
+    warns = ModelCatalog(executables={"codex": hanging}).validate("codex", "gpt-5.6-terra", credentials["codex"])
+    assert len(warns) == 1 and "was not checked" in warns[0]
+    assert wait_dead(int(pid_file.read_text(encoding="utf-8")), timeout=10), "the catalogue's child survived"
+    assert list(phd_cache_dir.rglob("auth.json")) == []
+
+
+def test_install_key_ignores_the_comspec_wrapper(monkeypatch, tmp_path):
+    shim = tmp_path / "opencode.cmd"
+    shim.write_text("@echo off", encoding="utf-8")
+    cmd_a, cmd_b = tmp_path / "a" / "cmd.exe", tmp_path / "b" / "cmd.exe"
+    for exe, body in ((cmd_a, "old build"), (cmd_b, "patched build, other size")):
+        exe.parent.mkdir()
+        exe.write_text(body, encoding="utf-8")
+    keys = []
+    for comspec in (cmd_a, cmd_b):
+        monkeypatch.setattr(opencode_models, "resolve_argv", lambda argv, c=comspec: [str(c), "/c", str(shim)])
+        keys.append(opencode_models.install_key(None))
+    assert keys[0] == keys[1]
+    monkeypatch.setattr(opencode_models, "resolve_argv", lambda argv: [str(cmd_a), "/c", str(tmp_path / "other.cmd")])
+    assert opencode_models.install_key(None) != keys[0]

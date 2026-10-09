@@ -33,6 +33,8 @@ def install_key(executable: Sequence[str] | None) -> str:
     argv = list(executable) if executable else ["opencode"]
     with contextlib.suppress(HarnessNotInstalled):
         argv = resolve_argv(argv)
+    if len(argv) > 2 and argv[1].lower() == "/c" and Path(argv[0]).name.lower() == "cmd.exe":
+        argv = argv[2:]  # the COMSPEC wrapper of a .cmd shim: a Windows update must not make a new, cold cache
     parts = []
     for arg in argv:
         try:
@@ -88,8 +90,8 @@ def seed_models_cache(cache: Path) -> None:
 
 
 @contextlib.contextmanager
-def catalog_session(credentials: Credentials | None, identity: str,
-                    executable: Sequence[str] | None) -> Iterator[tuple[dict[str, str], Path]]:
+def catalog_session(credentials: Credentials | None, identity: str, executable: Sequence[str] | None,
+                    notes: list[str]) -> Iterator[tuple[dict[str, str], Path]]:
     """PHD's environment overrides and cwd for `opencode models`. One shared home: the credential travels in the
     environment (`OPENCODE_AUTH_CONTENT`), never on disk, so `identity` needs no folder of its own."""
     home = catalog_home()

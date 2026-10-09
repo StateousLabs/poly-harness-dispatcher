@@ -1,6 +1,8 @@
 """Process helpers with no domain knowledge."""
 
 import os
+import signal
+import subprocess
 
 
 def pid_alive(pid: int) -> bool:
@@ -24,3 +26,24 @@ def pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def kill_tree(proc) -> None:
+    """Kill a `subprocess.Popen` and its descendants. Windows: `taskkill /T /F` (reaches what `cmd.exe /c` started),
+    then `kill()`; POSIX: SIGKILL to the process group (start it with `start_new_session=True`)."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
