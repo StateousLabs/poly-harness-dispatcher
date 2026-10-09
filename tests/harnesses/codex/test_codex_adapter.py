@@ -62,11 +62,13 @@ def test_repo_level_skills_disabled_unless_full(tmp_path, make_spec, inputs, wor
 
 
 def test_codex_full_autonomy_and_output_schema(tmp_path, make_spec, inputs, fake_user_home):
-    m = materialize_spec(make_spec("codex", autonomy="full", unsafe=True, output_schema={"type": "object"}),
+    schema = {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}
+    m = materialize_spec(make_spec("codex", autonomy="full", unsafe=True, output_schema=schema),
                     inputs, run_id="r", run_dir=tmp_path / "r")
     assert tomllib.loads((m.home / "config.toml").read_text(encoding="utf-8"))["sandbox_mode"] == "danger-full-access"
     schema_path = m.argv[m.argv.index("--output-schema") + 1]
-    assert json.loads(open(schema_path, encoding="utf-8").read()) == {"type": "object", "additionalProperties": False}
+    assert json.loads(open(schema_path, encoding="utf-8").read()) == {
+        "type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"], "additionalProperties": False}
     assert m.argv[-1] == "-"
 
 

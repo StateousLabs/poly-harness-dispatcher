@@ -48,8 +48,9 @@ src/phd/
     base.py            Adapter and StreamParser protocols
     outcome.py         Outcome, classify_error, as_int
     catalog.py         ModelCatalog
+    schema_wrap.py     wrap / unwrap a non-object output_schema (claude, codex)
     summary.py         shared Event.summary formatting (finish, tool_line, outcome_line)
-    claude/ codex/ opencode/   adapter.py, parser.py, models.py
+    claude/ codex/ opencode/   adapter.py, parser.py, models.py (codex also schema.py: strict-mode output_schema)
   execution/         launching and driving runs
     dispatcher.py      Dispatcher
     handle.py          RunHandle

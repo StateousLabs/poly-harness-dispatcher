@@ -429,7 +429,7 @@ def test_structured_output_from_result_text(tmp_path, monkeypatch, make_spec, in
                       '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"{\\"ok\\": true}"}}\n'
                       '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\n', encoding="utf-8")
     monkeypatch.setenv("FAKE_STREAM", str(stream))
-    r = dispatcher(make_spec("codex", output_schema={"type": "object"}), tmp_path).spawn(inputs)
+    r = dispatcher(make_spec("codex", output_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}), tmp_path).spawn(inputs)
     assert r.structured_output == {"ok": True}
 
 

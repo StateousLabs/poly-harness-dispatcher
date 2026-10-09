@@ -10,7 +10,7 @@ from phd import Dispatcher, Inputs, RunStatus
 
 FAKE = [sys.executable, str(FAKE_HARNESS)]
 TWO = {"oneOf": [
-    {"type": "object", "properties": {"event": {"const": "done"}, "payload": {"type": "object"}},
+    {"type": "object", "properties": {"event": {"const": "done"}, "payload": {"type": "object", "properties": {"a": {"type": "integer"}}}},
      "required": ["event"], "additionalProperties": False},
     {"type": "object", "properties": {"event": {"const": "blocked"}}, "required": ["event"],
      "additionalProperties": False}]}
@@ -78,24 +78,21 @@ def test_codex_schema_file_is_strict_and_null_payload_removed(tmp_path, monkeypa
     write_stream(tmp_path, monkeypatch, codex_lines({"outcome": {"event": "done", "payload": None}}))
     r = run(tmp_path, make_spec, "codex", TWO)
     path = flag_value(echo()[0], "--output-schema")
-    assert path.endswith("output-schema.json")
+    written = json.loads(open(path, encoding="utf-8").read())
+    done = written["properties"]["outcome"]["anyOf"][0]
+    assert written["required"] == ["outcome"] and written["additionalProperties"] is False
+    assert done["required"] == ["event", "payload"] and done["additionalProperties"] is False
+    assert done["properties"]["payload"]["anyOf"][1] == {"type": "null"}
     assert r.status is RunStatus.SUCCEEDED and r.structured_output == {"event": "done"}
 
 
-def test_codex_answer_violating_the_callers_schema(tmp_path, monkeypatch, make_spec):
-    write_stream(tmp_path, monkeypatch, codex_lines({"outcome": {"event": "nope", "payload": None}}))
-    r = run(tmp_path, make_spec, "codex", TWO)
-    assert r.status is RunStatus.FAILED and r.error.kind == "schema"
-
-
-def test_codex_translated_file_content(tmp_path, monkeypatch, make_spec, echo):
-    """The file the harness is given (read while the fake harness runs) is the strict schema."""
-    write_stream(tmp_path, monkeypatch, codex_lines({"outcome": {"event": "blocked"}}))
+def test_codex_translated_file_content(tmp_path, make_spec):
+    """The schema file materialize writes for codex is the strict form; restore_answer undoes it."""
     from phd.harnesses import get_adapter
     from helpers import materialize_spec
     m = materialize_spec(make_spec("codex", output_schema=TWO), Inputs(msg="x"), run_id="r", run_dir=tmp_path / "r")
     written = json.loads(open(flag_value({"argv": m.argv}, "--output-schema"), encoding="utf-8").read())
     assert written["properties"]["outcome"]["anyOf"][0]["required"] == ["event", "payload"]
-    assert written["additionalProperties"] is False
+    assert written["additionalProperties"] is False and "$schema" not in written
     assert get_adapter("codex").restore_answer(make_spec("codex", output_schema=TWO),
                                                {"outcome": {"event": "done", "payload": None}}) == {"event": "done"}

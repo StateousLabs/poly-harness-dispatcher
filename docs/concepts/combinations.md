@@ -77,13 +77,16 @@ schema**.
   root is already an object is sent as given (claude), so existing callers see no change.
 - **Codex strict mode.** Codex (OpenAI strict structured output) is sent a converted copy: `oneOf` becomes `anyOf`;
   every property of every object is listed in `required`, and a property that was **not** required in your schema
-  becomes nullable (`{"anyOf": [<schema>, {"type": "null"}]}`); `additionalProperties` is set to `false` on **every**
-  object, whatever you set (omitted or `true`/a schema is replaced by `false`). In the answer PHD removes a `null` for
-  a property that was optional in your schema, but keeps a `null` your schema allows explicitly (for example
-  `"type": ["string", "null"]`).
-- **Unsupported on codex.** `patternProperties`, `if` / `then` / `else`, `not`, `dependentSchemas`, `dependentRequired`,
-  `unevaluatedProperties` and `unevaluatedItems` cannot be expressed in strict mode: `Dispatcher(spec)` raises
-  `UnsupportedFeature` naming the keyword (nothing is dropped silently). Claude and OpenCode accept any valid schema.
+  becomes nullable (`{"anyOf": [<schema>, {"type": "null"}]}`); `additionalProperties: false` is added on every object
+  where you omitted it (an object that has `properties`). `$schema` is dropped from the written file. In the answer PHD
+  removes a `null` for a property that was optional in your schema, but keeps a `null` your schema allows explicitly
+  (for example `"type": ["string", "null"]`).
+- **Refused for codex.** Strict mode cannot express these, so `Dispatcher(spec)` raises `UnsupportedFeature` naming the
+  keyword or the path (nothing is dropped silently): a free-form object (an object schema without `properties`, also
+  `"type": ["object", "null"]`); `additionalProperties` set to `true` or to a schema; `allOf`; a node with both `oneOf`
+  and `anyOf`; list-form `items` and `additionalItems`; `dependencies`, `dependentSchemas`, `dependentRequired`;
+  `patternProperties`, `propertyNames`, `contains`; `if` / `then` / `else`, `not`; `unevaluatedProperties`,
+  `unevaluatedItems`. Claude and OpenCode accept any valid schema.
 - **OpenCode** is unchanged: the schema is an instruction in `AGENTS.md`.
 - Resume and the repair turn use the same translated file; the repair prompt quotes the error from validating against
   your schema.

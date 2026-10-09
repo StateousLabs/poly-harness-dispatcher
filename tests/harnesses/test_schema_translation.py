@@ -55,7 +55,6 @@ def test_codex_object_root_is_converted_but_not_wrapped():
     assert s == {"type": "object",
                  "properties": {"a": {"type": "string"}, "b": {"anyOf": [{"type": "integer"}, {"type": "null"}]}},
                  "required": ["a", "b"], "additionalProperties": False}
-    assert to_strict({"type": "object"}) == {"type": "object", "additionalProperties": False}
 
 
 def test_codex_converts_defs_items_and_nested_oneof():
@@ -92,6 +91,39 @@ def test_unsupported_keywords_refused_for_codex_only(make_spec, keyword, schema)
         get_adapter("codex").validate(make_spec("codex", output_schema=schema))
     get_adapter("claude").validate(make_spec("claude", output_schema=schema))
     get_adapter("opencode").validate(make_spec("opencode", output_schema=schema))
+
+
+FREE_FORM = "free-form object"
+
+
+@pytest.mark.parametrize("schema,match", [
+    ({"type": "object"}, FREE_FORM),
+    ({"type": "object", "properties": {"a": {"type": "object"}}}, FREE_FORM),
+    ({"type": "object", "properties": {"a": {"type": ["object", "null"]}}}, FREE_FORM),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": True}, "additionalProperties"),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": {"type": "string"}},
+     "additionalProperties"),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "allOf": [{"required": ["a"]}]}, "allOf"),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "oneOf": [{}], "anyOf": [{}]}, "oneOf.*anyOf"),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "dependencies": {"a": ["a"]}}, "dependencies"),
+    ({"type": "array", "items": [{"type": "string"}]}, "items"),
+    ({"type": "array", "items": {"type": "string"}, "additionalItems": False}, "additionalItems"),
+    ({"type": "array", "items": {"type": "string"}, "contains": {"type": "string"}}, "contains"),
+    ({"type": "object", "properties": {"a": {"type": "string"}}, "propertyNames": {"pattern": "^a"}}, "propertyNames")])
+def test_codex_refuses_what_strict_mode_cannot_express(schema, match):
+    with pytest.raises(UnsupportedFeature, match=match):
+        to_strict(schema)
+
+
+def test_free_form_message_names_the_path():
+    with pytest.raises(UnsupportedFeature, match=r"at \$/properties/a\); give it properties"):
+        to_strict({"type": "object", "properties": {"a": {"type": "object"}}})
+
+
+def test_schema_key_is_dropped_for_codex_only():
+    s = {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": {"a": {"type": "string"}}}
+    assert "$schema" not in to_strict(s) and "$schema" not in to_strict(TWO_BRANCH | s)
+    assert wrap(s)["$schema"] == s["$schema"]
 
 
 def test_a_property_named_like_a_keyword_is_fine():

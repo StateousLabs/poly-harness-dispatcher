@@ -14,9 +14,13 @@ from ...errors import UnsupportedFeature
 from ..schema_wrap import needs_wrap, unwrap, wrap
 
 # Keywords the conversion cannot express; refused rather than silently dropped.
+# `allOf` is refused too: its branches would each need `additionalProperties: false`, which makes them unsatisfiable
+# together. The draft-7 forms (`dependencies`, list `items`, `additionalItems`) and `contains` / `propertyNames`
+# have no strict-mode equivalent either.
 UNSUPPORTED = ("patternProperties", "if", "then", "else", "not", "dependentSchemas", "dependentRequired",
-               "unevaluatedProperties", "unevaluatedItems")
-_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+               "unevaluatedProperties", "unevaluatedItems", "allOf", "dependencies", "additionalItems", "contains",
+               "propertyNames")
+_LISTS = ("anyOf", "oneOf", "prefixItems")
 _MAPS = ("$defs", "definitions")
 _NULL = {"type": "null"}
 
@@ -26,7 +30,9 @@ def to_strict(schema: dict) -> dict:
 
     Raises:
         UnsupportedFeature: `schema` uses a keyword in `UNSUPPORTED`."""
-    return _strict(wrap(schema) if needs_wrap(schema) else deepcopy(schema), "$")
+    out = _strict(wrap(schema) if needs_wrap(schema) else deepcopy(schema), "$")
+    out.pop("$schema", None)  # the strict dialect is OpenAI's; a draft marker only invites a refusal
+    return out
 
 
 def _strict(node: Any, path: str) -> Any:
@@ -36,13 +42,15 @@ def _strict(node: Any, path: str) -> Any:
         if key in node:
             raise UnsupportedFeature(f"codex cannot express the {key!r} keyword in output_schema (at {path}); "
                                      "use a simpler schema or another harness")
+    if "oneOf" in node and "anyOf" in node:
+        raise UnsupportedFeature(f"codex cannot express a node with both 'oneOf' and 'anyOf' in output_schema "
+                                 f"(at {path}); use one of them")
+    if isinstance(node.get("items"), list):
+        raise UnsupportedFeature(f"codex cannot express list-form 'items' in output_schema (at {path}); "
+                                 "use a single items schema")
     out = dict(node)
     if "oneOf" in out:
-        branches = out.pop("oneOf")
-        if "anyOf" in out:  # both present: keep both constraints
-            out["allOf"] = [*out.get("allOf", []), {"anyOf": branches}]
-        else:
-            out["anyOf"] = branches
+        out["anyOf"] = out.pop("oneOf")
     for key in _LISTS:
         if isinstance(out.get(key), list):
             out[key] = [_strict(s, f"{path}/{key}/{i}") for i, s in enumerate(out[key])]
@@ -51,18 +59,22 @@ def _strict(node: Any, path: str) -> Any:
             out[key] = {k: _strict(s, f"{path}/{key}/{k}") for k, s in out[key].items()}
     if isinstance(out.get("items"), dict):
         out["items"] = _strict(out["items"], f"{path}/items")
-    if out.get("type") == "object" or "properties" in out:
+    kind = out.get("type")
+    if kind == "object" or (isinstance(kind, list) and "object" in kind) or "properties" in out:
+        if "properties" not in out:
+            raise UnsupportedFeature(f"codex cannot express a free-form object (an object schema without "
+                                     f"'properties') in output_schema (at {path}); give it properties")
+        if out.get("additionalProperties", False) is not False:
+            raise UnsupportedFeature(f"codex cannot express additionalProperties other than false in output_schema "
+                                     f"(at {path}); strict mode forbids extra properties")
         required = list(out.get("required") or [])
         props = out.get("properties") or {}
         new = {}
         for name, sub in props.items():
             sub = _strict(sub, f"{path}/properties/{name}")
             new[name] = sub if name in required else {"anyOf": [sub, dict(_NULL)]}
-        if "properties" in out:
-            out["properties"] = new
-        out["required"] = required + [n for n in props if n not in required] if props else required
-        if not props and not out["required"]:
-            out.pop("required")
+        out["properties"] = new
+        out["required"] = required + [n for n in props if n not in required]
         out["additionalProperties"] = False
     return out
 
