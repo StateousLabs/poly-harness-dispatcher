@@ -48,6 +48,7 @@ src/phd/
     base.py            Adapter and StreamParser protocols
     outcome.py         Outcome, classify_error, as_int
     catalog.py         ModelCatalog
+    summary.py         shared Event.summary formatting (finish, tool_line, outcome_line)
     claude/ codex/ opencode/   adapter.py, parser.py, models.py
   execution/         launching and driving runs
     dispatcher.py      Dispatcher
@@ -262,7 +263,7 @@ scoping per project vs per agent; whether it lives in this repository.
 |---|---|---|
 | Location-agnostic core | The core takes paths and returns a `RunResult`; it knows nothing about Docker, sandboxes or HTTP, so a runner or API can wrap it unchanged | `Dispatcher`, `RunHandle` |
 | `ResultSink` | Push results to another store (database, API, message bus) alongside the local ledger | `Dispatcher(sinks=[...])`, `results/ledger.py` |
-| Adapter registry | Add a harness by implementing the `Adapter` / `StreamParser` protocols and registering it | `harnesses/__init__.py` `_ADAPTERS`, `harnesses/base.py` |
+| Adapter registry | Add a harness by implementing the `Adapter` / `StreamParser` protocols (the parser must implement `summarize` for `Event.summary`) and registering it | `harnesses/__init__.py` `_ADAPTERS`, `harnesses/base.py` |
 | `materialize(adapter, spec, inputs, *, run_id, run_dir)` | A pure step that writes a run home anywhere (for example inside a sandbox volume) without launching | `materialize/__init__.py`; `Dispatcher.plan` |
 | `runs_root` | Put run directories wherever the environment needs them | `Dispatcher(runs_root=...)` |
 | `executables` | Point a harness at a specific binary or wrapper command | `Dispatcher(executables=...)` |

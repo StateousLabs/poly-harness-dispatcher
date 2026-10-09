@@ -28,7 +28,7 @@ class OpencodeParser:
         tool = str(data.get("tool") or "tool")
         name = tool[:1].upper() + tool[1:]
         if kind == "tool_result":
-            return outcome_line(name, data.get("status") not in ("error", "failed"))
+            return outcome_line(name, data.get("status") == "completed")
         args, key = data.get("input"), _KEY_ARGUMENT.get(tool.lower())
         return tool_line(name, args.get(key) if key and isinstance(args, dict) else None)
 
@@ -49,7 +49,8 @@ class OpencodeParser:
             state = part.get("state") or {}
             data = {"tool": part.get("tool"), "id": part.get("callID") or part.get("id"), "status": state.get("status")}
             events.append(("tool_call", data | {"input": state.get("input")}))
-            events.append(("tool_result", data))
+            if state.get("status") in ("completed", "error"):
+                events.append(("tool_result", data))
         elif kind == "step_finish":
             tokens = part.get("tokens") or {}
             cache = tokens.get("cache") or {}

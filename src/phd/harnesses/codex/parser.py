@@ -28,8 +28,9 @@ class CodexParser:
         raw_tool = str(data.get("tool") or "")
         name = _TOOL_NAMES.get(raw_tool, raw_tool or "tool")
         if kind == "tool_result":
-            ok = data.get("status") == "completed" and data.get("exit_code") in (0, None)
-            return outcome_line(name, ok)
+            code = data.get("exit_code")
+            bad_code = isinstance(code, (int, float)) and not isinstance(code, bool) and code != 0
+            return outcome_line(name, data.get("status") not in ("failed", "declined") and not bad_code)
         arg = data.get("input")
         if raw_tool == "command_execution":
             return tool_line(name, arg.get("command") if isinstance(arg, dict) else None)

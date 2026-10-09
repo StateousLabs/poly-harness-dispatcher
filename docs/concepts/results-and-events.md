@@ -155,8 +155,11 @@ Key arguments: claude `Bash` command, `Read` / `Edit` / `Write` / `MultiEdit` fi
 `Glob` / `Grep` pattern, `WebFetch` url, `WebSearch` query, `Task` description; MCP tools (`mcp__server__tool`) show
 the name only. Codex: `Shell: <command>`, `Edit: <first changed path>`, `WebSearch: <query>`, `mcp:<server>/<tool>`.
 OpenCode: `Bash: <command>`, `Read` / `Edit` / `Write` file path, `Glob` / `Grep` pattern, `Webfetch` url; other tools
-show the name only. A result is `ok` when the claude result is not an error, the codex item completed with exit code 0
-(or none), or the opencode status is `completed`.
+show the name only. A result is `ok` unless it failed: claude fails when the result `is_error`; codex fails when the
+item `status` is `failed` or `declined` or its `exit_code` is a non-zero number (a missing status counts as ok);
+opencode emits a `tool_result` only once the tool's `state.status` is `completed` (`ok`) or `error` (`failed`), and for
+any other status (`pending`, `running`, none) only the `tool_call`. An empty or whitespace-only message has
+`summary == ""`.
 
 `events()` reads one queue: each event goes to exactly one iterator, so use one consumer per handle. Iterating
 again after the run finished yields nothing; read `events.jsonl` instead.

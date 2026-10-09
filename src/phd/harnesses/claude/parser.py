@@ -29,7 +29,7 @@ class ClaudeParser:
             key = _KEY_ARGUMENT.get(name)
             return tool_line(name, args.get(key) if key and isinstance(args, dict) else None)
         if kind == "tool_result":
-            return outcome_line(self._tool_names.get(data.get("id"), "tool"), not data.get("is_error"))
+            return outcome_line(self._tool_names.pop(data.get("id"), "tool"), not data.get("is_error"))
         return ""
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
@@ -51,7 +51,7 @@ class ClaudeParser:
                     events.append(("message", {"text": item["text"]}))
                 elif item.get("type") == "tool_use":
                     events.append(("tool_call", {"tool": item.get("name"), "input": item.get("input"), "id": item.get("id")}))
-                    self._tool_names[item.get("id")] = str(item.get("name"))
+                    self._tool_names[item.get("id")] = str(item.get("name") or "tool")
         elif kind == "user":
             for item in (obj.get("message") or {}).get("content") or []:
                 if isinstance(item, dict) and item.get("type") == "tool_result":

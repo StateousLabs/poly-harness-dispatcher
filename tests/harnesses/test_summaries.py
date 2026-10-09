@@ -106,3 +106,43 @@ def test_finish_rules():
     long = finish("message", "x" * 600)
     assert len(long) == MAX_SUMMARY == 500 and long.endswith("…") and long[:-1] == "x" * 499
     assert finish("tool_call", "y" * 500) == "y" * 500
+
+
+def test_codex_ok_rule_missing_status_is_ok():
+    p = CodexParser()
+
+    def done(item):
+        return [p.summarize(k, d) for k, d in p.feed({"type": "item.completed", "item": item})]
+
+    assert done({"id": "1", "type": "web_search", "query": "q"}) == ["WebSearch: ok"]
+    assert done({"id": "2", "type": "command_execution", "command": "x", "exit_code": 1}) == ["Shell: failed"]
+    assert done({"id": "3", "type": "file_change", "status": "failed"}) == ["Edit: failed"]
+    assert done({"id": "4", "type": "file_change", "status": "declined"}) == ["Edit: failed"]
+    assert done({"id": "5", "type": "command_execution", "command": "x", "exit_code": 0, "status": "completed"}) == [
+        "Shell: ok"]
+
+
+def test_opencode_running_part_emits_only_call():
+    p = OpencodeParser()
+    for status in ("running", "pending", None):
+        state = {"input": {"command": "ls"}} | ({"status": status} if status else {})
+        evs = p.feed({"type": "tool_use", "part": {"tool": "bash", "callID": "c", "state": state}})
+        assert [k for k, _ in evs] == ["tool_call"]
+
+
+def test_claude_nameless_tool_and_map_is_popped():
+    p = ClaudeParser()
+    [(k, d)] = p.feed({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t"}]}})
+    assert p.summarize(k, d) == "tool"
+    [(k, d)] = p.feed({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t"}]}})
+    assert p.summarize(k, d) == "tool: ok" and p._tool_names == {}
+
+
+def test_finish_line_break_edges():
+    cr, lf, ls, ps = chr(13), chr(10), chr(0x2028), chr(0x2029)
+    assert finish("message", "first" + cr + lf + "second") == "first"
+    assert finish("message", "first" + cr + "second") == "first"
+    assert finish("message", "first" + ls + "second") == "first"
+    assert finish("message", "first" + ps + "second") == "first"
+    assert finish("tool_call", "a" + ls + "b" + ps + "c" + cr + "d") == "a b c d"
+    assert finish("message", " " + cr + lf + chr(9) + " " + ls + " ") == ""
