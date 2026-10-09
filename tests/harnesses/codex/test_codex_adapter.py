@@ -4,6 +4,7 @@ import tomllib
 import pytest
 from helpers import materialize_spec
 
+from phd._util.npm import npm_env
 from phd.harnesses import get_adapter
 from phd.harnesses.codex import adapter as codex_adapter
 
@@ -42,7 +43,7 @@ def test_codex_home_layout_and_argv(tmp_path, make_spec, inputs, workdir, fake_u
     assert m.argv == ["codex", "exec", "--json", "--strict-config", "--skip-git-repo-check",
                       "-C", str(workdir), "-m", "gpt-5.6-terra", "--ignore-rules",
                       "--dangerously-bypass-hook-trust", "-"]
-    assert m.env == {"CODEX_HOME": str(home)}
+    assert m.env == {"CODEX_HOME": str(home), **npm_env()}
 
 
 def test_repo_level_skills_disabled_unless_full(tmp_path, make_spec, inputs, workdir, fake_user_home):

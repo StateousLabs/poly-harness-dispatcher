@@ -16,8 +16,7 @@ layer is planned ([Architecture](../architecture.md#roadmap-components)).
 | Other MCP sources | claude `--strict-mcp-config` (only `home/mcp.json`); codex and opencode: their user-level config is the generated one in the run home | all harnesses |
 | Host harness/auth environment variables | the child env drops every `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`, `OPENAI_*`, `OPENCODE_*`, `XDG_*` variable before PHD adds its own | all harnesses |
 | Host harness caches | opencode: `XDG_CACHE_HOME` is the shared PHD cache `~/.phd/cache/opencode/xdg-cache/<install>/` (models.json, ripgrep, plugin packages), never the host's `~/.cache/opencode`; codex and claude keep their caches in the run home | all harnesses |
-| Host npm cache and npm config | opencode's embedded npm (it installs `@opencode-ai/plugin` into config folders; PHD seeds them so it normally does not run, see [Harnesses](harnesses.md#opencode)) gets `npm_config_cache` = `~/.phd/cache/opencode/npm-cache` and an empty PHD-owned npmrc as user and global config, so it never writes `%LOCALAPPDATA%
-pm-cache` / `~/.npm` nor reads `~/.npmrc` | opencode runs and catalogue |
+| Host npm cache and npm config | every harness gets `npm_config_cache` = `~/.phd/cache/npm/cache` and the empty PHD-owned `~/.phd/cache/npm/npmrc` as `npm_config_userconfig` and `npm_config_globalconfig` (both letter cases). So no agent's `npm` command, and not opencode's embedded npm (which installs `@opencode-ai/plugin` into config folders; PHD seeds them so it normally does not run, see [Harnesses](harnesses.md#opencode)), writes the host npm cache (`%LOCALAPPDATA%/npm-cache`, `~/.npm`) or reads the host `~/.npmrc` | all harnesses, and the opencode catalogue |
 | Model catalogue lookup (`codex debug models`, `opencode models`) | runs isolated too: same stripped environment, PHD-owned homes and cwd under `~/.phd/cache/<harness>/catalog-home/`, and the spec's credentials. It never opens the host's `opencode.db` or `~/.codex/models_cache.json` and registers no project for your directory | codex, opencode |
 | Repo instructions and config in `cwd` | `project_config="ignore"` (default): claude `--setting-sources user`; codex `project_doc_max_bytes=0`, `--ignore-rules`, repo `.agents/skills` disabled; opencode `OPENCODE_DISABLE_PROJECT_CONFIG=1` | unless `project_config="full"` |
 | Harness built-in skills and plugins | `harness_builtins=False` (default); see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) | residual: claude `design`/`doctor` listed but denied |
@@ -31,7 +30,7 @@ PHD keeps a small persistent cache outside every run home. `PHD_CACHE_DIR` moves
 | Folder | Used by | Contents |
 |---|---|---|
 | `opencode/xdg-cache/<install>/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) of one opencode install | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes), `opencode/bin/` (ripgrep) and the npm packages opencode installs for plugins named in its config. `<install>` is a short hash of the resolved executable (path, size, mtime; the `cmd.exe /c` wrapper of a `.cmd` shim is left out, so a Windows update keeps the cache), so different installs never overwrite each other's cache. Shared by all runs of that install, so everything is downloaded once, not per run; this also means **plugins named via `harness_config` are installed once and shared across runs**. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete; refresh temp files older than an hour are pruned. |
-| `opencode/npm-cache/`, `opencode/npmrc` | every opencode run and the opencode catalogue (`npm_config_cache`, `npm_config_userconfig`, `npm_config_globalconfig`) | the npm cache of any install opencode's embedded npm still does (none with the dependency seed), and an empty npmrc that stands in for the user's `~/.npmrc` and the global npmrc. Shared by all installs; npm's cache is content-addressed and safe for concurrent use. |
+| `npm/cache/`, `npm/npmrc` | every run of every harness, and the opencode catalogue (`npm_config_cache`, `npm_config_userconfig`, `npm_config_globalconfig`) | the npm cache of the agents' own `npm` commands and of any install opencode's embedded npm still does (none with the dependency seed), and an empty npmrc that stands in for the user's `~/.npmrc` and the global npmrc. Shared by all runs; npm's cache is content-addressed and safe for concurrent use. |
 | `opencode/catalog-home/` | `opencode models` | the catalogue's own data, config and state folders (its `opencode.db`, logs, locks). No credential: the login travels in `OPENCODE_AUTH_CONTENT`. |
 | `codex/catalog-home/<id>/<uuid>/` | `codex debug models` | a throwaway `CODEX_HOME` per catalogue load (`<id>` is a hash of the credential, never the secret or path) holding a copy of the spec's `auth.json`. Deleted as soon as the command finishes, also when it fails or times out (a timeout kills the command's whole process tree); folders left by a killed PHD process are swept by the next load once they are 10 minutes old, and a failed deletion is reported as a catalogue warning. Not under the temp dir: codex refuses a temp `CODEX_HOME` (PHD warns once if `PHD_CACHE_DIR` is under it). |
 
@@ -39,10 +38,11 @@ The catalogue list depends on the login (opencode lists only free models without
 process per harness, executable **and credential**.
 
 `HOME` / `USERPROFILE` are deliberately **not** redirected: the agent's git identity, ssh keys and other tool
-config must keep working. Harness state is isolated with the variables above instead. One exception for opencode:
-the npm variables above are inherited by the agent's own shell commands, so `npm` run by an opencode agent uses PHD's
-npm cache and ignores `~/.npmrc` (a project `.npmrc` in `cwd` still applies); set your own `npm_config_*` through a
-stack or the command if an agent needs a private registry.
+config must keep working. Harness state is isolated with the variables above instead. One deliberate exception:
+**npm**. On every harness the agent's own `npm` commands use PHD's npm cache and ignore the host `~/.npmrc` and
+global npmrc (a project `.npmrc` in `cwd` still applies), the same as in a future sandbox run where no host npm
+config exists. Private registries are therefore not reachable unless a future stack-level npmrc provides them
+(planned).
 
 The live test `test_a_run_leaves_the_host_harness_folders_untouched` (`tests/live/test_host_isolation.py`) runs
 one real `spawn` per harness, catalogue included, and checks that nothing in `~/.codex`, `~/.local/share/opencode`,

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from ..._util.fs import write_json
+from ..._util.npm import npm_env
 from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, opencode_plugin, write_runtime
 from ...spec import Spec
@@ -60,7 +61,7 @@ class OpencodeAdapter:
                "OPENCODE_DISABLE_CLAUDE_CODE": "1", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
                "OPENCODE_DISABLE_AUTOUPDATE": "1", "XDG_DATA_HOME": str(home / "data"),
                "XDG_CONFIG_HOME": str(home / "xdg-config"), "XDG_STATE_HOME": str(home / "state"),
-               "XDG_CACHE_HOME": str(xdg_cache), **deps.npm_env(),
+               "XDG_CACHE_HOME": str(xdg_cache), **npm_env(),
                **self.credential_env(spec, home)}
         if spec.project_config != "full":
             env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ..._util.fs import write_json
+from ..._util.npm import npm_env
 from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
@@ -55,7 +56,7 @@ class ClaudeAdapter:
             argv += ["--max-budget-usd", str(spec.budget_usd)]
         if spec.output_schema is not None:
             argv += ["--json-schema", json.dumps(wrap(spec.output_schema) if needs_wrap(spec.output_schema) else spec.output_schema)]
-        env = {"CLAUDE_CONFIG_DIR": str(home), "DISABLE_AUTOUPDATER": "1", **self.credential_env(spec, home)}
+        env = {"CLAUDE_CONFIG_DIR": str(home), "DISABLE_AUTOUPDATER": "1", **self.credential_env(spec, home), **npm_env()}
         return argv, env
 
     def owned_paths(self, home: Path) -> list[Path]:

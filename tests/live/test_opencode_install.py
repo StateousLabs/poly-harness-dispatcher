@@ -6,6 +6,7 @@ Before the fix a fresh home with hooks (a plugin) stalled 17-100+ s while openco
 `@opencode-ai/plugin` into both config folders, and wrote to the host's npm cache. A home whose install was killed
 also made the next turn wait 60 s for opencode's stale-lock rule."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -30,19 +31,28 @@ RUN_S = 60
 
 
 def host_npm_index() -> Path:
-    if sys.platform == "win32":
-        return Path(os.environ["LOCALAPPDATA"]) / "npm-cache" / "_cacache" / "index-v5"
-    return Path.home() / ".npm" / "_cacache" / "index-v5"
+    """The host npm cache's index: `npm_config_cache` if set (case-insensitive on Windows), else a `cache=` line in
+    `~/.npmrc`, else npm's platform default. (`npm config get cache` is not used: npm may log into that cache.)"""
+    cache = os.environ.get("npm_config_cache") or os.environ.get("NPM_CONFIG_CACHE")
+    if not cache:
+        with contextlib.suppress(OSError):
+            for line in (Path.home() / ".npmrc").read_text(encoding="utf-8").splitlines():
+                key, _, value = line.partition("=")
+                if key.strip() == "cache" and value.strip():
+                    cache = os.path.expanduser(value.strip())
+    if not cache:
+        cache = (str(Path(os.environ["LOCALAPPDATA"]) / "npm-cache") if sys.platform == "win32"
+                 else str(Path.home() / ".npm"))
+    return Path(cache) / "_cacache" / "index-v5"
 
 
-def npm_snapshot() -> dict[str, tuple[int, int]]:
+def npm_snapshot(root: Path) -> dict[str, tuple[int, int]]:
     """Every entry of the host npm cache index (read only): about 1 s for a few thousand entries."""
-    root, out = host_npm_index(), {}
-    if root.is_dir():
-        for p in root.rglob("*"):
-            if p.is_file():
-                st = p.stat()
-                out[str(p)] = (st.st_size, st.st_mtime_ns)
+    out = {}
+    for p in root.rglob("*"):
+        if p.is_file():
+            st = p.stat()
+            out[str(p)] = (st.st_size, st.st_mtime_ns)
     return out
 
 
@@ -64,12 +74,18 @@ async def timed_run(d: Dispatcher, inputs: Inputs, session_id: str | None = None
 
 
 async def test_fresh_home_with_hooks_starts_fast_and_leaves_host_npm_cache_alone(tmp_path):
-    before = npm_snapshot()
+    index = host_npm_index()
+    if not index.is_dir():
+        pytest.skip(f"no host npm cache index at {index}: nothing to compare (install npm or set npm_config_cache)")
+    before = npm_snapshot(index)
     r, first, total = await timed_run(dispatcher(tmp_path), Inputs(msg="Reply with the word hi."))
     assert r.status is RunStatus.SUCCEEDED, (r.error, r.stderr_path)
+    home = Path(r.home_dir)
+    for folder in (home / "config", home / "xdg-config" / "opencode"):  # deterministic: no real install happened
+        assert list((folder / "node_modules").iterdir()) == [], f"opencode installed into {folder}"
     assert first is not None and first < FIRST_EVENT_S, f"first event after {first:.1f}s (plugin install stall?)"
     assert total < RUN_S, f"run took {total:.1f}s"
-    after = npm_snapshot()
+    after = npm_snapshot(index)
     changed = sorted(k for k in after if before.get(k) != after[k])
     assert changed == [], f"host npm cache gained {len(changed)} entries, e.g. {changed[:3]}"
 

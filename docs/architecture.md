@@ -21,6 +21,7 @@ src/phd/
     proc.py            pid_alive
     env.py             clean_env, HOST_ENV_PREFIXES (the stripped environment of every harness process)
     paths.py           phd_cache_dir (`$PHD_CACHE_DIR`, default ~/.phd/cache)
+    npm.py             npm_env (every harness's PHD-owned npm cache and empty npmrc)
     shell.py           shell_join (hook command lines), resolve_argv (PATH lookup, .cmd shims)
     toml.py            minimal TOML writer for codex config.toml
   stacks/            compose, resolve and store stacks (uses spec and _util only)
@@ -52,7 +53,8 @@ src/phd/
     catalog.py         ModelCatalog
     schema_wrap.py     wrap / unwrap a non-object output_schema (claude, codex)
     summary.py         shared Event.summary formatting (finish, tool_line, outcome_line)
-    claude/ codex/ opencode/   adapter.py, parser.py, models.py (codex also schema.py: strict-mode output_schema)
+    claude/ codex/ opencode/   adapter.py, parser.py, models.py (codex also schema.py: strict-mode output_schema;
+                       opencode also deps.py: the config-folder dependency seed)
   execution/         launching and driving runs
     dispatcher.py      Dispatcher
     handle.py          RunHandle

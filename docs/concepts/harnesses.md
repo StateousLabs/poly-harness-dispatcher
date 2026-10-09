@@ -16,6 +16,12 @@ Common to all three:
 - The prompt's first user message is written to the process's **stdin**; the system prompt goes into a file.
 - The child environment is the host environment minus `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`, `OPENAI_*`,
   `OPENCODE_*`, `XDG_*`, plus the variables listed per harness below.
+- Every harness also gets PHD's npm settings, each in lower and upper case with one value: `npm_config_cache` =
+  `~/.phd/cache/npm/cache`, and `npm_config_userconfig` = `npm_config_globalconfig` = the empty file
+  `~/.phd/cache/npm/npmrc`. So the agent's own `npm` commands (and opencode's embedded npm) use PHD's npm cache and
+  ignore the host's `~/.npmrc` and global npmrc; a project `.npmrc` in `cwd` still applies. Private registries are
+  not reachable this way until a stack-level npmrc provides them (planned). See
+  [Security and isolation](security-and-isolation.md).
 - `argv[0]` is resolved on `PATH` at launch (`.cmd` / `.bat` shims on Windows run as `COMSPEC /c <shim> ...`),
   unless `Dispatcher(executables={harness: [...]})` overrides it. The model catalogue command uses the same
   executable, so a wrapper must support `debug models` (codex) / `models` (opencode), or pass `validate_model=False`.
@@ -51,7 +57,8 @@ claude -p --output-format stream-json --verbose --model <model>
        [--json-schema '<output_schema as JSON>']
 ```
 
-**Environment set:** `CLAUDE_CONFIG_DIR=<home>`, `DISABLE_AUTOUPDATER=1`, plus the credential variable.
+**Environment set:** `CLAUDE_CONFIG_DIR=<home>`, `DISABLE_AUTOUPDATER=1`, plus the credential variable and the
+common npm settings (above).
 
 **Credentials:** `claude_oauth_token` → `CLAUDE_CODE_OAUTH_TOKEN`; `anthropic_api_key` → `ANTHROPIC_API_KEY`;
 `claude_host_login` → `CLAUDE_CODE_OAUTH_TOKEN` = the host file's current access token.
@@ -136,7 +143,7 @@ codex exec --json --strict-config --skip-git-repo-check -C <cwd> -m <model>
            -                                      (prompt on stdin)
 ```
 
-**Environment set:** `CODEX_HOME=<home>` only. **Credentials:** `codex_auth_file` is copied to `home/auth.json`
+**Environment set:** `CODEX_HOME=<home>` and the common npm settings (above). **Credentials:** `codex_auth_file` is copied to `home/auth.json`
 (again on every resume).
 
 **`config.toml`** (before `harness_config`):
@@ -237,8 +244,7 @@ opencode run --format json -m <provider/model> --dir <cwd> [--auto]     (--auto 
 | `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | `<home>/data`, `<home>/xdg-config`, `<home>/state` |
 | `OPENCODE_AUTH_CONTENT` | the auth file as JSON, filtered to `providers` |
 | `XDG_CACHE_HOME` | the shared PHD cache of this opencode install ([PHD cache](security-and-isolation.md#the-phd-cache-phdcache)) |
-| `npm_config_cache` | `~/.phd/cache/opencode/npm-cache` (also as `NPM_CONFIG_CACHE`) |
-| `npm_config_userconfig`, `npm_config_globalconfig` | the empty file `~/.phd/cache/opencode/npmrc` (also upper-case) |
+| `npm_config_cache`, `npm_config_userconfig`, `npm_config_globalconfig` | the common npm settings (above) |
 
 **`opencode.json`** (before `harness_config`):
 

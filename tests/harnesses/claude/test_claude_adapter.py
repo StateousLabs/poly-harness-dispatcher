@@ -3,6 +3,7 @@ import json
 import pytest
 from helpers import materialize_spec
 
+from phd._util.npm import npm_env
 from phd.constants import REDACTED
 from phd.errors import UnknownHarness
 from phd.harnesses import get_adapter
@@ -43,7 +44,7 @@ def test_claude_home_layout_and_argv(tmp_path, make_spec, inputs, workdir):
     assert a[a.index("--max-budget-usd") + 1] == "2.0"
 
     assert m.env == {"CLAUDE_CONFIG_DIR": str(home), "DISABLE_AUTOUPDATER": "1",
-                     "CLAUDE_CODE_OAUTH_TOKEN": "test-oauth-token"}
+                     "CLAUDE_CODE_OAUTH_TOKEN": "test-oauth-token", **npm_env()}
     assert m.redacted_env()["CLAUDE_CODE_OAUTH_TOKEN"] == REDACTED
     assert m.stdin.startswith("# Task brief") and "café" in m.stdin
 

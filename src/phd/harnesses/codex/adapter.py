@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..._util import toml as _toml
 from ..._util.fs import write_json, write_private
+from ..._util.npm import npm_env
 from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
@@ -95,7 +96,7 @@ class CodexAdapter:
             write_json(home / "output-schema.json", to_strict(spec.output_schema))
             argv += ["--output-schema", str(home / "output-schema.json")]
         argv.append("-")  # prompt on stdin
-        return argv, {"CODEX_HOME": str(home), **self.credential_env(spec, home)}
+        return argv, {"CODEX_HOME": str(home), **self.credential_env(spec, home), **npm_env()}
 
     def owned_paths(self, home: Path) -> list[Path]:
         """Everything `materialize` writes under `home`; the rest (sessions/, *.sqlite, logs) is codex's."""

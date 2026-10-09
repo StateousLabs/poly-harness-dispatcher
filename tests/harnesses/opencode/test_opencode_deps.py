@@ -65,11 +65,35 @@ def test_seed_is_not_a_phd_owned_path(tmp_path, make_spec, inputs):
             assert (folder / name).resolve() not in owned
 
 
-def test_run_env_points_npm_at_phd_owned_cache_and_empty_userconfig(tmp_path, make_spec, inputs, phd_cache_dir):
-    m = materialize_spec(make_spec("opencode"), inputs, run_id="r1", run_dir=tmp_path / "r1")
-    cache = Path(m.env["npm_config_cache"])
-    assert cache.is_relative_to(phd_cache_dir) and m.env["NPM_CONFIG_CACHE"] == str(cache)
-    for key in ("npm_config_userconfig", "npm_config_globalconfig"):
-        rc = Path(m.env[key])
-        assert rc.is_relative_to(phd_cache_dir) and rc.is_file() and rc.read_text(encoding="utf-8") == "", key
-        assert m.env[key.upper()] == str(rc)
+def _deps():
+    from phd.harnesses.opencode import deps
+    return deps
+
+
+def test_truncated_package_lock_is_rewritten(tmp_path):
+    folder = tmp_path / "cfg"
+    folder.mkdir()
+    (folder / "package-lock.json").write_text('{"name": "config", "lockf', encoding="utf-8")  # cut off mid-write
+    _deps().seed(folder)
+    assert_seeded(folder)
+
+
+def test_unparseable_package_json_is_replaced_with_the_default(tmp_path):
+    folder = tmp_path / "cfg"
+    folder.mkdir()
+    (folder / "package.json").write_text("{not json", encoding="utf-8")
+    _deps().seed(folder)
+    assert json.loads((folder / "package.json").read_text(encoding="utf-8")) == {"dependencies": {PLUGIN: "*"}}
+    assert_seeded(folder)
+
+
+def test_seed_writes_through_unique_temp_files(tmp_path, monkeypatch):
+    """The catalogue home is shared by processes: a fixed `<name>.tmp` would let two seeders collide."""
+    import os
+    deps = _deps()
+    seen = []
+    real = os.replace
+    monkeypatch.setattr(deps.os, "replace", lambda a, b: (seen.append(Path(a).name), real(a, b))[1])
+    deps.seed(tmp_path / "cfg")
+    assert len(seen) == 2 and all(str(os.getpid()) in n and n.endswith(".tmp") for n in seen), seen
+    assert len(set(seen)) == 2 and not any(n in ("package.json.tmp", "package-lock.json.tmp") for n in seen)

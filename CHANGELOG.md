@@ -60,8 +60,10 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
   catalogue" warning.
 - OpenCode runs with hooks start in seconds: PHD seeds both config folders (and the catalogue home) with the state
   opencode treats as "dependencies installed", so it no longer npm-installs `@opencode-ai/plugin` (17 to 100+ s and
-  122 MB per fresh home, plus a 60 s stale-lock wait after a killed install). opencode's npm uses a PHD-owned cache
-  and an empty npmrc (`npm_config_cache`, `npm_config_userconfig`, `npm_config_globalconfig`), never the host's npm
-  cache or `~/.npmrc`; the agent's own `npm` commands inherit these.
+  122 MB per fresh home, plus a 60 s stale-lock wait after a killed install).
+- Every harness's run (and the opencode catalogue) gets PHD's npm settings: `npm_config_cache` =
+  `~/.phd/cache/npm/cache` and an empty PHD-owned npmrc as `npm_config_userconfig` / `npm_config_globalconfig`.
+  Agents' own `npm` commands on claude, codex and opencode therefore use PHD's npm cache and ignore the host
+  `~/.npmrc`, so private registries are not reachable unless a future stack-level npmrc provides them (planned).
 
 [0.1.0]: https://github.com/StateousLabs/poly-harness-dispatcher/releases/tag/v0.1.0
