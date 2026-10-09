@@ -77,5 +77,8 @@ class OpencodeAdapter:
     def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
         return [*fresh_argv, "--session", session_id]
 
+    def restore_answer(self, spec: Spec, value):
+        return value  # the schema is only an instruction in AGENTS.md; the answer is already in the caller's shape
+
     def parser(self) -> OpencodeParser:
         return OpencodeParser()

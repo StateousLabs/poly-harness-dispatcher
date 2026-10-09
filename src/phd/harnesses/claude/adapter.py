@@ -7,6 +7,7 @@ from ..._util.fs import write_json
 from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
+from ..schema_wrap import needs_wrap, unwrap, wrap
 from .parser import ClaudeParser
 
 # Claude Code 2.1.287 ships bundled skills plus three builtin plugins. `disableBundledSkills` removes the
@@ -53,7 +54,7 @@ class ClaudeAdapter:
         if spec.budget_usd is not None:
             argv += ["--max-budget-usd", str(spec.budget_usd)]
         if spec.output_schema is not None:
-            argv += ["--json-schema", json.dumps(spec.output_schema)]
+            argv += ["--json-schema", json.dumps(wrap(spec.output_schema) if needs_wrap(spec.output_schema) else spec.output_schema)]
         env = {"CLAUDE_CONFIG_DIR": str(home), "DISABLE_AUTOUPDATER": "1", **self.credential_env(spec, home)}
         return argv, env
 
@@ -73,6 +74,12 @@ class ClaudeAdapter:
 
     def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
         return [*fresh_argv, "--resume", session_id]
+
+    def restore_answer(self, spec: Spec, value):
+        """The structured answer in the shape of `spec.output_schema` (unwrapped when PHD wrapped the schema)."""
+        if spec.output_schema is not None and needs_wrap(spec.output_schema):
+            return unwrap(value)
+        return value
 
     def parser(self) -> ClaudeParser:
         return ClaudeParser()

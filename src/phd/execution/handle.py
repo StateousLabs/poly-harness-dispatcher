@@ -271,6 +271,7 @@ class RunHandle:
                 pass
         if not present:
             return None, RunError("schema", "final answer is not JSON")
+        value = self._d.adapter.restore_answer(self._d.spec, value)  # back to the caller's schema shape
         problem = validate_answer(self._d.spec.output_schema, value, scrub=self._scrub)
         return value, (None if problem is None else RunError("schema", problem))
 

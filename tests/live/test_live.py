@@ -124,3 +124,24 @@ async def test_claude_session_started_comes_first(poisoned_cwd):
     r = await h.wait()
     assert r.status is RunStatus.SUCCEEDED, r.error
     assert types.index("session.started") < types.index("run.finished") and h.session_id == r.session_id
+
+
+TWO_BRANCH = {"oneOf": [
+    {"type": "object", "properties": {"event": {"const": "done"},
+                                      "payload": {"type": "object", "properties": {"summary": {"type": "string"}},
+                                                  "required": ["summary"]}},
+     "required": ["event"], "additionalProperties": False},
+    {"type": "object", "properties": {"event": {"const": "blocked"}, "reason": {"type": "string"}},
+     "required": ["event", "reason"], "additionalProperties": False}]}
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_root_oneof_schema_is_translated(harness, poisoned_cwd):
+    spec = Spec(harness=harness, model=MODELS[harness], stack=Stack.load(FIXTURES / "stack"), cwd=poisoned_cwd,
+                credentials=Credentials.from_host(harness), secrets={"ECHO_PREFIX": "phd-echo"},
+                output_schema=TWO_BRANCH, timeout_s=300)
+    r = Dispatcher(spec, runs_root=RUNS).spawn(Inputs(
+        msg="The work is finished. Report it: event done, with payload.summary set to a short sentence."))
+    assert r.status is RunStatus.SUCCEEDED, (r.error, r.stderr_path)
+    out = r.structured_output
+    assert out["event"] == "done" and isinstance(out["payload"]["summary"], str), out

@@ -60,8 +60,33 @@ schema's `$schema`, default 2020-12).
 | Harness | How the schema reaches the model | `structured_output` comes from |
 |---|---|---|
 | claude | `--json-schema '<schema JSON>'` | the `structured_output` key of claude's `result` line; else `result_text` parsed as JSON |
-| codex | schema written to `home/output-schema.json`, `--output-schema <path>` (also on resume, from the resuming `Spec`) | `result_text` parsed as JSON |
+| codex | the strict-mode converted schema (see below) written to `home/output-schema.json`, `--output-schema <path>` (also on resume, from the resuming `Spec`) | `result_text` parsed as JSON |
 | opencode | an instruction appended to the system prompt (`AGENTS.md`, section `## Final answer format`) asking for only a JSON value matching the schema. OpenCode's native `format: json_schema` exists only in its SDK/server API, not in `opencode run` | `result_text` parsed as JSON |
+
+### Per-harness schema translation
+
+Your `output_schema` is used as given; PHD adapts it for the harness and changes the answer back, so
+`RunResult.structured_output` is always in **your** schema's shape and PHD validates it against **your original
+schema**.
+
+- **Wrapper.** Claude and Codex refuse a schema whose root is not an object (a root `oneOf` / `anyOf` / `allOf` /
+  `$ref`, or a non-object type). For such a schema PHD sends
+  `{"type": "object", "properties": {"outcome": <your schema>}, "required": ["outcome"], "additionalProperties": false}`
+  (your `$schema`, `$defs` and `definitions` move to the wrapper root so local `#/$defs/...` refs keep working; a ref
+  into `#/properties/...` is not supported on wrapped schemas) and takes `outcome` out of the answer. A schema whose
+  root is already an object is sent as given (claude), so existing callers see no change.
+- **Codex strict mode.** Codex (OpenAI strict structured output) is sent a converted copy: `oneOf` becomes `anyOf`;
+  every property of every object is listed in `required`, and a property that was **not** required in your schema
+  becomes nullable (`{"anyOf": [<schema>, {"type": "null"}]}`); `additionalProperties` is set to `false` on **every**
+  object, whatever you set (omitted or `true`/a schema is replaced by `false`). In the answer PHD removes a `null` for
+  a property that was optional in your schema, but keeps a `null` your schema allows explicitly (for example
+  `"type": ["string", "null"]`).
+- **Unsupported on codex.** `patternProperties`, `if` / `then` / `else`, `not`, `dependentSchemas`, `dependentRequired`,
+  `unevaluatedProperties` and `unevaluatedItems` cannot be expressed in strict mode: `Dispatcher(spec)` raises
+  `UnsupportedFeature` naming the keyword (nothing is dropped silently). Claude and OpenCode accept any valid schema.
+- **OpenCode** is unchanged: the schema is an instruction in `AGENTS.md`.
+- Resume and the repair turn use the same translated file; the repair prompt quotes the error from validating against
+  your schema.
 
 **PHD validates the answer on every harness**, whatever the native mechanism, after the run's own error checks:
 

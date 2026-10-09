@@ -8,6 +8,7 @@ from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
 from ...spec import Spec
 from .parser import CodexParser
+from .schema import restore, to_strict
 
 RESUME_FLAGS = ("--json", "--strict-config", "--skip-git-repo-check", "--ignore-rules",
                 "--dangerously-bypass-hook-trust")
@@ -37,6 +38,8 @@ class CodexAdapter:
 
     def validate(self, spec: Spec) -> list[str]:
         check_supported("codex", spec.stack.hooks)
+        if spec.output_schema is not None:
+            to_strict(spec.output_schema)  # raises UnsupportedFeature for a keyword codex cannot express
         warnings = []
         if spec.budget_usd is not None:
             warnings.append("codex reports no cost, so budget_usd cannot be enforced for this run")
@@ -89,7 +92,7 @@ class CodexAdapter:
         if hooks:
             argv.append("--dangerously-bypass-hook-trust")  # PHD authored these hooks
         if spec.output_schema is not None:
-            write_json(home / "output-schema.json", spec.output_schema)
+            write_json(home / "output-schema.json", to_strict(spec.output_schema))
             argv += ["--output-schema", str(home / "output-schema.json")]
         argv.append("-")  # prompt on stdin
         return argv, {"CODEX_HOME": str(home), **self.credential_env(spec, home)}
@@ -113,6 +116,10 @@ class CodexAdapter:
             kept += fresh_argv[i:i + 2]
         # `exec resume` has no -C; the launcher always runs in spec.cwd
         return ["codex", "exec", "resume", session_id, *kept, "-m", spec.model, "-"]
+
+    def restore_answer(self, spec: Spec, value):
+        """The structured answer in the shape of `spec.output_schema` (unwrapped, optional nulls removed)."""
+        return value if spec.output_schema is None else restore(spec.output_schema, value)
 
     def parser(self) -> CodexParser:
         return CodexParser()

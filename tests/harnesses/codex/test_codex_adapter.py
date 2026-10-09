@@ -66,7 +66,7 @@ def test_codex_full_autonomy_and_output_schema(tmp_path, make_spec, inputs, fake
                     inputs, run_id="r", run_dir=tmp_path / "r")
     assert tomllib.loads((m.home / "config.toml").read_text(encoding="utf-8"))["sandbox_mode"] == "danger-full-access"
     schema_path = m.argv[m.argv.index("--output-schema") + 1]
-    assert json.loads(open(schema_path, encoding="utf-8").read()) == {"type": "object"}
+    assert json.loads(open(schema_path, encoding="utf-8").read()) == {"type": "object", "additionalProperties": False}
     assert m.argv[-1] == "-"
 
 
