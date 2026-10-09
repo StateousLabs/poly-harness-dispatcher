@@ -51,7 +51,8 @@ class ClaudeParser:
                 o.structured_output = obj["structured_output"]
             subtype = str(obj.get("subtype") or "")
             if obj.get("is_error") or subtype.startswith("error"):
-                errors = "; ".join(str(e) for e in obj.get("errors") or [])
+                errors = ("; ".join(str(e) for e in obj.get("errors") or [])
+                          if subtype == "error_during_execution" else "")
                 message = str(obj.get("result") or errors or obj.get("subtype") or "claude reported an error")
                 kind_ = "budget" if "budget" in subtype else classify_error(message)
                 o.error = RunError(kind_, message)

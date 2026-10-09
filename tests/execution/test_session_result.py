@@ -1,5 +1,7 @@
 """A session that cannot be resumed comes back as a failed run with kind="session"; nothing is launched."""
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -96,11 +98,31 @@ def test_not_a_session_gone_problem_still_raises(tmp_path, monkeypatch, make_spe
         d.plan(Inputs(msg="hi"), session_id="no-such-session")
     decoy = tmp_path / "decoy"
     decoy.mkdir()
+    _link_inside_home_is_refused(tmp_path, d, first)
     result_path = Path(first.run_dir) / "result.json"
     data = json.loads(result_path.read_text(encoding="utf-8")) | {"home_dir": str(decoy)}
     result_path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(NotResumable, match="not a run home"):
         d.spawn(Inputs(msg="hi"), session_id=first.session_id)
+
+
+def _link_inside_home_is_refused(tmp_path, d, first):
+    skills = Path(first.home_dir) / "skills"
+    target = tmp_path / "precious"
+    target.mkdir()
+    shutil.rmtree(skills)
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(skills))
+        else:
+            skills.symlink_to(target, target_is_directory=True)
+    except OSError as e:
+        pytest.skip(f"cannot create links here: {e}")
+    with pytest.raises(NotResumable, match="symlink or junction"):
+        d.spawn(Inputs(msg="hi"), session_id=first.session_id)
+    os.rmdir(skills) if sys.platform == "win32" else skills.unlink()
+    skills.mkdir()
 
 
 def _expired(tmp_path, monkeypatch, make_spec, harness, ok_stream):
@@ -140,3 +162,55 @@ def test_classify_error_knows_the_real_messages():
     assert classify_error(CODEX_STDERR) == "session"
     assert classify_error(OPENCODE_STDERR) == "session"
     assert classify_error("model foo not found") == "model_unavailable"
+
+
+MCP_MESSAGE = 'MCP error: Session not found (mcp server "x")'
+
+
+def test_mcp_style_session_messages_are_not_session_errors():
+    for text in (MCP_MESSAGE, "Session not found", "Error: Session not found (mcp server x)",
+                 "no rollout found for thread id 1", "No conversation found"):
+        assert classify_error(text) != "session", text
+    assert classify_error("log line" + chr(10) + OPENCODE_STDERR) == "session"
+
+
+@pytest.mark.parametrize("harness,ok_stream,line", [
+    ("codex", "codex_ok.jsonl", {"type": "error", "message": MCP_MESSAGE}),
+    ("opencode", "opencode_ok.jsonl", {"type": "error", "error": {"data": {"message": MCP_MESSAGE}}})])
+def test_an_mcp_message_in_a_fresh_runs_stream_is_not_a_session_error(tmp_path, monkeypatch, make_spec, harness,
+                                                                     ok_stream, line):
+    stream = tmp_path / "mcp.jsonl"
+    stream.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    monkeypatch.setenv("FAKE_STREAM", str(stream))
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    r = dispatcher(make_spec(harness), tmp_path).spawn(Inputs(msg="hi"))
+    assert r.error.kind != "session"
+
+
+def test_the_claude_message_on_a_fresh_run_is_a_harness_error(tmp_path, monkeypatch, make_spec):
+    stream = tmp_path / "gone.jsonl"
+    stream.write_text(json.dumps(CLAUDE_RESULT) + "\n", encoding="utf-8")
+    monkeypatch.setenv("FAKE_STREAM", str(stream))
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"))
+    assert r.error.kind == "harness_error" and "No conversation found" in r.error.message
+
+
+@pytest.mark.parametrize("harness,ok_stream", [("codex", "codex_ok.jsonl"), ("opencode", "opencode_ok.jsonl")])
+def test_an_mcp_message_in_a_resumed_crash_stays_a_harness_crash(tmp_path, monkeypatch, make_spec, harness, ok_stream):
+    d, first = _expired(tmp_path, monkeypatch, make_spec, harness, ok_stream)
+    monkeypatch.delenv("FAKE_STREAM")
+    monkeypatch.setenv("FAKE_STDERR", MCP_MESSAGE + "\n")
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    r = d.spawn(Inputs(msg="again"), session_id=first.session_id)
+    assert r.error.kind == "harness_crash"
+
+
+def test_claude_errors_fallback_is_limited_to_error_during_execution(tmp_path, monkeypatch, make_spec):
+    other = CLAUDE_RESULT | {"subtype": "error_max_turns"}
+    stream = tmp_path / "turns.jsonl"
+    stream.write_text(json.dumps(other) + "\n", encoding="utf-8")
+    monkeypatch.setenv("FAKE_STREAM", str(stream))
+    monkeypatch.setenv("FAKE_EXIT", "1")
+    r = dispatcher(make_spec("claude"), tmp_path).spawn(Inputs(msg="hi"))
+    assert r.error.message == "error_max_turns"

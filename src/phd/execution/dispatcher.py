@@ -104,7 +104,10 @@ class Dispatcher:
         Raises:
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
-            NotResumable: `session_id` cannot be continued (see `start`).
+            NotResumable: `session_id` cannot be continued: the session is busy or its home is tampered with (see
+                `start`), and, unlike `start`, also when no run has the session, it belongs to another harness, it
+                ran in another `cwd`, its home is gone, or its run crashed with `resumable=False` (there is no
+                run to return from a dry run).
             StackNotFound: The stack's folder no longer exists (removed from the store).
             UnsupportedFeature: `session_id` together with `inputs.rules`.
         """
@@ -265,6 +268,10 @@ class Dispatcher:
             inputs: The task.
             session_id: Continue this harness session (see `start`).
 
+        Yields:
+            The `RunHandle`. A session that cannot be resumed does not raise: the handle is already done and its
+            result is a failed run with `error.kind == "session"` (see `start`).
+
         Raises:
             PhdError: Any pre-launch error listed for `start`, raised on entering the block.
 
@@ -299,7 +306,8 @@ class Dispatcher:
             session_id: Continue this harness session (see `start`).
 
         Returns:
-            The finished `RunResult` (check `status` and `error`).
+            The finished `RunResult` (check `status` and `error`). A session that cannot be resumed does not
+            raise: the result is a failed run with `error.kind == "session"` (see `start`).
 
         Raises:
             RuntimeError: Called while an event loop is running (for example in Jupyter); use

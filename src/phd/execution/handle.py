@@ -430,7 +430,8 @@ class RunHandle:
         elif t.internal is not None:
             error = RunError("phd_internal", f"{type(t.internal).__name__}: {t.internal}")
         elif o.error is not None:
-            error = o.error
+            # a fresh run has no session to lose: the harness's "session gone" wording means something else
+            error = o.error if o.error.kind != "session" or self._resume_session else RunError("harness_error", o.error.message)
         elif t.exit_code != 0:
             tail = self._scrub(self._proc.stderr_tail())
             # a resumed turn whose CLI says it no longer has the session (codex, opencode: stderr only)

@@ -70,7 +70,7 @@ PHD picks **one** error, checking these in order; the first that applies wins:
 | 4 | `budget` | PHD stopped the run on streamed cost | `cost ... exceeded budget_usd=...` |
 | 5 | `stream_overflow` | a stdout line exceeded 16 MiB | |
 | 6 | `phd_internal` | an exception inside PHD after launch | exception type and text |
-| 7 | `session` or parser error | the requested `session_id` cannot be resumed (unknown, other harness or `cwd`, home gone, crashed with `resumable=False`: returned before launch, nothing started), or the harness reported that the session no longer exists; otherwise the harness reported an error in its stream (classified below) | what cannot be resumed, or the harness's message |
+| 7 | `session` or parser error | the requested `session_id` cannot be resumed (unknown, other harness or `cwd`, home gone, crashed with `resumable=False`: returned before launch, nothing started), or the harness reported that the session no longer exists (claude: its result line; codex and opencode: the stderr tail of a crashed resumed turn, message `exit code N; stderr: ...`); otherwise the harness reported an error in its stream (classified below) | what cannot be resumed, or the harness's message |
 | 8 | `harness_crash` | exit code is not 0 | `exit code N; stderr: <last 2000 chars, secrets scrubbed>` |
 | 9 | `no_result` | exit code 0 but no final text and no final event | `harness exited without a final result` |
 | 10 | `schema` | the run was otherwise fine but `Spec.output_schema` is set and the answer is not JSON or does not match | `final answer is not JSON`, or `<json path>: <message>` (scrubbed of secrets, capped at 500 characters); after a [repair turn](run-lifecycle.md#schema-repair-turn) prefixed `after one repair turn: ` |
