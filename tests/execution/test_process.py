@@ -5,6 +5,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from conftest import FAKE_HARNESS, STREAMS
 from helpers import wait_dead
 from phd.execution import process as launcher
@@ -67,6 +69,36 @@ async def test_kill_tree_kills_grandchildren(tmp_path, monkeypatch):
     await asyncio.wait_for(p.wait(), timeout=15)
     assert p.killed
     assert wait_dead(grandchild), "grandchild survived kill_tree"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the taskkill fallback exists only on Windows")
+async def test_taskkill_fallback_kills_tree_without_a_job(tmp_path, monkeypatch):
+    pidfile = tmp_path / "child.pid"
+    monkeypatch.setenv("FAKE_CHILD_PIDFILE", str(pidfile))
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    p = make(tmp_path)
+    await p.start()
+    guard, p.guard = p.guard, None  # as if orphan protection were unavailable: the fallback runs
+    try:
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text():
+                break
+            await asyncio.sleep(0.05)
+        grandchild = int(pidfile.read_text())
+        harness = p.proc.pid
+        p.kill_tree()
+        await asyncio.wait_for(p.wait(), timeout=15)
+        assert wait_dead(harness) and wait_dead(grandchild), "taskkill fallback left a process alive"
+    finally:
+        p.guard = guard
+        p.close()
+
+
+def test_stderr_tail_reads_only_the_end(tmp_path):
+    p = make(tmp_path)
+    p.stderr_path.write_bytes(b"a" * 5_000_000 + "é-end".encode())
+    assert p.stderr_tail(10).endswith("é-end") and len(p.stderr_tail(10)) <= 10
+    assert make(tmp_path / "none").stderr_tail() == ""
 
 
 def test_child_env_strips_host_harness_vars(monkeypatch):  # Review Focus 1

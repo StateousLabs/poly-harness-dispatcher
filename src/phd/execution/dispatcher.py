@@ -65,7 +65,8 @@ class Dispatcher:
                 slow, so they do not run here: they run in a worker thread on the first `start()`
                 (or synchronously in `plan()`).
             validate_model: Set `False` to skip model validation entirely.
-            executables: Per-harness argv prefix replacing the CLI name, for example
+            executables: Per-harness argv prefix replacing the CLI name (also for the codex / opencode model
+                catalogue command: a wrapper must support `debug models` / `models`, or use `validate_model=False`), for example
                 `{"claude": ["/opt/claude/bin/claude"]}`. Skips the PATH lookup.
             allow_temp_runs_root: Allow a codex `runs_root` under the system temp dir.
 
@@ -245,6 +246,9 @@ class Dispatcher:
             with `error.kind == "session"` (the reason is in `error.message`). Such a run still gets a run id,
             a run directory, `result.json` and `events.jsonl` (`run.started`, `run.finished`), and reaches the sinks.
 
+        A caller cancelled while `start()` is still planning leaves nothing behind: once the worker thread finishes, the
+        session lock is released and a fresh run's directory is removed (a resumed turn's shared home is kept).
+
         Nothing here blocks the event loop: the model catalogue lookup (first call only), the home
         materialization and the ledger writes run in worker threads.
 
@@ -284,12 +288,21 @@ class Dispatcher:
 
     async def _plan_off_loop(self, inputs: Inputs, session_id: str | None):
         """`_plan` in a worker thread. If this task is cancelled meanwhile, the thread still finishes; the session
-        lock it took is released as soon as it does (nothing else owns it)."""
+        lock it took is released as soon as it does (nothing else owns it), and a fresh run's directory (with its
+        home) is removed. A resumed turn's shared home is never touched."""
         fut = asyncio.ensure_future(asyncio.to_thread(self._plan, inputs, session_id))
 
+        def cleanup(m: MaterializedHome, lock: SessionLock | None) -> None:
+            if lock is not None:
+                lock.release()
+            if session_id is None:
+                robust_rmtree(m.run_dir)
+
         def discard(f: asyncio.Future) -> None:
-            if not f.cancelled() and f.exception() is None and f.result()[3] is not None:
-                f.result()[3].release()
+            if f.cancelled() or f.exception() is not None:
+                return
+            m, _, _, lock, _ = f.result()
+            asyncio.get_running_loop().run_in_executor(None, cleanup, m, lock)  # off the loop: it deletes a tree
 
         try:
             return await asyncio.shield(fut)

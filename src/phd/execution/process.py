@@ -2,6 +2,7 @@
 line by line, and kill the whole process tree on timeout or cancel."""
 
 import asyncio
+import contextlib
 import os
 import signal
 import subprocess
@@ -123,6 +124,11 @@ class HarnessProcess:
     def _taskkill_fallback(proc) -> None:
         """Start `taskkill /T /F` without waiting for it (this can run on the event loop); a daemon thread reaps it
         and falls back to `proc.kill()` if taskkill failed. `wait()` observes the process exit as usual."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
         def kill_directly() -> None:
             if proc.returncode is None:
                 try:
@@ -139,7 +145,11 @@ class HarnessProcess:
 
         def reap() -> None:
             if tk.wait() != 0:
-                kill_directly()
+                if loop is None:
+                    kill_directly()
+                else:  # the asyncio process object belongs to the loop's thread
+                    with contextlib.suppress(RuntimeError):  # the loop has closed
+                        loop.call_soon_threadsafe(kill_directly)
 
         threading.Thread(target=reap, daemon=True, name="phd-taskkill").start()
 
@@ -166,7 +176,10 @@ class HarnessProcess:
 
     def stderr_tail(self, limit: int = 2000) -> str:
         try:
-            return self.stderr_path.read_text(encoding="utf-8", errors="replace")[-limit:]
+            with open(self.stderr_path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 4 * limit))  # a few KB is plenty for `limit` characters
+                return f.read().decode("utf-8", errors="replace")[-limit:]
         except FileNotFoundError:
             return ""
 

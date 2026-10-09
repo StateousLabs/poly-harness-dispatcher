@@ -93,3 +93,12 @@ def http_server(tmp_path):
     yield SimpleNamespace(url=f"http://127.0.0.1:{server.server_address[1]}", www=www, state=state)
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture(autouse=True)
+def fresh_catalogue_cache():
+    """The model catalogue cache is per process; every test starts without it."""
+    from phd.harnesses import catalog
+    catalog._PROCESS_CACHE.clear()
+    yield
+    catalog._PROCESS_CACHE.clear()

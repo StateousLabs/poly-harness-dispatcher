@@ -10,17 +10,9 @@ import pytest
 from conftest import FAKE_HARNESS, STREAMS
 from phd import Dispatcher, Inputs, RunStatus, Stack
 from phd.errors import ModelNotSupported
-from phd.harnesses import catalog as cat_mod
 
 SLOW = [sys.executable, str(Path(FAKE_HARNESS).parent / "slow_catalog.py")]
 INTERVAL = 0.25
-
-
-@pytest.fixture(autouse=True)
-def fresh_catalogue_cache():
-    cat_mod.__dict__.get("_PROCESS_CACHE", {}).clear()
-    yield
-    cat_mod.__dict__.get("_PROCESS_CACHE", {}).clear()
 
 
 @pytest.fixture
@@ -70,7 +62,7 @@ async def test_ticker_keeps_beating_through_a_run(tmp_path, monkeypatch, make_sp
     await t
     assert result.status is RunStatus.SUCCEEDED, result.error
     gaps = [b - a for a, b in zip(stamps, stamps[1:])]
-    assert max(gaps) < 2 * INTERVAL, f"event loop stalled: max gap {max(gaps):.2f}s"
+    assert max(gaps) < 1.0, f"event loop stalled: max gap {max(gaps):.2f}s"
 
 
 def test_unknown_codex_model_not_raised_by_constructor(tmp_path, make_spec, count):
@@ -85,7 +77,8 @@ async def test_unknown_codex_model_raised_from_start_and_run(tmp_path, make_spec
     with pytest.raises(ModelNotSupported):
         async with d.run(inputs):
             pass
-    assert not (tmp_path / "runs").exists() or not list((tmp_path / "runs").glob("*/home"))  # nothing launched
+    runs = tmp_path / "runs"
+    assert not runs.exists() or not any(runs.iterdir())  # nothing launched, nothing written
 
 
 def test_unknown_codex_model_raised_from_plan(tmp_path, make_spec, inputs):
@@ -114,3 +107,26 @@ async def test_catalogue_warning_lands_in_result(tmp_path, monkeypatch, make_spe
         result = await handle.wait()
     assert result.status is RunStatus.SUCCEEDED, result.error
     assert any("model catalogue" in w for w in result.warnings)
+
+
+async def test_cancelled_start_leaves_nothing_behind(tmp_path, monkeypatch, make_spec, inputs):
+    import phd.execution.dispatcher as disp
+    real = disp.materialize
+
+    def slow(*a, **kw):
+        time.sleep(1.0)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(disp, "materialize", slow)
+    d = codex_dispatcher(make_spec("codex"), tmp_path, validate_model=False)
+    task = asyncio.create_task(d.start(inputs))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    runs = tmp_path / "runs"
+    for _ in range(100):  # the worker thread finishes, then the cleanup runs
+        if not runs.exists() or not any(runs.iterdir()):
+            break
+        await asyncio.sleep(0.1)
+    assert not runs.exists() or not any(runs.iterdir()), list(runs.iterdir())

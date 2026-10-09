@@ -23,7 +23,8 @@ _STATIC_CHECKS: dict[str, Callable[[str], list[str] | None]] = {"claude": claude
 # Catalogues of codex / opencode, loaded once per process and shared by every ModelCatalog that uses the
 # default runner. Key: (harness, executable argv prefix; empty = the CLI found on PATH). Failures are not cached.
 _PROCESS_CACHE: dict[tuple[str, tuple[str, ...]], list[str]] = {}
-_PROCESS_LOCK = threading.Lock()
+_KEY_LOCKS: dict[tuple[str, tuple[str, ...]], threading.Lock] = {}  # one per key: different harnesses load in parallel
+_KEY_LOCKS_GUARD = threading.Lock()  # only protects creating entries of _KEY_LOCKS
 
 
 def _run_cli(argv: list[str]) -> str:
@@ -90,7 +91,9 @@ class ModelCatalog:
             self._cache[harness] = self._load(harness)
         else:
             key = (harness, tuple(self._executables.get(harness, ())))
-            with _PROCESS_LOCK:  # one load at a time; a second caller then finds it cached
+            with _KEY_LOCKS_GUARD:
+                key_lock = _KEY_LOCKS.setdefault(key, threading.Lock())
+            with key_lock:  # one load per key; a second caller then finds it cached
                 if key not in _PROCESS_CACHE:
                     _PROCESS_CACHE[key] = self._load(harness)
                 self._cache[harness] = _PROCESS_CACHE[key]

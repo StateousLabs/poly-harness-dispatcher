@@ -58,12 +58,13 @@ sequenceDiagram
 | 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result`, `_repair` | never (data) |
 | 7 | **Sinks**: `LocalLedger.put` writes `result.json` atomically, then each extra sink | `RunHandle._pump` | never: sink errors become warnings |
 
-`plan(inputs)` runs steps 2 and 3 only (and, for codex / opencode, the catalogue lookup, synchronously).
+`plan(inputs)` runs steps 2 and 3 only (and, for codex / opencode, the catalogue lookup, synchronously). Note that a `HarnessNotInstalled` at step 4 leaves a run
+directory with `run.json` and `home/` but no `result.json`. A caller cancelled while `start()` is still planning leaves
+nothing behind: the session lock is released and a fresh run's directory is removed (a resumed turn's shared home is kept).
 
 ### Never blocks the event loop
 
-Every wait in the async API is an `await`. `start()` runs the model catalogue lookup, the home materialization (stack copy, skills, credential files), the session lock and the ledger writes in worker threads (`asyncio.to_thread`); the removal of a `resumable=False` home also runs in a worker thread. The Windows `taskkill` fallback of the process-tree kill is started without waiting for it. A ticker task on the same loop keeps beating while a run starts, runs and ends. What stays on the loop is small: appending events and writing `result.json`. The blocking wrappers (`spawn`, `plan`) are for code without a running loop. Note that a `HarnessNotInstalled` at step 4 leaves a run directory with
-`run.json` and `home/` but no `result.json`.
+Every wait in the async API is an `await`. `start()` runs the model catalogue lookup, the home materialization (stack copy, skills, credential files), the session lock and the ledger writes in worker threads (`asyncio.to_thread`); the removal of a `resumable=False` home also runs in a worker thread. The Windows `taskkill` fallback of the process-tree kill is started without waiting for it. A ticker task on the same loop keeps beating while a run starts, runs and ends. What stays on the loop is small: appending events and writing `result.json`. The blocking wrappers (`spawn`, `plan`) are for code without a running loop.
 
 ## Using a run: `run()` vs `start()`
 

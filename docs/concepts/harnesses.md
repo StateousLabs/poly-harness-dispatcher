@@ -17,7 +17,8 @@ Common to all three:
 - The child environment is the host environment minus `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`, `OPENAI_*`,
   `OPENCODE_*`, `XDG_*`, plus the variables listed per harness below.
 - `argv[0]` is resolved on `PATH` at launch (`.cmd` / `.bat` shims on Windows run as `COMSPEC /c <shim> ...`),
-  unless `Dispatcher(executables={harness: [...]})` overrides it.
+  unless `Dispatcher(executables={harness: [...]})` overrides it. The model catalogue command uses the same
+  executable, so a wrapper must support `debug models` (codex) / `models` (opencode), or pass `validate_model=False`.
 - With hooks, `home/phd/` holds `hook_shim.py`, `hooks.resolved.json` and `shim_config.json` ([Hooks](hooks.md)).
 - Each adapter declares the paths it writes (`owned_paths`). Resuming a session re-materializes the same home: those
   paths plus `stack/` and `phd/` are deleted and written again from the resuming `Spec`; everything else in the
@@ -162,7 +163,8 @@ item is `result_text`; each `turn.completed` adds `usage` and counts a turn (and
 
 **Model catalogue:** `codex debug models` (JSON, the `slug` of each model). If the command fails, a warning is
 added and the model is not checked. The lookup is lazy (first `start()` / `plan()`, in a worker thread) and cached
-per process, so `ModelNotSupported` comes from `start()` / `run()` / `plan()`, not from `Dispatcher(...)`.
+per process, so `ModelNotSupported` comes from `start()` / `run()` / `plan()`, not from `Dispatcher(...)`. The default catalogue uses the same executable as the run
+(`executables[harness]`), so a wrapper script must support `debug models` / `models`, or pass `validate_model=False`.
 
 **Quirks**
 
