@@ -9,7 +9,7 @@ PHD needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Its one runtime dep
 you want to use must be installed separately and be on `PATH` (`claude`, `codex`, `opencode`).
 
 ```bash
-git clone https://github.com/Stateous/poly-harness-dispatcher
+git clone https://github.com/StateousLabs/poly-harness-dispatcher
 cd poly-harness-dispatcher
 uv sync --extra dev                 # package + pytest
 uv sync --extra dev --extra examples  # + ipykernel for the notebook
