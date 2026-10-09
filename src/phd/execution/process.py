@@ -10,17 +10,17 @@ import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from .._util.env import HOST_ENV_PREFIXES
+from .._util.env import clean_env as _clean_env
 from . import lifetime
 
-HOST_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "OPENCODE_", "XDG_")
+__all__ = ["HOST_ENV_PREFIXES", "HarnessProcess", "child_env"]
 STREAM_LIMIT = 16 * 1024 * 1024  # Claude stream-json lines carry whole tool results
 
 
 def child_env(overrides: dict[str, str]) -> dict[str, str]:
     """The host environment minus every harness/auth variable, plus PHD's own values."""
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(HOST_ENV_PREFIXES)}
-    env.update(overrides)
-    return env
+    return _clean_env(overrides)
 
 
 class HarnessProcess:

@@ -37,6 +37,10 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
 - **Structured output.** `Spec.output_schema` is validated with `jsonschema` on every harness and translated per
   harness (wrapper for non-object roots, Codex strict mode with refusal of inexpressible forms, OpenCode
   support, answer restored to the caller's shape), with an opt-in schema repair turn (`schema_repair`).
+- **Host isolation of the model catalogue and caches.** `codex debug models` / `opencode models` run with the
+  stripped environment, PHD-owned homes under `~/.phd/cache` (`PHD_CACHE_DIR`) and the spec's credentials, so
+  they no longer touch the host's `opencode.db` or `~/.codex/models_cache.json`; the catalogue cache is keyed
+  per credential. OpenCode runs share one PHD-owned `XDG_CACHE_HOME` instead of the host's `~/.cache/opencode`.
 - **`Event.summary`.** A one-line, secret-scrubbed summary of messages and tool events.
 - **Stable error kinds.** `ERROR_KINDS` and the `PhdError` hierarchy (`InvalidSpec`, `MissingCredentials`,
   `NotResumable`, `HarnessNotInstalled`, `UnsafeAutonomy`, ...); problems detectable before launch raise.

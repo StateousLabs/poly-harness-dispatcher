@@ -4,6 +4,7 @@ FAKE_CATALOG_DELAY  seconds to sleep before printing the catalogue (default 0)
 FAKE_CATALOG_COUNT  file to append one line to per catalogue invocation
 FAKE_CATALOG_FAIL   set to 1 to exit 3 from the catalogue command
 FAKE_CATALOG_MODELS comma-separated model names to list (default gpt-5.6-terra)
+FAKE_CATALOG_ENV_OUT file to write {"env": ..., "cwd": ...} of the catalogue invocation to
 """
 import json
 import os
@@ -19,6 +20,9 @@ def main() -> int:
         if path := os.environ.get("FAKE_CATALOG_COUNT"):
             with open(path, "a") as f:
                 f.write("x\n")
+        if path := os.environ.get("FAKE_CATALOG_ENV_OUT"):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"env": dict(os.environ), "cwd": os.getcwd()}, f)
         if os.environ.get("FAKE_CATALOG_FAIL") == "1":
             return 3
         time.sleep(float(os.environ.get("FAKE_CATALOG_DELAY", "0")))

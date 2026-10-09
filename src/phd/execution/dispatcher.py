@@ -97,7 +97,7 @@ class Dispatcher:
         with self._model_lock:
             if self._model_checked:
                 return
-            self.warnings += self._catalog.validate(self.spec.harness, self.spec.model)
+            self.warnings += self._catalog.validate(self.spec.harness, self.spec.model, self.spec.credentials)
             self._model_checked = True
 
     # ---- runs (fresh or resumed)

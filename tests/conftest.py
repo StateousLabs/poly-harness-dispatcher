@@ -102,3 +102,15 @@ def fresh_catalogue_cache():
     catalog._PROCESS_CACHE.clear()
     yield
     catalog._PROCESS_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def phd_cache_dir(request, tmp_path, monkeypatch):
+    """Offline tests never touch the real `~/.phd/cache`: PHD_CACHE_DIR points into tmp_path (inherited by any
+    child process). Live tests use the real default, as a user would."""
+    if request.node.get_closest_marker("live"):
+        yield None
+        return
+    path = tmp_path / "phd-cache"
+    monkeypatch.setenv("PHD_CACHE_DIR", str(path))
+    yield path

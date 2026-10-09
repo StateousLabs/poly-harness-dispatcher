@@ -15,10 +15,33 @@ layer is planned ([Architecture](../architecture.md#roadmap-components)).
 | Host user-level skills | separate config home; codex: every `~/.agents/skills/*/SKILL.md` disabled by path in `config.toml` (codex resolves the user home via the OS); opencode: `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1` | all harnesses |
 | Other MCP sources | claude `--strict-mcp-config` (only `home/mcp.json`); codex and opencode: their user-level config is the generated one in the run home | all harnesses |
 | Host harness/auth environment variables | the child env drops every `ANTHROPIC_*`, `CLAUDE_*`, `CODEX_*`, `OPENAI_*`, `OPENCODE_*`, `XDG_*` variable before PHD adds its own | all harnesses |
+| Host harness caches | opencode: `XDG_CACHE_HOME` is the shared PHD cache `~/.phd/cache/opencode/xdg-cache/` (models.json, ripgrep), never the host's `~/.cache/opencode`; codex and claude keep their caches in the run home | all harnesses |
+| Model catalogue lookup (`codex debug models`, `opencode models`) | runs isolated too: same stripped environment, PHD-owned homes and cwd under `~/.phd/cache/<harness>/catalog-home/`, and the spec's credentials. It never opens the host's `opencode.db` or `~/.codex/models_cache.json` and registers no project for your directory | codex, opencode |
 | Repo instructions and config in `cwd` | `project_config="ignore"` (default): claude `--setting-sources user`; codex `project_doc_max_bytes=0`, `--ignore-rules`, repo `.agents/skills` disabled; opencode `OPENCODE_DISABLE_PROJECT_CONFIG=1` | unless `project_config="full"` |
 | Harness built-in skills and plugins | `harness_builtins=False` (default); see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) | residual: claude `design`/`doctor` listed but denied |
 | Self-updates during a run | claude `DISABLE_AUTOUPDATER=1`; opencode `OPENCODE_DISABLE_AUTOUPDATE=1` and `"autoupdate": false` | claude, opencode |
 | Runs interfering with each other | separate run directory and home per run; the stack is copied, never modified | all |
+
+### The PHD cache (`~/.phd/cache`)
+
+PHD keeps a small persistent cache outside every run home. `PHD_CACHE_DIR` moves it (default `~/.phd/cache`):
+
+| Folder | Used by | Contents |
+|---|---|---|
+| `opencode/xdg-cache/` | every opencode run and the opencode catalogue (`XDG_CACHE_HOME`) | `opencode/models.json` (models.dev list, refreshed by opencode when older than 5 minutes) and `opencode/bin/` (ripgrep). Shared, so it is downloaded once, not per run. On first use PHD copies the host's `~/.cache/opencode/models.json` in (read only on the host), so the first catalogue is complete. |
+| `opencode/catalog-home/` | `opencode models` | the catalogue's own data, config and state folders (its `opencode.db`, logs, locks) |
+| `codex/catalog-home/<id>/` | `codex debug models` | a `CODEX_HOME` per credential (`<id>` is a hash, never the secret or path) with a copy of that `auth.json` and codex's `models_cache.json`. Not under the temp dir: codex refuses a temp `CODEX_HOME`. |
+
+The catalogue list depends on the login (opencode lists only free models without one), so it is cached per
+process per harness, executable **and credential**.
+
+`HOME` / `USERPROFILE` are deliberately **not** redirected: the agent's git identity, ssh keys, npm and other tool
+config must keep working. Harness state is isolated with the variables above instead.
+
+The live test `test_a_run_leaves_the_host_harness_folders_untouched` (`tests/live/test_host_isolation.py`) runs
+one real `spawn` per harness, catalogue included, and checks that nothing in `~/.codex`, `~/.local/share/opencode`,
+`~/.cache/opencode` or `~/.local/state/opencode` changed and that Claude registered no project for the run's
+`cwd`.
 
 The live test `test_self_check_is_hermetic` runs each harness in a `cwd` with poisoned `CLAUDE.md` and
 `AGENTS.md` and checks that the agent ignores them while identity, rules, both skills, the MCP server, the shell
@@ -72,6 +95,9 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - No sandbox; filesystem and network are open (above).
 - POSIX orphan protection has gaps: a short window between harness start and reaper start, descendants that start their own session (`setsid`) escape the reaper, and a normal finish does not kill background processes a tool left running (Windows does). If protection cannot be set up the run continues with the warning `orphan protection unavailable: ...`.
 - Non-prefixed provider keys are passed to the child (open item 11).
+- The PHD cache is shared by concurrent runs. opencode writes `models.json` through a temp file and a rename, so a
+  reader sees the old or the new file; an interrupted refresh can leave a `models.json.<pid>.<ts>.tmp` file behind
+  (harmless, delete at will). Two runs downloading ripgrep at the same moment on a cold cache was not stress-tested.
 - claude restricted mode has no PHD deny rules for paths outside `cwd` (open item 7).
 - Claude auto-memory is written inside the run home and visible to resumed runs; there is no switch yet
   (open item 5).

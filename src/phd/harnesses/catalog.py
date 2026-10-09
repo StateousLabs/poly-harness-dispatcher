@@ -2,12 +2,16 @@
 account may use it is known only after launch (error.kind="model_unavailable")."""
 
 import difflib
+import hashlib
 import subprocess
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
+from .._util.env import clean_env
 from .._util.shell import resolve_argv
 from ..errors import HarnessNotInstalled, ModelNotSupported, UnknownHarness
+from ..spec import Credentials
 from .claude import models as claude_models
 from .codex import models as codex_models
 from .opencode import models as opencode_models
@@ -18,18 +22,33 @@ _LOADERS: dict[str, Callable[[Runner], list[str]]] = {
     "claude": claude_models.load, "codex": codex_models.load, "opencode": opencode_models.load}
 # harnesses with no catalogue command: classify() returns warnings if acceptable, None if unknown
 _STATIC_CHECKS: dict[str, Callable[[str], list[str] | None]] = {"claude": claude_models.classify}
+# isolated environment overrides and cwd for each catalogue command (never the host's harness folders)
+_CATALOG_ENVS: dict[str, Callable[[Credentials | None, str], tuple[dict[str, str], Path]]] = {
+    "codex": codex_models.catalog_env, "opencode": opencode_models.catalog_env}
 
 
 # Catalogues of codex / opencode, loaded once per process and shared by every ModelCatalog that uses the
-# default runner. Key: (harness, executable argv prefix; empty = the CLI found on PATH). Failures are not cached.
-_PROCESS_CACHE: dict[tuple[str, tuple[str, ...]], list[str]] = {}
-_KEY_LOCKS: dict[tuple[str, tuple[str, ...]], threading.Lock] = {}  # one per key: different harnesses load in parallel
+# default runner. Key: (harness, executable argv prefix; empty = the CLI found on PATH, credential identity).
+# Failures are not cached.
+_Key = tuple[str, tuple[str, ...], str]
+_PROCESS_CACHE: dict[_Key, list[str]] = {}
+_KEY_LOCKS: dict[_Key, threading.Lock] = {}  # one per key: different harnesses load in parallel
 _KEY_LOCKS_GUARD = threading.Lock()  # only protects creating entries of _KEY_LOCKS
 
 
-def _run_cli(argv: list[str]) -> str:
+def credential_identity(credentials: Credentials | None) -> str:
+    """A short, one-way identity of a credential for cache keys and folder names: a hash of its kind, file,
+    provider filter and secret. Neither the secret nor the path appears in clear. `"none"` without credentials."""
+    if credentials is None:
+        return "none"
+    parts = [credentials.harness, credentials.kind, str(credentials.path or ""),
+             ",".join(credentials.providers), credentials.secret or ""]
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def _run_cli(argv: list[str], *, env: dict[str, str], cwd: Path) -> str:
     proc = subprocess.run(resolve_argv(argv), capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=60)
+                          errors="replace", timeout=60, env=env, cwd=cwd)
     if proc.returncode != 0:
         raise RuntimeError(f"{' '.join(argv)} exited {proc.returncode}: {proc.stderr.strip()[:300]}")
     return proc.stdout
@@ -42,7 +61,12 @@ class ModelCatalog:
     (`provider/model` lines); claude has no catalogue command, so PHD uses built-in aliases
     (`opus`, `sonnet`, `haiku`, `fable`) and known ids, and accepts any other `claude-*` id with a
     warning. Loaded lists are cached per instance; with the default runner they are also cached per
-    process (per harness and executable), so repeated `Dispatcher`s run each catalogue command once.
+    process (per harness, executable and credential), so repeated `Dispatcher`s run each catalogue command once.
+
+    The default runner never uses the host's harness setup: the command gets the host environment minus every
+    `ANTHROPIC_`/`CLAUDE_`/`CODEX_`/`OPENAI_`/`OPENCODE_`/`XDG_` variable, PHD-owned folders under the PHD cache
+    (`$PHD_CACHE_DIR`, default `~/.phd/cache`) as its harness home and cwd, and the given credentials. Without
+    credentials it still runs isolated, but codex and opencode then list only the models that need no login.
     `models` and `validate` block while a catalogue loads: call them from a worker thread in async code. A catalogue proves only that a model exists;
     whether the account may use it shows up after launch as `error.kind="model_unavailable"`.
 
@@ -50,7 +74,7 @@ class ModelCatalog:
         ```python
         cat = ModelCatalog()
         cat.validate("claude", "sonnet")          # [] (no warnings)
-        cat.models("opencode")                    # runs `opencode models`
+        cat.models("opencode", spec.credentials)  # runs `opencode models`, isolated
         ```
     """
 
@@ -59,54 +83,65 @@ class ModelCatalog:
 
         Args:
             runner: Function that runs a CLI argv and returns its stdout. Defaults to a
-                subprocess call with a 60 s timeout; inject one in tests. An injected runner is
-                cached per instance only.
+                subprocess call with a 60 s timeout in an isolated environment; inject one in tests.
+                An injected runner receives only the argv (no environment) and is cached per instance only.
             executables: Per-harness argv prefix replacing the CLI name in the catalogue command
                 (as `Dispatcher(executables=...)`). Only used with the default runner.
         """
         self._custom_runner = runner is not None
         self._executables = {k: list(v) for k, v in (executables or {}).items()}
-        self._run = runner or self._run_default
-        self._cache: dict[str, list[str]] = {}
+        self._runner = runner
+        self._cache: dict[tuple[str, str], list[str]] = {}
 
-    def _run_default(self, argv: list[str]) -> str:
-        prefix = self._executables.get(argv[0])
-        return _run_cli([*prefix, *argv[1:]] if prefix else argv)
+    def _default_runner(self, credentials: Credentials | None, identity: str) -> Runner:
+        def run(argv: list[str]) -> str:
+            overrides, cwd = _CATALOG_ENVS[argv[0]](credentials, identity)
+            prefix = self._executables.get(argv[0])
+            return _run_cli([*prefix, *argv[1:]] if prefix else argv, env=clean_env(overrides), cwd=cwd)
+        return run
 
     def is_static(self, harness: str) -> bool:
         """True when `validate` for `harness` needs no subprocess (claude)."""
         return harness in _STATIC_CHECKS
 
-    def models(self, harness: str) -> list[str]:
+    def models(self, harness: str, credentials: Credentials | None = None) -> list[str]:
         """Return (and cache) the known model names for `harness`.
+
+        Args:
+            harness: Harness name.
+            credentials: The login the catalogue command uses (normally `spec.credentials`). The list depends on
+                it (opencode lists only free models without one), so it is part of the cache key.
 
         Raises:
             UnknownHarness: `harness` is not supported.
             HarnessNotInstalled: The CLI is not on PATH (codex / opencode).
             RuntimeError: The catalogue command failed.
+            MissingCredentials: The credential file cannot be read.
         """
-        if harness in self._cache:
-            return self._cache[harness]
+        identity = credential_identity(credentials)
+        local_key = (harness, identity)
+        if local_key in self._cache:
+            return self._cache[local_key]
         if self._custom_runner or harness in _STATIC_CHECKS:
-            self._cache[harness] = self._load(harness)
+            self._cache[local_key] = self._load(harness, self._runner or _no_command)
         else:
-            key = (harness, tuple(self._executables.get(harness, ())))
+            key = (harness, tuple(self._executables.get(harness, ())), identity)
             with _KEY_LOCKS_GUARD:
                 key_lock = _KEY_LOCKS.setdefault(key, threading.Lock())
             with key_lock:  # one load per key; a second caller then finds it cached
                 if key not in _PROCESS_CACHE:
-                    _PROCESS_CACHE[key] = self._load(harness)
-                self._cache[harness] = _PROCESS_CACHE[key]
-        return self._cache[harness]
+                    _PROCESS_CACHE[key] = self._load(harness, self._default_runner(credentials, identity))
+                self._cache[local_key] = _PROCESS_CACHE[key]
+        return self._cache[local_key]
 
-    def _load(self, harness: str) -> list[str]:
+    def _load(self, harness: str, run: Runner) -> list[str]:
         try:
             loader = _LOADERS[harness]
         except KeyError:
             raise UnknownHarness(f"unknown harness {harness!r}") from None
-        return loader(self._run)
+        return loader(run)
 
-    def validate(self, harness: str, model: str) -> list[str]:
+    def validate(self, harness: str, model: str, credentials: Credentials | None = None) -> list[str]:
         """Check `model` for `harness`; return warnings, raise if it is unknown.
 
         For codex and opencode, a catalogue that cannot be loaded (CLI missing, command failing,
@@ -116,6 +151,7 @@ class ModelCatalog:
             harness: Harness name.
             model: Model name as it would go in `Spec.model`. For claude a context suffix such
                 as `[1m]` is ignored when matching.
+            credentials: The login the catalogue command uses (see `models`).
 
         Returns:
             Warnings (empty when the model is known).
@@ -129,15 +165,19 @@ class ModelCatalog:
             warnings = static_check(model)
             if warnings is not None:
                 return warnings
-            known = self.models(harness)
+            known = self.models(harness, credentials)
             raise ModelNotSupported(harness, model, known, _closest(model, known))
         try:
-            known = self.models(harness)
+            known = self.models(harness, credentials)
         except (HarnessNotInstalled, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
             return [f"could not load the {harness} model catalogue ({e}); model {model!r} was not checked"]
         if model in known:
             return []
         raise ModelNotSupported(harness, model, known, _closest(model, known))
+
+
+def _no_command(argv: list[str]) -> str:
+    raise AssertionError(f"static catalogue ran a command: {argv}")
 
 
 def _closest(model: str, known: list[str]) -> str | None:

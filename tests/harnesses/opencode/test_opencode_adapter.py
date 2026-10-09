@@ -85,3 +85,13 @@ def test_opencode_output_schema_goes_into_agents_md(tmp_path, make_spec, inputs)
     m = materialize_spec(spec, inputs, run_id="r1", run_dir=tmp_path / "r1")
     text = (m.home / "AGENTS.md").read_text(encoding="utf-8")
     assert "must be only a JSON value that matches this JSON Schema" in text and '"done"' in text
+
+
+def test_opencode_runs_share_one_phd_owned_xdg_cache(tmp_path, make_spec, inputs, phd_cache_dir):
+    """Runs never use the host's ~/.cache/opencode (models.json refresh, ripgrep) nor a per-run cache."""
+    a = materialize_spec(make_spec("opencode"), inputs, run_id="r1", run_dir=tmp_path / "r1")
+    b = materialize_spec(make_spec("opencode"), inputs, run_id="r2", run_dir=tmp_path / "r2")
+    shared = phd_cache_dir / "opencode" / "xdg-cache"
+    assert a.env["XDG_CACHE_HOME"] == b.env["XDG_CACHE_HOME"] == str(shared)
+    assert shared.is_dir()
+    assert "HOME" not in a.env and "USERPROFILE" not in a.env

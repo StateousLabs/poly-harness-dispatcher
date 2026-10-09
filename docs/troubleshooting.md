@@ -66,7 +66,8 @@ Other symptoms:
 | a hook never fires | the generated matcher in `home/settings.json` / `home/hooks.json` / `home/config/plugin/phd-hooks.js`; the resolved command in `home/phd/hooks.resolved.json`; run that command by hand with a sample payload on stdin |
 | a hook should block but does not | for `pre_tool`, any non-zero exit blocks, so check the hook matches the tool (`tool:`) and that the event is `pre_tool`; other events never block ([exit codes](concepts/hooks.md#exit-codes)) |
 | `orphan protection unavailable: <Type>: <msg>` warning | the run went ahead, but nothing ties the harness to your process: if your program is killed, the agent may keep running. Windows: the Job Object could not be created or the process assigned (for example it already runs in a job that forbids nesting); POSIX: the reaper process could not start (`... reaper did not start (...)`). Cancel and timeouts still kill the tree. (If the Windows harness cannot be resumed at all, the run fails and the same text is in `warnings`.) |
-| `could not load the <harness> model catalogue` warning | the catalogue command failed; the model was not checked |
+| `could not load the <harness> model catalogue` warning | the catalogue command failed; the model was not checked. It runs isolated under `~/.phd/cache/<harness>/catalog-home/`: codex needs that folder outside the temp dir (check `PHD_CACHE_DIR`) |
+| a brand-new opencode model is reported as `ModelNotSupported` | the shared cache's `~/.phd/cache/opencode/xdg-cache/opencode/models.json` is stale or missing (opencode then uses its bundled list); one opencode run refreshes it, or delete it to re-seed from `~/.cache/opencode/models.json` |
 | run directories pile up | PHD never prunes `runs_root`; delete old `<run_id>/` folders yourself |
 
 ## Windows notes

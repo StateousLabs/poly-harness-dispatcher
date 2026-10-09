@@ -19,6 +19,8 @@ src/phd/
     fs.py              write_json, write_json_atomic, write_private, deep_merge, robust_rmtree, is_within
     names.py           is_safe_part (portable folder names: stack name / version)
     proc.py            pid_alive
+    env.py             clean_env, HOST_ENV_PREFIXES (the stripped environment of every harness process)
+    paths.py           phd_cache_dir (`$PHD_CACHE_DIR`, default ~/.phd/cache)
     shell.py           shell_join (hook command lines), resolve_argv (PATH lookup, .cmd shims)
     toml.py            minimal TOML writer for codex config.toml
   stacks/            compose, resolve and store stacks (uses spec and _util only)

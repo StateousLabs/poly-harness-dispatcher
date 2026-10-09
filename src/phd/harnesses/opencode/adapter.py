@@ -7,6 +7,7 @@ from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, opencode_plugin, write_runtime
 from ...spec import Spec
 from ...spec.output_schema import answer_instruction
+from .models import shared_cache_dir
 from .parser import OpencodeParser
 
 # opencode 1.18.18 hardcodes one built-in skill with no disable switch; denying it through permissions
@@ -49,11 +50,14 @@ class OpencodeAdapter:
             (cfg_dir / "plugin").mkdir(parents=True, exist_ok=True)
             (cfg_dir / "plugin" / "phd-hooks.js").write_text(opencode_plugin(hooks, shim), encoding="utf-8")
         write_json(cfg_dir / "opencode.json", ctx.merge_harness_config(config))
+        xdg_cache = shared_cache_dir()  # shared by all runs; never the host's ~/.cache/opencode, never per run
+        xdg_cache.mkdir(parents=True, exist_ok=True)
 
         env = {"OPENCODE_CONFIG": str(cfg_dir / "opencode.json"), "OPENCODE_CONFIG_DIR": str(cfg_dir),
                "OPENCODE_DISABLE_CLAUDE_CODE": "1", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
                "OPENCODE_DISABLE_AUTOUPDATE": "1", "XDG_DATA_HOME": str(home / "data"),
                "XDG_CONFIG_HOME": str(home / "xdg-config"), "XDG_STATE_HOME": str(home / "state"),
+               "XDG_CACHE_HOME": str(xdg_cache),
                **self.credential_env(spec, home)}
         if spec.project_config != "full":
             env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
