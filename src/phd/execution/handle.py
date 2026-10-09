@@ -16,6 +16,7 @@ from .._util.shell import resolve_argv
 from ..constants import REDACTED
 from ..harnesses import Outcome
 from ..harnesses.outcome import classify_error
+from ..harnesses.summary import finish as finish_summary
 from ..materialize import MaterializedHome
 from ..results import Event, RunError, RunResult, Usage
 from ..results.model import decide_status
@@ -175,8 +176,10 @@ class RunHandle:
         self._request_cancel()
         return await self.wait()
 
-    def _emit(self, sink: TextIO, kind: str, data: dict, raw: dict | None = None) -> None:
-        event = Event(run_id=self.run_id, harness=self._d.spec.harness, type=kind, data=data, ts=time.time(), raw=raw)
+    def _emit(self, sink: TextIO, kind: str, data: dict, raw: dict | None = None, summary: str = "") -> None:
+        summary = finish_summary(kind, self._scrub(summary)) if summary else ""
+        event = Event(run_id=self.run_id, harness=self._d.spec.harness, type=kind, data=data, ts=time.time(), raw=raw,
+                      summary=summary)
         sink.write(json.dumps(event.to_dict(), ensure_ascii=False, default=str) + "\n")
         self._queue.put_nowait(event)
 
@@ -397,7 +400,7 @@ class RunHandle:
             if not isinstance(obj, dict):
                 continue
             for kind, data in parser.feed(obj):
-                self._emit(events_file, kind, data, raw=obj)
+                self._emit(events_file, kind, data, raw=obj, summary=parser.summarize(kind, data))
             self._note_session(events_file, parser.outcome().session_id)
             cost = parser.running_cost()
             if cost is not None and self._cumulative:

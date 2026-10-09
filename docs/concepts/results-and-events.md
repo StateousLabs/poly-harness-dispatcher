@@ -104,19 +104,19 @@ The model catalogue proves only that a model exists; a model the account may not
 `RunHandle.events()` yields `Event` objects, and each one is also appended to `events.jsonl`:
 
 ```json
-{"run_id": "...", "harness": "claude", "type": "tool_call", "data": {"tool": "Bash", "input": {...}, "id": "toolu_..."}, "ts": 1780000000.0, "raw": {...}}
+{"run_id": "...", "harness": "claude", "type": "tool_call", "data": {"tool": "Bash", "input": {...}, "id": "toolu_..."}, "ts": 1780000000.0, "raw": {...}, "summary": "Bash: pytest -q"}
 ```
 
 `ts` is PHD's emit time (Unix seconds). `raw` is the harness JSON line the event came from, or `None` for PHD's
-own events.
+own events. `summary` is a one-line description of the event (see below).
 
 | `type` | Emitted by | `data` |
 |---|---|---|
 | `run.started` | PHD, first | `{"argv": [...], "resumed_from": ...}` |
 | `session.started` | PHD | `{"session_id": ...}`: once per run, when the harness first reports its session id (a resumed turn: right after `run.started`) |
 | `message` | parser | `{"text": ...}` |
-| `tool_call` | parser | claude `{"tool", "input", "id"}`; codex and opencode `{"tool", "id", "status"}` |
-| `tool_result` | parser | claude `{"id", "is_error"}`; codex `{"tool", "id", "status"}` |
+| `tool_call` | parser | claude `{"tool", "input", "id"}`; codex `{"tool", "id", "status", "input"}`; opencode `{"tool", "id", "status", "input"}` |
+| `tool_result` | parser | claude `{"id", "is_error"}`; codex `{"tool", "id", "status", "exit_code"}`; opencode `{"tool", "id", "status"}` |
 | `usage` | parser | `Usage` fields so far + `"cost_usd"` |
 | `schema.repair` | PHD | `{"error": ...}`: the schema error that triggered the [repair turn](run-lifecycle.md#schema-repair-turn); emitted when the repair turn starts (after its process started) |
 | `log` | PHD or parser | non-JSON stdout line: `{"text": line}`; parser warning: `{"text", "level": "warning"}`; unparsable event: `{"text": "unparsed <harness> event", "raw_type"}` |
@@ -131,11 +131,32 @@ Per harness, which native stream items produce which events:
 |---|---|---|---|
 | session start | `system` / `init`: sets `session_id`, `cli_version`; PHD emits `session.started` | `thread.started`: sets `session_id`; PHD emits `session.started` | `sessionID` on any event; PHD emits `session.started` on the first one |
 | assistant text | `assistant` text item → `message` | `item.completed` `agent_message` → `message` | `text` → `message` |
-| tool call | `assistant` `tool_use` item → `tool_call` | `item.started` of `command_execution`, `mcp_tool_call` (tool `mcp:<server>/<tool>`), `file_change`, `web_search` → `tool_call` | `tool_use` → `tool_call` |
-| tool result | `user` `tool_result` item → `tool_result` | `item.completed` of those types → `tool_result` | none |
+| tool call | `assistant` `tool_use` item → `tool_call` | `item.started` of `command_execution`, `mcp_tool_call` (tool `mcp:<server>/<tool>`), `file_change`, `web_search` → `tool_call` | `tool_use` → `tool_call` (OpenCode reports a tool once, when finished) |
+| tool result | `user` `tool_result` item → `tool_result` | `item.completed` of those types → `tool_result` | the same `tool_use` → `tool_result`, right after its `tool_call` |
 | usage / cost | `result` → `usage` (once, with `cost_usd` as claude reported it: session-cumulative on a resumed turn) | `turn.completed` → `usage` (cumulative, `cost_usd: null`) | `step_finish` → `usage` (cumulative tokens and cost) |
 | warnings | none | `item.completed` `error` item → `log` warning (except the hook-trust warning) | retryable `error` → `log` warning |
 | failure | `result` with `is_error` → error, no event | `turn.failed` / `error` → error, no event | non-retryable `error` → error, no event |
+
+### Event summary
+
+`Event.summary` (a `str`, always present, also in `events.jsonl`) is the same kind of line on every harness, so a
+caller can show or store a run's history without reading harness-specific `data`. For `message`, `tool_call` and
+`tool_result` it is one line of plain text: no newline, whitespace runs collapsed, at most 500 characters (longer
+text is cut to 499 plus `…`). Every other event type has `""`. Known secret values (`Spec.secrets` values and the
+credential secret) are scrubbed before the cut.
+
+| Event | Summary | Example |
+|---|---|---|
+| `tool_call` | `<Tool>: <key argument>`; just the tool name when the key argument is unknown | `Bash: pytest -q`, `Edit: src/app.py`, `WebSearch` |
+| `tool_result` | `<Tool>: ok` or `<Tool>: failed`, never the tool's output | `Bash: failed` |
+| `message` | the first non-empty line of the agent's text | `Implemented the login form; tests pass.` |
+
+Key arguments: claude `Bash` command, `Read` / `Edit` / `Write` / `MultiEdit` file path, `NotebookEdit` notebook path,
+`Glob` / `Grep` pattern, `WebFetch` url, `WebSearch` query, `Task` description; MCP tools (`mcp__server__tool`) show
+the name only. Codex: `Shell: <command>`, `Edit: <first changed path>`, `WebSearch: <query>`, `mcp:<server>/<tool>`.
+OpenCode: `Bash: <command>`, `Read` / `Edit` / `Write` file path, `Glob` / `Grep` pattern, `Webfetch` url; other tools
+show the name only. A result is `ok` when the claude result is not an error, the codex item completed with exit code 0
+(or none), or the opencode status is `completed`.
 
 `events()` reads one queue: each event goes to exactly one iterator, so use one consumer per handle. Iterating
 again after the run finished yields nothing; read `events.jsonl` instead.

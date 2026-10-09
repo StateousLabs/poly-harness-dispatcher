@@ -94,6 +94,10 @@ class Event:
         ts: Unix timestamp (seconds) when PHD emitted the event.
         raw: The harness JSON line the event came from; `None` for PHD's own events
             (`run.started`, `run.finished`, and `log` events for non-JSON stdout lines).
+        summary: One line of plain text (no newline, at most 500 characters, secrets scrubbed) for
+            `message`, `tool_call` and `tool_result` events, the same on every harness; `""` for every other
+            type. A tool call reads `<Tool>: <key argument>`, a tool result `<Tool>: ok` or `<Tool>: failed`
+            (never the tool's output), a message is the first non-empty line of the agent's text.
     """
 
     run_id: str
@@ -102,6 +106,7 @@ class Event:
     data: dict
     ts: float
     raw: dict | None = None
+    summary: str = ""
 
     def to_dict(self) -> dict:
         """Return the event as a JSON-ready dict (the `events.jsonl` line format)."""

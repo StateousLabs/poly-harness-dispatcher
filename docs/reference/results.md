@@ -36,7 +36,9 @@ lower-case strings). Derived from `RunResult.error.kind`.
 
 ### Event
 
-`Event(run_id, harness, type, data, ts, raw=None)`, `.to_dict() -> dict`. Frozen. `type` is one of
+`Event(run_id, harness, type, data, ts, raw=None, summary="")`, `.to_dict() -> dict`. Frozen. `summary` is a one-line,
+secret-scrubbed description (at most 500 characters) of `message`, `tool_call` and `tool_result` events and `""`
+for the rest; see [Event summary](../concepts/results-and-events.md#event-summary). `type` is one of
 `run.started`, `session.started`, `message`, `tool_call`, `tool_result`, `usage`, `log`, `schema.repair`, `run.finished`.
 
 ### LocalLedger

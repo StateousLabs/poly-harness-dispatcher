@@ -7,11 +7,30 @@ from dataclasses import asdict
 
 from ...results import RunError, Usage
 from ..outcome import Outcome, as_int, classify_error
+from ..summary import outcome_line, tool_line
+
+# tool name -> the input key that says what the call acts on
+_KEY_ARGUMENT = {"Bash": "command", "Read": "file_path", "Edit": "file_path", "Write": "file_path",
+                 "MultiEdit": "file_path", "NotebookEdit": "notebook_path", "Glob": "pattern", "Grep": "pattern",
+                 "WebFetch": "url", "WebSearch": "query", "Task": "description"}
 
 
 class ClaudeParser:
     def __init__(self) -> None:
         self.out = Outcome()
+        self._tool_names: dict[str, str] = {}  # tool_use id -> tool name, to name a tool_result
+
+    def summarize(self, kind: str, data: dict) -> str:
+        """Raw (unformatted) `Event.summary` text for an event this parser produced."""
+        if kind == "message":
+            return str(data.get("text") or "")
+        if kind == "tool_call":
+            name, args = str(data.get("tool") or "tool"), data.get("input")
+            key = _KEY_ARGUMENT.get(name)
+            return tool_line(name, args.get(key) if key and isinstance(args, dict) else None)
+        if kind == "tool_result":
+            return outcome_line(self._tool_names.get(data.get("id"), "tool"), not data.get("is_error"))
+        return ""
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
         try:
@@ -32,6 +51,7 @@ class ClaudeParser:
                     events.append(("message", {"text": item["text"]}))
                 elif item.get("type") == "tool_use":
                     events.append(("tool_call", {"tool": item.get("name"), "input": item.get("input"), "id": item.get("id")}))
+                    self._tool_names[item.get("id")] = str(item.get("name"))
         elif kind == "user":
             for item in (obj.get("message") or {}).get("content") or []:
                 if isinstance(item, dict) and item.get("type") == "tool_result":

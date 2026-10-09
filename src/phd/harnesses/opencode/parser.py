@@ -7,12 +7,30 @@ from dataclasses import asdict
 
 from ...results import RunError, Usage
 from ..outcome import Outcome, as_int, classify_error
+from ..summary import outcome_line, tool_line
+
+# lower-case tool name -> the input key that says what the call acts on
+_KEY_ARGUMENT = {"bash": "command", "read": "filePath", "edit": "filePath", "write": "filePath", "glob": "pattern",
+                 "grep": "pattern", "webfetch": "url"}
 
 
 class OpencodeParser:
     def __init__(self) -> None:
         self.out = Outcome(cost_source="harness")
         self._cost = 0.0
+
+    def summarize(self, kind: str, data: dict) -> str:
+        """Raw (unformatted) `Event.summary` text for an event this parser produced."""
+        if kind == "message":
+            return str(data.get("text") or "")
+        if kind not in ("tool_call", "tool_result"):
+            return ""
+        tool = str(data.get("tool") or "tool")
+        name = tool[:1].upper() + tool[1:]
+        if kind == "tool_result":
+            return outcome_line(name, data.get("status") not in ("error", "failed"))
+        args, key = data.get("input"), _KEY_ARGUMENT.get(tool.lower())
+        return tool_line(name, args.get(key) if key and isinstance(args, dict) else None)
 
     def feed(self, obj: dict) -> list[tuple[str, dict]]:
         try:
@@ -27,8 +45,11 @@ class OpencodeParser:
             self.out.result_text = part["text"]
             events.append(("message", {"text": part["text"]}))
         elif kind == "tool_use":
-            events.append(("tool_call", {"tool": part.get("tool"), "id": part.get("callID") or part.get("id"),
-                                         "status": (part.get("state") or {}).get("status")}))
+            # OpenCode reports a tool once, when finished: emit the call, then its result
+            state = part.get("state") or {}
+            data = {"tool": part.get("tool"), "id": part.get("callID") or part.get("id"), "status": state.get("status")}
+            events.append(("tool_call", data | {"input": state.get("input")}))
+            events.append(("tool_result", data))
         elif kind == "step_finish":
             tokens = part.get("tokens") or {}
             cache = tokens.get("cache") or {}

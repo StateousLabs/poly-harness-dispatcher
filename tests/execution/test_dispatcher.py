@@ -61,7 +61,7 @@ async def test_events_stream(tmp_path, monkeypatch, make_spec, inputs):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "opencode_ok.jsonl"))
     handle = await dispatcher(make_spec("opencode"), tmp_path).start(inputs)
     types = [ev.type async for ev in handle.events()]
-    assert types == ["run.started", "session.started", "tool_call", "usage", "message", "usage", "run.finished"]
+    assert types == ["run.started", "session.started", "tool_call", "tool_result", "usage", "message", "usage", "run.finished"]
     assert (await handle.wait()).status is RunStatus.SUCCEEDED
 
 
@@ -538,3 +538,34 @@ def test_crash_stderr_tail_is_scrubbed(tmp_path, monkeypatch, make_spec, inputs)
     assert r.error.kind == "harness_crash" and "boom" in r.error.message and "<redacted>" in r.error.message
     text = (tmp_path / "runs" / r.run_id / "result.json").read_text(encoding="utf-8")
     assert "test-oauth-token" not in text and "phd-echo" not in text
+
+
+@pytest.mark.parametrize("harness,stream", [("claude", "claude_ok"), ("codex", "codex_ok"), ("opencode", "opencode_ok")])
+def test_every_event_summary_is_one_short_line(tmp_path, monkeypatch, make_spec, inputs, harness, stream):
+    monkeypatch.setenv("FAKE_STREAM", str(STREAMS / f"{stream}.jsonl"))
+    r = dispatcher(make_spec(harness), tmp_path).spawn(inputs)
+    events = [json.loads(l) for l in open(r.events_path, encoding="utf-8")]
+    assert any(e["type"] == "tool_call" and e["summary"] for e in events)
+    for e in events:
+        assert len(e["summary"]) <= 500 and "\n" not in e["summary"] and "\r" not in e["summary"]
+        if e["type"] in ("message", "tool_call", "tool_result"):
+            assert e["summary"]
+        else:
+            assert e["summary"] == ""
+
+
+def test_summary_scrubs_secrets_before_cutting(tmp_path, monkeypatch, make_spec, inputs):
+    secret = "s3cr3t-" + "k" * 40
+    stream = tmp_path / "s.jsonl"
+    lines = [{"type": "system", "subtype": "init", "session_id": "s1"},
+             {"type": "assistant", "message": {"content": [
+                 {"type": "text", "text": f"using {secret}\nnext"},
+                 {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": f"curl -H {secret} " + "z" * 600}}]}},
+             {"type": "result", "subtype": "success", "is_error": False, "result": "ok", "session_id": "s1"}]
+    stream.write_text("\n".join(json.dumps(l) for l in lines), encoding="utf-8")
+    monkeypatch.setenv("FAKE_STREAM", str(stream))
+    r = dispatcher(make_spec("claude", secrets={"ECHO_PREFIX": "phd-echo", "TOKEN": secret}), tmp_path).spawn(inputs)
+    events = [json.loads(l) for l in open(r.events_path, encoding="utf-8")]
+    summaries = [e["summary"] for e in events if e["type"] in ("message", "tool_call")]
+    assert all(secret not in s for s in summaries) and summaries[0].startswith("using ")
+    assert len(summaries[1]) == 500 and summaries[1].endswith("…")

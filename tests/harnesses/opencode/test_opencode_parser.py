@@ -7,7 +7,7 @@ from phd.results import RunError, Usage
 
 def test_opencode_ok_sums_steps():
     events, o = feed_all(OpencodeParser(), "opencode_ok.jsonl")
-    assert [t for t, _ in events] == ["tool_call", "usage", "message", "usage"]
+    assert [t for t, _ in events] == ["tool_call", "tool_result", "usage", "message", "usage"]
     assert o.session_id == "ses_abc" and o.result_text.endswith("RULES-OK")
     assert o.usage == Usage(input_tokens=5800 + 8523 + 1000, cached_input_tokens=1000, output_tokens=350, reasoning_tokens=100)
     assert o.cost_usd == pytest.approx(0.003) and o.cost_source == "harness"
