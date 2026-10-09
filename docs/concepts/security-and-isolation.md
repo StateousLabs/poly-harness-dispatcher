@@ -79,7 +79,7 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - The session lock (`<home>/.phd-session.lock`, see [Run lifecycle](run-lifecycle.md#session-lock)) decides
   "still running" by process id; if the holder died and the OS reused its pid for an unrelated live process, the
   session reports busy until that process exits or the lock file is deleted by hand.
-- `LocalLedger.latest_for_session` scans every `result.json` in the ledger on each resume; fine at current scale,
+- `LocalLedger.find_session` scans every `result.json` (and, for a session with no finished run, every `session.json`) in the ledger on each resume; fine at current scale,
   an index is needed later.
 - Rules files are stored in plain text as `rules_text` in each `run.json` of a session (secrets never are).
 

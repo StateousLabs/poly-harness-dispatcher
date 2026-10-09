@@ -72,6 +72,7 @@ class RunHandle:
         self._cancelled = False
         self._proc: HarnessProcess | None = None
         self._task: asyncio.Task | None = None
+        self._session_warnings: list[str] = []  # problems recording the session; added to the result
         self._started_at = datetime.now(timezone.utc)
         self._t0 = time.monotonic()
 
@@ -102,7 +103,19 @@ class RunHandle:
     def _note_session(self, sink: TextIO, session_id: str | None) -> None:
         if session_id and self.session_id is None:
             self.session_id = session_id
-            self._emit(sink, "session.started", {"session_id": session_id})
+            self._announce_session(sink, session_id)
+
+    def _announce_session(self, sink: TextIO, session_id: str) -> None:
+        """Record the session in the run directory, then emit `session.started`. The record is what lets a run that
+        dies before `result.json` be resumed; failing to write it never breaks the run."""
+        spec, m = self._d.spec, self.materialized
+        try:
+            self._d.ledger.write_session(m.run_dir, {
+                "session_id": session_id, "harness": spec.harness, "cwd": str(spec.cwd), "home": str(m.home),
+                "stack": spec.stack.ref, "resumable": spec.resumable, "started_at": self._started_at.isoformat()})
+        except OSError as e:
+            self._session_warnings.append(f"could not write the session record: {e}")
+        self._emit(sink, "session.started", {"session_id": session_id})
 
     async def events(self) -> AsyncIterator[Event]:
         """Yield normalized events until the run finishes (the last one is `run.finished`).
@@ -185,7 +198,7 @@ class RunHandle:
             resumed_from=self.resumed_from, run_dir=str(m.run_dir), home_dir=str(m.home), cwd=str(spec.cwd),
             project_config=spec.project_config, autonomy=spec.autonomy, unsafe=spec.unsafe,
             credential_kind=spec.credentials.kind, started_at=self._started_at.isoformat(),
-            finished_at=datetime.now(timezone.utc).isoformat(), warnings=[*m.warnings, *self._guard_warnings()],
+            finished_at=datetime.now(timezone.utc).isoformat(), warnings=[*m.warnings, *self._guard_warnings(), *self._session_warnings],
             events_path=str(m.run_dir / "events.jsonl"), stderr_path=str(m.run_dir / "stderr.log"))
 
     async def _run_to_result(self) -> RunResult:
@@ -194,7 +207,7 @@ class RunHandle:
         with open(m.run_dir / "events.jsonl", "a", encoding="utf-8") as events_file:
             self._emit(events_file, "run.started", {"argv": m.argv, "resumed_from": self.resumed_from})
             if self._resume_session:
-                self._emit(events_file, "session.started", {"session_id": self._resume_session})
+                self._announce_session(events_file, self._resume_session)
             parser = self._d.adapter.parser()
             turn = await self._turn(events_file, parser, deadline, cost_before=self._cost_before)
             reported = parser.outcome()
@@ -203,6 +216,7 @@ class RunHandle:
             if (spec.schema_repair and result.error is not None and result.error.kind == "schema"
                     and result.session_id is not None and not self._cancelled):
                 result = await self._repair(events_file, result, own, reported.cost_usd, deadline)
+            result.warnings += self._session_warnings
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
             self._release_lock()  # the lock file lives in the home that is about to go

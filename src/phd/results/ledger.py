@@ -9,9 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from .._util.fs import write_json
+from .._util.fs import write_json, write_json_atomic
 from ..errors import NotResumable
 from .model import RunResult
+from .session import SessionRef
 
 DEFAULT_RUNS_ROOT = Path.home() / ".phd" / "runs"
 
@@ -87,6 +88,11 @@ class LocalLedger:
             raise NotResumable(f"no run record for {run_id!r} in {self.root}")
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def write_session(self, run_dir: Path, record: dict) -> None:
+        """Atomically write `session.json` into `run_dir`: the session a run reported, written as soon as the
+        harness reports it, so a run that dies before `result.json` can still be resumed."""
+        write_json_atomic(run_dir / "session.json", record)
+
     async def put(self, result: RunResult) -> None:
         """Write `result.json` into `result.run_dir` atomically (temp file + rename)."""
         path = Path(result.run_dir) / "result.json"
@@ -139,3 +145,33 @@ class LocalLedger:
         """
         matches = [r for r in self.list() if r.session_id == session_id]
         return matches[-1] if matches else None
+
+    def find_session(self, session_id: str) -> SessionRef | None:
+        """Find the run to resume `session_id` from, or `None`.
+
+        The newest finished run of the session wins (as in `latest_for_session`). Without one, the
+        newest `session.json` of a run that has no readable `result.json` (a run that crashed) is
+        used. Unreadable or malformed `session.json` files are skipped.
+        """
+        if (finished := self.latest_for_session(session_id)) is not None:
+            return SessionRef.from_result(finished)
+        found: list[tuple[str, SessionRef]] = []
+        for path in self.root.glob("*/session.json"):
+            run_id = path.parent.name
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if record["session_id"] != session_id:
+                    continue
+                started = record["started_at"]
+                if not isinstance(started, str):
+                    continue
+                ref = SessionRef.from_record(run_id, record)
+            except (ValueError, KeyError, TypeError, OSError):
+                continue
+            try:
+                self.get(run_id)
+                continue  # finished after all (its result.json is the authority)
+            except (KeyError, ValueError, TypeError):
+                pass
+            found.append((started, ref))
+        return max(found, key=lambda pair: pair[0])[1] if found else None

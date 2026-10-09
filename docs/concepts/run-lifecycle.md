@@ -97,11 +97,13 @@ cancelled run has finished. `handle.done` is `True` once the result exists. Erro
 id is known before launch: `RunHandle.session_id` is set at once and `session.started` is emitted right after
 `run.started`. The same id ends up in `RunResult.session_id`; a repair turn does not emit it again.
 
-!!! warning "Resuming after a crash is not supported yet"
-    The session id is available at start, but `start(..., session_id=)` finds sessions through **finished** runs
-    (`result.json`). If the supervisor dies mid-run, that run never writes a result, so resuming a session whose
-    only run never finished raises `NotResumable("no finished run with session …")`. Planned: a session record
-    written when `session.started` fires.
+!!! note "Resuming after a crash"
+    The moment `session.started` fires, PHD writes `<run_dir>/session.json` (`session_id`, `harness`, `cwd`, `home`,
+    `stack`, `resumable`, `started_at`). If the supervisor dies mid-run, that run never writes `result.json`, but
+    `start(..., session_id=)` still finds the session through this record, so a session whose **only** run crashed
+    can be resumed. A finished run of the session always wins over a crashed one. The crashed turn reported no cost,
+    so on claude its cost shows up in the next turn's cost (the baseline is `0.0`). A crashed run that was started
+    with `resumable=False` is not resumed (`NotResumable`). Failing to write the record is a warning on the result.
 
 ### Idle timeout
 
@@ -146,7 +148,7 @@ sequenceDiagram
     participant M as materialize + adapter
     U->>D: start(inputs, session_id=sid) / spawn(inputs, session_id=sid)
     D->>D: inputs.rules set? → UnsupportedFeature (nothing written)
-    D->>L: latest_for_session(sid) → previous RunResult (latest started_at)
+    D->>L: find_session(sid) → SessionRef (latest finished run, else the newest crashed run's session.json)
     D->>D: found? same harness? home inside this ledger, no links? exists? same cwd? run.json? (else NotResumable, nothing written)
     D->>L: allocate() → new run_id, run_dir (no home/ of its own)
     D->>M: materialize(..., home=previous.home_dir)
@@ -161,7 +163,7 @@ Checks, in this order, all made before anything is written:
 | Check | Why | If it fails |
 |---|---|---|
 | `inputs.rules` is `None` | rules belong to the session: the ones it started with are re-applied on every turn | `UnsupportedFeature` ("rules cannot be passed when resuming a session") |
-| a finished run in **this** dispatcher's ledger has `RunResult.session_id == session_id` | PHD finds the session's home through the ledger; the latest such run (by `started_at`) is used, whatever its status. A run whose process died before writing `result.json` (supervisor crash) does not count, so its session cannot be resumed yet | `NotResumable` ("no finished run with session") |
+| a run in **this** dispatcher's ledger has that session: a finished run with `RunResult.session_id == session_id`, else a run whose `session.json` names it and that never wrote `result.json` (it crashed) | PHD finds the session's home through the ledger; the latest finished run (by `started_at`) is used, whatever its status; without one, the newest crashed run is. A crashed run started with `resumable=False` is refused | `NotResumable` ("no run with session"; "was not resumable (resumable=False) and did not finish") |
 | that run's harness is `spec.harness` | sessions are harness-specific | `NotResumable` ("belongs to") |
 | its `home_dir` is `<runs_root>/<run_id>/home` of a run in this ledger (resolved; the run dir has a `run.json`) and not a symlink or junction | `home_dir` is read from `result.json`, and resuming deletes PHD-owned paths under it | `NotResumable` ("is not a run home", "is a symlink or junction") |
 | its `home_dir` still exists | the home holds the harness session (claude `CLAUDE_CONFIG_DIR`, codex `CODEX_HOME`, opencode `XDG_DATA_HOME`) | `NotResumable` ("no longer exists"); happens after `resumable=False` |

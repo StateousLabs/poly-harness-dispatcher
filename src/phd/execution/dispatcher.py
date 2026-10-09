@@ -12,7 +12,7 @@ from .._util.fs import is_within, robust_rmtree
 from ..errors import InvalidRunsRoot, NotResumable, StackNotFound, UnsupportedFeature
 from ..harnesses import ModelCatalog, get_adapter
 from ..materialize import MaterializedHome, materialize
-from ..results import LocalLedger, ResultSink, RunResult
+from ..results import LocalLedger, ResultSink, RunResult, SessionRef
 from ..spec import Inputs, Spec
 from .handle import RunHandle
 from .session_lock import SessionLock
@@ -133,7 +133,7 @@ class Dispatcher:
             if lock is not None:
                 lock.release()
             raise
-        return m, stack_hash, resumed_from, lock, _session_cost(prev)
+        return m, stack_hash, resumed_from, lock, prev.cost_before if prev else 0.0
 
     def _lock_session(self, home: Path, run_id: str, run_dir: Path, session_id: str) -> SessionLock:
         """Lock the session's shared home; when another live run holds it, remove the still-empty run
@@ -144,17 +144,21 @@ class Dispatcher:
             robust_rmtree(run_dir)
             raise
 
-    def _find_session(self, inputs: Inputs, session_id: str) -> RunResult:
-        """The latest finished run of `session_id`, checked to be continuable by this spec; writes nothing."""
+    def _find_session(self, inputs: Inputs, session_id: str) -> SessionRef:
+        """The run to resume `session_id` from (the latest finished one, else the newest crashed one), checked to
+        be continuable by this spec; writes nothing."""
         if inputs.rules is not None:
             raise UnsupportedFeature("rules cannot be passed when resuming a session; "
                                      "they are part of the session's system prompt")
-        prev = self.ledger.latest_for_session(session_id)
+        prev = self.ledger.find_session(session_id)
         if prev is None:
-            raise NotResumable(f"no finished run with session {session_id!r} in {self.ledger.root}")
+            raise NotResumable(f"no run with session {session_id!r} in {self.ledger.root}")
         if prev.harness != self.spec.harness:
             raise NotResumable(f"session {session_id!r} belongs to {prev.harness!r} (run {prev.run_id}); "
                                f"this dispatcher runs {self.spec.harness!r}")
+        if not prev.finished and not prev.resumable:
+            raise NotResumable(f"session {session_id!r}: its run {prev.run_id} was not resumable (resumable=False) "
+                               "and did not finish")
         home = Path(prev.home_dir)
         self._check_home_contained(session_id, home)
         if not home.is_dir():
@@ -192,7 +196,7 @@ class Dispatcher:
 
         With `session_id`, the run continues that harness session (a value from a previous
         `RunResult.session_id`). PHD finds the latest finished run of the session in this
-        dispatcher's ledger and re-materializes its home from **this** spec: skills, identity,
+        dispatcher's ledger (or, if none finished, the newest run that crashed after reporting it) and re-materializes its home from **this** spec: skills, identity,
         MCP servers, hooks, settings and credentials all come from the new spec, while the
         harness's session data in the home is kept. The run gets its own `run_id` and run
         directory; `RunResult.resumed_from` names the run the session was found in. The first
@@ -212,7 +216,7 @@ class Dispatcher:
             StackNotFound: The stack's folder no longer exists (removed from the store).
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
-            NotResumable: No finished run has `session_id`; it belongs to another harness; its
+            NotResumable: No run has `session_id` (or its only run crashed with `resumable=False`); it belongs to another harness; its
                 home no longer exists; it ran in a different `cwd`; or another live run is using
                 the session right now (`<home>/.phd-session.lock`; a lock left by a dead process is
                 taken over automatically).
@@ -300,16 +304,6 @@ class Dispatcher:
                 "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
                 "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home),
                 "rules_text": m.rules_text}
-
-
-def _session_cost(prev: RunResult | None) -> float:
-    """What the session had cost before this turn, for harnesses that report cumulative cost: the previous
-    run's `session_cost_usd`, else (a record written before that field existed) its `cost_usd`."""
-    if prev is None:
-        return 0.0
-    if prev.session_cost_usd is not None:
-        return prev.session_cost_usd
-    return prev.cost_usd or 0.0
 
 
 def _is_link(path: Path) -> bool:

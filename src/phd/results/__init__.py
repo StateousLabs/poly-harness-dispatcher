@@ -2,5 +2,6 @@
 
 from .ledger import LocalLedger, ResultSink
 from .model import Event, RunError, RunResult, RunStatus, Usage
+from .session import SessionRef
 
-__all__ = ["Event", "LocalLedger", "ResultSink", "RunError", "RunResult", "RunStatus", "Usage"]
+__all__ = ["Event", "LocalLedger", "ResultSink", "RunError", "RunResult", "RunStatus", "SessionRef", "Usage"]

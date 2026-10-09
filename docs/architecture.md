@@ -16,7 +16,7 @@ src/phd/
   runs.py            re-export so `import phd.runs` works (implementation: results/runs.py)
 
   _util/             stdlib-only helpers; imports nothing from phd except errors
-    fs.py              write_json, write_private, deep_merge, robust_rmtree, is_within
+    fs.py              write_json, write_json_atomic, write_private, deep_merge, robust_rmtree, is_within
     names.py           is_safe_part (portable folder names: stack name / version)
     proc.py            pid_alive
     shell.py           shell_join (hook command lines), resolve_argv (PATH lookup, .cmd shims)
@@ -36,6 +36,7 @@ src/phd/
   results/           what came out
     model.py           RunResult, RunStatus, RunError, Usage, Event, decide_status
     ledger.py          LocalLedger, ResultSink
+    session.py         SessionRef (where a session can be resumed from)
     runs.py            list() / get() over the default ledger
   materialize/       the pure step: write a run home, run nothing
     __init__.py        materialize(adapter, spec, inputs, *, run_id, run_dir, home=None)

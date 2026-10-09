@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -66,3 +67,58 @@ async def test_latest_for_session(tmp_path):
     assert ledger.latest_for_session("sid").run_id == ids[1]
     assert ledger.latest_for_session("other").run_id == ids[3]
     assert ledger.latest_for_session("missing") is None
+
+
+def session_record(ledger, run_id, session_id="sid", started="2026-10-01T10:00:00+00:00", **kw):
+    run_dir = ledger.root / run_id
+    record = {"session_id": session_id, "harness": "claude", "cwd": "/w", "home": str(run_dir / "home"),
+              "stack": "s@1", "resumable": True, "started_at": started} | kw
+    (run_dir / "session.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+async def test_find_session_prefers_the_finished_run(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    done_id, done = ledger.allocate()
+    r = result(done, done_id, started="2026-10-01T10:00:00+00:00")
+    r.session_cost_usd = 0.5
+    await ledger.put(r)
+    session_record(ledger, done_id)
+    crashed_id, _ = ledger.allocate()  # a later turn that never finished
+    session_record(ledger, crashed_id, started="2026-10-01T12:00:00+00:00")
+    ref = ledger.find_session("sid")
+    assert ref.run_id == done_id and ref.finished and ref.cost_before == 0.5
+    assert ref.harness == "claude" and ref.stack == "s@1" and ref.cwd == "/w" and ref.resumable
+
+
+def test_find_session_falls_back_to_the_newest_unfinished_record(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    ids = []
+    for started in ["2026-10-01T10:00:00+00:00", "2026-10-01T12:00:00+00:00", "2026-10-01T11:00:00+00:00"]:
+        rid, _ = ledger.allocate()
+        session_record(ledger, rid, started=started)
+        ids.append(rid)
+    other, _ = ledger.allocate()
+    session_record(ledger, other, session_id="other", started="2026-10-01T13:00:00+00:00")
+    ref = ledger.find_session("sid")
+    assert ref.run_id == ids[1] and not ref.finished and ref.cost_before == 0.0
+    assert ref.home_dir == str(ledger.root / ids[1] / "home")
+    assert ledger.find_session("missing") is None
+
+
+def test_find_session_skips_corrupt_session_records(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    good, _ = ledger.allocate()
+    session_record(ledger, good, started="2026-10-01T10:00:00+00:00")
+    for body in ["{not json", "{}", "[]", '{"session_id": "sid"}']:
+        rid, d = ledger.allocate()
+        (d / "session.json").write_text(body, encoding="utf-8")
+    assert ledger.find_session("sid").run_id == good
+
+
+async def test_find_session_ignores_records_of_finished_runs(tmp_path):
+    ledger = LocalLedger(tmp_path / "runs")
+    rid, d = ledger.allocate()
+    await ledger.put(result(d, rid, harness="codex"))
+    session_record(ledger, rid, harness="claude")  # the result wins; the record is not a crashed run
+    ref = ledger.find_session("sid")
+    assert ref.finished and ref.harness == "codex"

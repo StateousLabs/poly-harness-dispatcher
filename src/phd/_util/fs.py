@@ -14,6 +14,13 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def write_json_atomic(path: Path, data: Any) -> None:
+    """`write_json` through a temp file and a rename, so a reader never sees a half-written file."""
+    tmp = path.with_name(path.name + ".tmp")
+    write_json(tmp, data)
+    os.replace(tmp, path)
+
+
 def write_private(path: Path, text: str) -> None:
     """Write a file only the current user should read (credentials).
 
