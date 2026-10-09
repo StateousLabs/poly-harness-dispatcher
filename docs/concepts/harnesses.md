@@ -161,7 +161,8 @@ item is `result_text`; each `turn.completed` adds `usage` and counts a turn (and
 (a warning is added at `Dispatcher(...)`).
 
 **Model catalogue:** `codex debug models` (JSON, the `slug` of each model). If the command fails, a warning is
-added and the model is not checked.
+added and the model is not checked. The lookup is lazy (first `start()` / `plan()`, in a worker thread) and cached
+per process, so `ModelNotSupported` comes from `start()` / `run()` / `plan()`, not from `Dispatcher(...)`.
 
 **Quirks**
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import tempfile
+import threading
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
@@ -58,8 +59,11 @@ class Dispatcher:
             spec: The run description.
             runs_root: Ledger directory. Defaults to `~/.phd/runs`.
             sinks: Extra `ResultSink`s that receive every `RunResult` after the local ledger.
-            catalog: Model catalogue to validate against. Defaults to a fresh `ModelCatalog`
-                (which runs `codex debug models` / `opencode models` once).
+            catalog: Model catalogue to validate against. Defaults to a `ModelCatalog` that uses
+                `executables` and shares its codex / opencode lookups (`codex debug models` /
+                `opencode models`) with every other dispatcher in the process. Those lookups are
+                slow, so they do not run here: they run in a worker thread on the first `start()`
+                (or synchronously in `plan()`).
             validate_model: Set `False` to skip model validation entirely.
             executables: Per-harness argv prefix replacing the CLI name, for example
                 `{"claude": ["/opt/claude/bin/claude"]}`. Skips the PATH lookup.
@@ -67,7 +71,8 @@ class Dispatcher:
 
         Raises:
             HookUnsupported: A stack hook cannot be expressed for this harness.
-            ModelNotSupported: `spec.model` is not in the harness catalogue.
+            ModelNotSupported: Claude only: `spec.model` is not a known claude model. For codex and opencode
+                the check is lazy and `start()` / `run()` / `plan()` raise it.
             InvalidRunsRoot: codex with a `runs_root` under the system temp dir.
         """
         self.spec = spec
@@ -76,11 +81,23 @@ class Dispatcher:
         self.sinks: list[ResultSink] = [self.ledger, *sinks]
         self.executables = dict(executables or {})
         self.warnings: list[str] = list(self.adapter.validate(spec))
-        if validate_model:
-            self.warnings += (catalog or ModelCatalog()).validate(spec.harness, spec.model)
+        self._catalog = (catalog or ModelCatalog(executables=self.executables)) if validate_model else None
+        self._model_checked = self._catalog is None
+        self._model_lock = threading.Lock()
+        if self._catalog is not None and self._catalog.is_static(spec.harness):  # no subprocess: check now
+            self._check_model()
         temp = Path(tempfile.gettempdir())
         if spec.harness == "codex" and not allow_temp_runs_root and is_within(self.ledger.root, temp):
             raise InvalidRunsRoot(f"codex refuses a CODEX_HOME under the system temp dir; choose a runs_root outside {temp}")
+
+    def _check_model(self) -> None:
+        """Validate `spec.model` against the catalogue once; its warnings join `self.warnings`. Blocks while
+        a codex / opencode catalogue loads, so async code reaches it from a worker thread (via `_plan`)."""
+        with self._model_lock:
+            if self._model_checked:
+                return
+            self.warnings += self._catalog.validate(self.spec.harness, self.spec.model)
+            self._model_checked = True
 
     # ---- runs (fresh or resumed)
     def plan(self, inputs: Inputs, *, session_id: str | None = None) -> MaterializedHome:
@@ -102,6 +119,7 @@ class Dispatcher:
             `redacted_env()` to print it), `stdin` (the first user message) and `warnings`.
 
         Raises:
+            ModelNotSupported: `spec.model` is not in the harness catalogue (loaded synchronously here).
             MissingCredentials: A credential file cannot be read.
             MissingSecret: A placeholder has no value in `Spec.secrets`.
             NotResumable: `session_id` cannot be continued: the session is busy or its home is tampered with (see
@@ -115,6 +133,9 @@ class Dispatcher:
 
     def _plan(self, inputs: Inputs, session_id: str | None, *,
               dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None, float]:
+        """Blocking (catalogue lookup, stack copy, ledger writes): `start` runs it in a worker thread, so it must
+        not touch the event loop or any asyncio object."""
+        self._check_model()
         if not self.spec.stack.root.is_dir():
             raise StackNotFound(f"stack {self.spec.stack.ref}: {self.spec.stack.root} no longer exists "
                                 "(removed from the store?)")
@@ -224,7 +245,12 @@ class Dispatcher:
             with `error.kind == "session"` (the reason is in `error.message`). Such a run still gets a run id,
             a run directory, `result.json` and `events.jsonl` (`run.started`, `run.finished`), and reaches the sinks.
 
+        Nothing here blocks the event loop: the model catalogue lookup (first call only), the home
+        materialization and the ledger writes run in worker threads.
+
         Raises:
+            ModelNotSupported: `spec.model` is not in the harness catalogue (codex / opencode; raised before
+                anything is launched or written).
             HarnessNotInstalled: The harness CLI is not on PATH (and no `executables` override).
             StackNotFound: The stack's folder no longer exists (removed from the store).
             MissingCredentials: A credential file cannot be read.
@@ -245,7 +271,7 @@ class Dispatcher:
             ```
         """
         try:
-            m, stack_hash, resumed_from, lock, cost_before = self._plan(inputs, session_id)
+            m, stack_hash, resumed_from, lock, cost_before = await self._plan_off_loop(inputs, session_id)
         except _SessionUnavailable as e:
             return await self._unavailable_session(session_id, str(e))
         try:
@@ -254,6 +280,21 @@ class Dispatcher:
         except BaseException:  # the harness never started: free the home again
             if lock is not None:
                 lock.release()
+            raise
+
+    async def _plan_off_loop(self, inputs: Inputs, session_id: str | None):
+        """`_plan` in a worker thread. If this task is cancelled meanwhile, the thread still finishes; the session
+        lock it took is released as soon as it does (nothing else owns it)."""
+        fut = asyncio.ensure_future(asyncio.to_thread(self._plan, inputs, session_id))
+
+        def discard(f: asyncio.Future) -> None:
+            if not f.cancelled() and f.exception() is None and f.result()[3] is not None:
+                f.result()[3].release()
+
+        try:
+            return await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            fut.add_done_callback(discard)
             raise
 
     @contextlib.asynccontextmanager
@@ -322,12 +363,16 @@ class Dispatcher:
     async def _unavailable_session(self, session_id: str, reason: str) -> RunHandle:
         """A finished, failed run (`error.kind == "session"`) for a session that cannot be resumed; nothing is
         launched, no home is created. It has a run directory with `run.json`, `events.jsonl` and `result.json`."""
-        stack_hash = self.spec.stack.content_hash()
-        run_id, run_dir = self.ledger.allocate()
-        self.ledger.write_record(run_dir, {
-            "run_id": run_id, "harness": self.spec.harness, "model": self.spec.model, "cwd": str(self.spec.cwd),
-            "argv": [], "env": {}, "stdin": "", "warnings": list(self.warnings), "session_id": session_id,
-            "resumed_from": None, "home": "", "rules_text": None})
+        def write() -> tuple[str, str, Path]:
+            stack_hash = self.spec.stack.content_hash()
+            run_id, run_dir = self.ledger.allocate()
+            self.ledger.write_record(run_dir, {
+                "run_id": run_id, "harness": self.spec.harness, "model": self.spec.model, "cwd": str(self.spec.cwd),
+                "argv": [], "env": {}, "stdin": "", "warnings": list(self.warnings), "session_id": session_id,
+                "resumed_from": None, "home": "", "rules_text": None})
+            return stack_hash, run_id, run_dir
+
+        stack_hash, run_id, run_dir = await asyncio.to_thread(write)
         return await RunHandle.unlaunched(self, run_id, run_dir, stack_hash, reason)
 
     def _record(self, m: MaterializedHome, *, session_id: str | None, resumed_from: str | None) -> dict:

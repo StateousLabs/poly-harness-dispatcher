@@ -50,7 +50,7 @@ sequenceDiagram
 
 | # | Step | Code | Can raise (pre-launch) |
 |---|---|---|---|
-| 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, warnings), model catalogue, codex temp `runs_root` | `execution/dispatcher.py` | `HookUnsupported`, `ModelNotSupported`, `InvalidRunsRoot` |
+| 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, warnings), claude model check, codex temp `runs_root`. The codex / opencode model catalogue is looked up lazily, in a worker thread, at the start of step 2 on the first run (once per process) | `execution/dispatcher.py` | `HookUnsupported`, `InvalidRunsRoot`; `ModelNotSupported` (claude here, codex / opencode from `start()` / `plan()`) |
 | 2 | **Plan**: with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
 | 3 | **Materialize**: create `home/` (or, [resuming](#resume), clear the PHD-owned paths of the session's home), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
 | 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background; attach the [orphan-protection](#orphan-protection) guard | `RunHandle.launch`, `execution/process.py`, `execution/lifetime/` | `HarnessNotInstalled` |
@@ -58,7 +58,11 @@ sequenceDiagram
 | 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result`, `_repair` | never (data) |
 | 7 | **Sinks**: `LocalLedger.put` writes `result.json` atomically, then each extra sink | `RunHandle._pump` | never: sink errors become warnings |
 
-`plan(inputs)` runs steps 2 and 3 only. Note that a `HarnessNotInstalled` at step 4 leaves a run directory with
+`plan(inputs)` runs steps 2 and 3 only (and, for codex / opencode, the catalogue lookup, synchronously).
+
+### Never blocks the event loop
+
+Every wait in the async API is an `await`. `start()` runs the model catalogue lookup, the home materialization (stack copy, skills, credential files), the session lock and the ledger writes in worker threads (`asyncio.to_thread`); the removal of a `resumable=False` home also runs in a worker thread. The Windows `taskkill` fallback of the process-tree kill is started without waiting for it. A ticker task on the same loop keeps beating while a run starts, runs and ends. What stays on the loop is small: appending events and writing `result.json`. The blocking wrappers (`spawn`, `plan`) are for code without a running loop. Note that a `HarnessNotInstalled` at step 4 leaves a run directory with
 `run.json` and `home/` but no `result.json`.
 
 ## Using a run: `run()` vs `start()`

@@ -28,7 +28,7 @@ All inherit from `phd.PhdError`; each message names the file, field or value inv
 | `InvalidSpec` | `Spec` | blank `model`; bad `project_config` / `autonomy`; non-bool `harness_builtins` / `schema_repair`; `timeout_s` / `budget_usd` not positive or not finite (NaN, infinity); `idle_timeout_s` not a positive finite number; `output_schema` that is not a valid JSON Schema (the message names the problem and its path), including one with a `$ref` that does not resolve (`unresolvable $ref: ...`; remote references are never fetched) | fix the value |
 | `InvalidRunsRoot` | `Dispatcher` | codex with `runs_root` under the system temp directory | use a `runs_root` outside `%TEMP%` / `/tmp` (the default `~/.phd/runs` is fine) |
 | `NotResumable` | `plan` / `start` / `spawn` with `session_id` | another live run is using the session right now ("is busy with run …"); the session's recorded home is not `<runs_root>/<run_id>/home` of a run in this ledger ("is not a run home") or is, or contains, a symlink / junction where PHD writes ("is a symlink or junction"); the session's `run.json` was deleted ("has no run.json"); `plan()` with a session that cannot be resumed | for "busy", wait for (or cancel) the named run: a lock left by a crashed process is taken over automatically, and `<home>/.phd-session.lock` can be deleted by hand if its pid was reused by another process |
-| `ModelNotSupported` | `Dispatcher` | model not in the harness catalogue; `.hint` holds the closest match, `.supported` the list | use a listed model, or `validate_model=False` to skip the check |
+| `ModelNotSupported` | `Dispatcher` (claude); `start()` / `run()` / `plan()` (codex, opencode) | model not in the harness catalogue; `.hint` holds the closest match, `.supported` the list | use a listed model, or `validate_model=False` to skip the check |
 
 `RuntimeError: spawn() cannot run inside an event loop` (not a `PhdError`): you called the blocking API
 from Jupyter or async code. Use `await d.start(...)` (with `session_id=` to resume).
@@ -94,7 +94,7 @@ the notebook keeps running the old code. Use the project's `.venv` as the kernel
 ## Free models (opencode)
 
 Free opencode models (for example `opencode/space-bunny-free`, used by the live tests and the notebook; earlier
-`opencode/big-pickle`) are added and withdrawn over time. If `Dispatcher(...)` raises `ModelNotSupported`, or a
+`opencode/big-pickle`) are added and withdrawn over time. If `start()` / `plan()` (or `Dispatcher(...)` for claude) raises `ModelNotSupported`, or a
 run fails with `model_unavailable` or `billing`, run `opencode models` and pick one that is listed now, or set
 `PHD_LIVE_OPENCODE_MODEL` for the live tests.
 

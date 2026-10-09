@@ -15,7 +15,7 @@ idle_timeout_s, schema_repair, output_schema, stack compatibility, secrets.
 | Field | Type | Default | Validation (exception) | Effect |
 |---|---|---|---|---|
 | `harness` | `str` | required | one of `claude`, `codex`, `opencode` (`UnknownHarness`) | selects the adapter |
-| `model` | `str` | required | non-blank string (`InvalidSpec`); catalogue check in `Dispatcher` (`ModelNotSupported`) | claude `--model`, codex `-m` and `model` in `config.toml`, opencode `-m` (`provider/model`) |
+| `model` | `str` | required | non-blank string (`InvalidSpec`); catalogue check in `Dispatcher` (claude) or at the first `start()` / `plan()` (codex, opencode) (`ModelNotSupported`) | claude `--model`, codex `-m` and `model` in `config.toml`, opencode `-m` (`provider/model`) |
 | `stack` | `Stack` | required | `harnesses` list must include `harness` (`StackIncompatible`) | identity, skills, MCP, hooks |
 | `cwd` | `Path` (str accepted) | required | expanded and resolved; must be a directory (`CwdNotFound`) | process working directory for every harness; also codex `-C <cwd>`, opencode `--dir <cwd>` |
 | `credentials` | `Credentials` | required | `credentials.harness == harness` (`MissingCredentials`) | see [Credentials](#credentials) |

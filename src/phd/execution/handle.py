@@ -255,7 +255,7 @@ class RunHandle:
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
             self._release_lock()  # the lock file lives in the home that is about to go
             try:
-                robust_rmtree(m.home)
+                await asyncio.to_thread(robust_rmtree, m.home)
             except OSError as e:
                 result.warnings.append(f"could not remove run home {m.home}: {e}")
             result.resumable = False

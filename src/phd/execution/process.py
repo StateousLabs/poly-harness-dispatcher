@@ -5,6 +5,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -118,6 +119,30 @@ class HarnessProcess:
         if self.guard is not None:
             self.guard.release()
 
+    @staticmethod
+    def _taskkill_fallback(proc) -> None:
+        """Start `taskkill /T /F` without waiting for it (this can run on the event loop); a daemon thread reaps it
+        and falls back to `proc.kill()` if taskkill failed. `wait()` observes the process exit as usual."""
+        def kill_directly() -> None:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+        try:
+            tk = subprocess.Popen(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            kill_directly()
+            return
+
+        def reap() -> None:
+            if tk.wait() != 0:
+                kill_directly()
+
+        threading.Thread(target=reap, daemon=True, name="phd-taskkill").start()
+
     def kill_tree(self) -> None:
         if self._stdin_task is not None and not self._stdin_task.done():
             self._stdin_task.cancel()
@@ -131,12 +156,7 @@ class HarnessProcess:
             if self.proc.returncode is not None:
                 return
             self.killed = True
-            result = subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
-            if result.returncode != 0 and self.proc.returncode is None:
-                try:
-                    self.proc.kill()
-                except ProcessLookupError:
-                    pass
+            self._taskkill_fallback(self.proc)
         else:
             self.killed = True
             try:
