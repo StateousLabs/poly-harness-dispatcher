@@ -1,9 +1,9 @@
 # poly-harness-dispatcher (PHD)
 
 [![CI](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml/badge.svg)](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/poly-harness-dispatcher.svg)](https://pypi.org/project/poly-harness-dispatcher/)
-[![Python](https://img.shields.io/pypi/pyversions/poly-harness-dispatcher.svg)](https://pypi.org/project/poly-harness-dispatcher/)
-[![License](https://img.shields.io/pypi/l/poly-harness-dispatcher.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/poly-harness-dispatcher?cacheSeconds=3600)](https://pypi.org/project/poly-harness-dispatcher/)
+[![Python](https://img.shields.io/pypi/pyversions/poly-harness-dispatcher?cacheSeconds=3600)](https://pypi.org/project/poly-harness-dispatcher/)
+[![License](https://img.shields.io/pypi/l/poly-harness-dispatcher?cacheSeconds=3600)](LICENSE)
 
 Spawn headless AI coding agents (**Claude Code** `claude -p`, **Codex** `codex exec`, **OpenCode** `opencode run`)
 from one harness-neutral spec, and get back one normalized result.
