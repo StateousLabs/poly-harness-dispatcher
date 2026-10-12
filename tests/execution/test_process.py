@@ -68,7 +68,7 @@ async def test_kill_tree_kills_grandchildren(tmp_path, monkeypatch):
     p.kill_tree()
     await asyncio.wait_for(p.wait(), timeout=15)
     assert p.killed
-    assert wait_dead(grandchild), "grandchild survived kill_tree"
+    assert await asyncio.to_thread(wait_dead, grandchild), "grandchild survived kill_tree"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the taskkill fallback exists only on Windows")
@@ -88,7 +88,7 @@ async def test_taskkill_fallback_kills_tree_without_a_job(tmp_path, monkeypatch)
         harness = p.proc.pid
         p.kill_tree()
         await asyncio.wait_for(p.wait(), timeout=15)
-        assert wait_dead(harness) and wait_dead(grandchild), "taskkill fallback left a process alive"
+        assert await asyncio.to_thread(wait_dead, harness) and await asyncio.to_thread(wait_dead, grandchild), "taskkill fallback left a process alive"
     finally:
         p.guard = guard
         p.close()

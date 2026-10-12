@@ -58,7 +58,7 @@ async def _scenario(tmp_path, make_spec, inputs, files, interrupt):
     print(f"\nfast stop ({interrupt}): {elapsed:.2f}s")
     assert elapsed < BOUND
     harness, child = seen["pids"]
-    assert wait_dead(harness, 2) and wait_dead(child, 2), "harness or grandchild survived"
+    assert await asyncio.to_thread(wait_dead, harness, 2) and await asyncio.to_thread(wait_dead, child, 2), "harness or grandchild survived"
     results = d.ledger.list()
     assert [r.status for r in results] == [RunStatus.CANCELLED]
     return elapsed

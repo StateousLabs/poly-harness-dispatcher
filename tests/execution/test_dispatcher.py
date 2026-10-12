@@ -508,7 +508,7 @@ async def test_interrupted_run_kills_process_tree(tmp_path, monkeypatch, make_sp
     handle._task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await handle._task
-    assert wait_dead(child) and wait_dead(grandchild)
+    assert await asyncio.to_thread(wait_dead, child) and await asyncio.to_thread(wait_dead, grandchild)
 
 
 def test_timeout_covers_a_stalled_stdin_write(tmp_path, monkeypatch, make_spec, inputs):

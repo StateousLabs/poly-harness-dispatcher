@@ -21,11 +21,23 @@ def pid_alive(pid: int) -> bool:
         return bool(ok) and code.value == 259  # STILL_ACTIVE
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    return not _is_zombie(pid)
+
+
+def _is_zombie(pid: int) -> bool:
+    """Linux: True if /proc says the process has exited but not been reaped (state `Z`); `os.kill(pid, 0)` reports
+    such a process as alive. False wherever /proc is unavailable (macOS, Windows)."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            stat = f.read()
+    except OSError:
+        return False
+    # "pid (comm) S ..." - comm may contain spaces and parens, so the state follows the LAST ")".
+    return stat.rpartition(b")")[2].lstrip()[:1] == b"Z"
 
 
 def kill_tree(proc) -> None:
