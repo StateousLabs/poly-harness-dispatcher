@@ -61,16 +61,28 @@ class HarnessProcess:
         self._stdin_task = asyncio.create_task(self._write_stdin())
 
     def _kill_unguarded(self) -> None:
-        try:
-            if os.name == "nt":
+        if os.name == "nt":
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 self.proc.kill()
-            else:
-                try:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
-                except OSError:
-                    self.proc.kill()
+        else:
+            self._posix_kill_group()
+
+    def _posix_kill_group(self) -> None:
+        """SIGKILL the harness's process group. ProcessLookupError means the group is gone; on macOS killpg also raises
+        PermissionError (EPERM) when the leader has already exited or is a zombie. Either way fall back to killing the
+        leader, and never raise for a tree that is already dead."""
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)
         except ProcessLookupError:
+            return
+        except PermissionError:
             pass
+        except OSError:
+            pass
+        else:
+            return
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            self.proc.kill()
 
     async def _write_stdin(self) -> None:
         try:
@@ -169,10 +181,7 @@ class HarnessProcess:
             self._taskkill_fallback(self.proc)
         else:
             self.killed = True
-            try:
-                os.killpg(self.proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            self._posix_kill_group()
 
     def stderr_tail(self, limit: int = 2000) -> str:
         try:

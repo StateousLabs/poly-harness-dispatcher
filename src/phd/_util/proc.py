@@ -57,5 +57,5 @@ def kill_tree(proc) -> None:
             pass
     try:
         proc.kill()
-    except OSError:
+    except OSError:  # includes ProcessLookupError and PermissionError: the process is already gone
         pass

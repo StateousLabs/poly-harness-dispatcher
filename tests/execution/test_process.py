@@ -71,6 +71,31 @@ async def test_kill_tree_kills_grandchildren(tmp_path, monkeypatch):
     assert await asyncio.to_thread(wait_dead, grandchild), "grandchild survived kill_tree"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+async def test_kill_tree_tolerates_killpg_eperm(tmp_path, monkeypatch):
+    """macOS: killpg raises EPERM when the group leader already exited or is a zombie."""
+    monkeypatch.setenv("FAKE_SLEEP", "60")
+    p = make(tmp_path)
+    await p.start()
+    p.close()
+    p.guard = None
+    leader_kills = []
+    real_kill = p.proc.kill
+
+    def eperm(*_a):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "killpg", eperm)
+    monkeypatch.setattr(p.proc, "kill", lambda: (leader_kills.append(1), real_kill()))
+    p.kill_tree()  # must not raise
+    assert leader_kills == [1] and p.killed
+    await asyncio.wait_for(p.wait(), timeout=15)
+    leader_kills.clear()
+    p.kill_tree()  # leader already dead too: still silent
+    monkeypatch.setattr(p.proc, "kill", lambda: (_ for _ in ()).throw(PermissionError(1, "EPERM")))
+    p.kill_tree()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the taskkill fallback exists only on Windows")
 async def test_taskkill_fallback_kills_tree_without_a_job(tmp_path, monkeypatch):
     pidfile = tmp_path / "child.pid"

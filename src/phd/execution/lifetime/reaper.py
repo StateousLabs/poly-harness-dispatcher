@@ -51,5 +51,8 @@ def _reap(proc: subprocess.Popen) -> None:
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            proc.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
         proc.wait()
