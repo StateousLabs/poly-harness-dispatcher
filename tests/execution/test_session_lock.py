@@ -161,3 +161,57 @@ def test_lock_released_between_the_two_looks_is_retried(tmp_path, monkeypatch):
     assert lock.held and not state["first"]
     monkeypatch.undo()
     lock.release()
+
+
+def _write_stale(home: Path) -> None:
+    (home / LOCK_NAME).write_text(json.dumps({"pid": _dead_pid(), "run_id": "run-dead"}), encoding="utf-8")
+
+
+def test_takeover_of_a_stale_lock_is_serialized(tmp_path, monkeypatch):
+    # A has seen the stale lock and is about to unlink it when B also tries to take it over: only one may win
+    import phd.execution.session_lock as mod
+    _write_stale(tmp_path)
+    monkeypatch.setattr(mod, "TAKEOVER_TIMEOUT_S", 0.3)
+    a, b = SessionLock(tmp_path, "run-a"), SessionLock(tmp_path, "run-b")
+    real_unlink, state = mod._unlink, {"b": None}
+
+    def unlink_after_b_tries(path):
+        if state["b"] is None:  # first unlink: A's, with B racing it
+            state["b"] = "tried"
+            try:
+                b.acquire("session s")
+                state["b"] = "won"
+            except NotResumable:
+                state["b"] = "busy"
+        real_unlink(path)
+    monkeypatch.setattr(mod, "_unlink", unlink_after_b_tries)
+    a.acquire("session s")
+    assert state["b"] == "busy" and a.held and not b.held
+    assert json.loads((tmp_path / LOCK_NAME).read_text(encoding="utf-8"))["run_id"] == "run-a"
+    a.release()
+
+
+def test_a_takeover_that_lost_the_race_does_not_unlink_the_winners_lock(tmp_path, monkeypatch):
+    # B takes the stale lock over between A's look and A's turn at the takeover step: A must leave B's lock alone
+    import phd.execution.session_lock as mod
+    _write_stale(tmp_path)
+    a, b = SessionLock(tmp_path, "run-a"), SessionLock(tmp_path, "run-b")
+    real_lock, state = mod.FileLock, {"done": False}
+
+    class RacingLock(real_lock):
+        def __enter__(self):
+            if not state["done"]:
+                state["done"] = True
+                b.acquire("session s")  # B completes its whole takeover first
+            return super().__enter__()
+    monkeypatch.setattr(mod, "FileLock", RacingLock)
+    with pytest.raises(NotResumable, match="busy with run run-b"):
+        a.acquire("session s")
+    assert b.held and not a.held
+    assert json.loads((tmp_path / LOCK_NAME).read_text(encoding="utf-8"))["run_id"] == "run-b"
+    b.release()
+
+
+def test_free_home_does_not_touch_the_takeover_lock(tmp_path):
+    SessionLock(tmp_path, "run-a").acquire("session s").release()
+    assert not (tmp_path / (LOCK_NAME + ".takeover")).exists()

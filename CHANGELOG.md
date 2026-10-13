@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format follows
   under a `.`-folder, although assembly and the run copy include them (only `.git/`, `__pycache__/` and `*.pyc` are
   left out). The hash now skips exactly those. A stack already stored with a hash from the old rule is re-hashed on
   `resolve` and its index hash updated, instead of raising `StackConflict`.
+- **Session lock takeover race.** Two runs that found the same stale `.phd-session.lock` could both take it over: one
+  deleted the lock the other had just written, and both ran on the same session. Taking over a stale lock is now
+  serialized by an OS lock on `<home>/.phd-session.lock.takeover` and re-checks the lock before deleting it.
 
 ## [0.1.0] — 2026-10-12
 
