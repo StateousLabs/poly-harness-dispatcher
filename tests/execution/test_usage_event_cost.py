@@ -94,10 +94,11 @@ async def test_repair_on_a_resumed_turn_adds_up(tmp_path, make_spec, streams):
             claude_stream(tmp_path, "good", cost=0.42, structured={"event": "done"}))
     d = dispatcher(make_spec("claude", output_schema=SCHEMA, schema_repair=True), tmp_path)
     first, _, _ = await run_and_collect(d, Inputs(msg="x"))
-    second, seen, _ = await run_and_collect(d, Inputs(msg="again"), first.session_id)
+    second, seen, logged = await run_and_collect(d, Inputs(msg="again"), first.session_id)
     assert second.cost_usd == pytest.approx(0.12) and second.session_cost_usd == pytest.approx(0.42)
     assert [e["cost_usd"] for e in seen] == [pytest.approx(0.05), pytest.approx(0.07)]
     assert [e["session_cost_usd"] for e in seen] == [pytest.approx(0.35), pytest.approx(0.42)]
+    assert logged == seen
 
 
 @pytest.mark.parametrize("harness,stream", [("codex", "codex_ok.jsonl"), ("opencode", "opencode_ok.jsonl")])

@@ -6,11 +6,10 @@ import asyncio
 import contextlib
 import tempfile
 import threading
-import warnings
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
-from .._util.fs import is_within, robust_rmtree
+from .._util.fs import is_link, is_within, robust_rmtree
 from ..errors import InvalidRunsRoot, NotResumable, StackNotFound, UnsupportedFeature
 from ..harnesses import ModelCatalog, all_secret_paths, get_adapter
 from ..materialize import MaterializedHome, materialize
@@ -150,13 +149,13 @@ class Dispatcher:
         home = Path(prev.home_dir) if prev and not dry_run else None  # a dry run never touches the session
         # A resumed turn locks the shared home before rewriting it; a dry run never locks.
         lock = self._lock_session(home, run_id, run_dir, session_id) if home is not None else None
-        if home is None and not dry_run:
-            # A fresh run locks its new (empty) home for as long as it runs, before any credential is copied into
-            # it: a home with a credential copy and no live lock is one the sweep may clean.
-            home = run_dir / "home"
-            home.mkdir()
-            lock = SessionLock(home, run_id).acquire(f"run home {home}")
         try:
+            if home is None and not dry_run:
+                # A fresh run locks its new (empty) home for as long as it runs, before any credential is copied
+                # into it: a home with a credential copy and no live lock is one the sweep may clean.
+                home = run_dir / "home"
+                home.mkdir()
+                lock = SessionLock(home, run_id).acquire(f"run home {home}")
             rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # session's rules
             m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
                             rules_text=rules_text, executable=self.executables.get(self.spec.harness))
@@ -171,17 +170,18 @@ class Dispatcher:
             resumed_from = prev.run_id if prev else None
             self.ledger.write_record(run_dir, self._record(m, session_id=session_id, resumed_from=resumed_from))
         except BaseException:
-            self._drop_secrets(home or run_dir / "home")
-            if lock is not None:
-                lock.release()
+            try:
+                self._drop_secrets(home or run_dir / "home")
+            finally:
+                if lock is not None:
+                    lock.release()
             raise
         return m, stack_hash, resumed_from, lock, prev.cost_before if prev else 0.0
 
     def _drop_secrets(self, home: Path) -> None:
         """Delete the adapter's credential copies in `home` for a run that will not launch (call before releasing
         its lock). Never raises: what cannot be deleted is warned about and left to the next process's sweep."""
-        for problem in credential_copies.drop(self.adapter.secret_paths(home)):
-            warnings.warn(problem, RuntimeWarning, stacklevel=2)
+        credential_copies.warn(credential_copies.drop(self.adapter.secret_paths(home)))
 
     def _lock_session(self, home: Path, run_id: str, run_dir: Path, session_id: str) -> SessionLock:
         """Lock the session's shared home; when another live run holds it, remove the still-empty run
@@ -223,7 +223,7 @@ class Dispatcher:
     def _check_home_contained(self, session_id: str, home: Path) -> None:
         """`home_dir` comes from a result.json; only accept `<ledger root>/<run_id>/home` of a run in this ledger,
         since resuming deletes PHD-owned paths under it."""
-        if _is_link(home):
+        if is_link(home):
             raise NotResumable(f"session {session_id!r}: run home {home} is a symlink or junction")
         resolved = home.resolve()
         if (resolved.name != "home" or resolved.parent.parent != self.ledger.root
@@ -235,7 +235,7 @@ class Dispatcher:
         for owned in [home / "stack", home / "phd", *self.adapter.owned_paths(home)]:
             p = owned
             while p != home:
-                if _is_link(p):
+                if is_link(p):
                     raise NotResumable(f"session {session_id!r}: {p} is a symlink or junction")
                 p = p.parent
 
@@ -299,9 +299,11 @@ class Dispatcher:
             return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock,
                                           session_id=session_id, session_cost_before=cost_before)
         except BaseException:  # the harness never started: free the home again
-            self._drop_secrets(m.home)
-            if lock is not None:
-                lock.release()
+            try:
+                self._drop_secrets(m.home)
+            finally:
+                if lock is not None:
+                    lock.release()
             raise
 
     async def _plan_off_loop(self, inputs: Inputs, session_id: str | None):
@@ -311,9 +313,11 @@ class Dispatcher:
         fut = asyncio.ensure_future(asyncio.to_thread(self._plan, inputs, session_id))
 
         def cleanup(m: MaterializedHome, lock: SessionLock | None) -> None:
-            self._drop_secrets(m.home)
-            if lock is not None:
-                lock.release()
+            try:
+                self._drop_secrets(m.home)
+            finally:
+                if lock is not None:
+                    lock.release()
             if session_id is None:
                 robust_rmtree(m.run_dir)
 
@@ -412,10 +416,6 @@ class Dispatcher:
                 "cwd": str(self.spec.cwd), "argv": m.argv, "env": m.redacted_env(), "stdin": m.stdin,
                 "warnings": m.warnings, "session_id": session_id, "resumed_from": resumed_from, "home": str(m.home),
                 "rules_text": m.rules_text}
-
-
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
 
 
 def _run_sync(coro):

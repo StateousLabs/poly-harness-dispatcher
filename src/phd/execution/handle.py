@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import json
 import time
-import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -192,7 +191,7 @@ class RunHandle:
             try:
                 result = await self._run_to_result()
             except Exception as e:  # never let wait() raise or events() hang (CoreDesign §3)
-                self._kill_if_running()
+                await self._kill_and_reap()
                 result = self._minimal_result(e)
             except BaseException:  # KeyboardInterrupt / CancelledError: never leave the harness running
                 self._kill_if_running()
@@ -204,13 +203,14 @@ class RunHandle:
                 except Exception as e:
                     result.warnings.append(f"result sink {type(sink).__name__} failed: {e}")
         finally:
-            if self._proc is not None:
-                self._proc.close()
-            for problem in self._drop_secrets():  # only on an interrupted run; otherwise already done above
-                warnings.warn(problem, RuntimeWarning, stacklevel=2)
-            self._release_lock()
-            self._result = result
-            self._queue.put_nowait(None)
+            try:
+                if self._proc is not None:
+                    self._proc.close()
+                credential_copies.warn(self._drop_secrets())  # only on an interrupted run; else already done above
+            finally:
+                self._release_lock()
+                self._result = result
+                self._queue.put_nowait(None)
 
     def _drop_secrets(self) -> list[str]:
         """Delete the adapter's credential copies in the home (codex `auth.json`) once the turn is over; call it
@@ -224,6 +224,17 @@ class RunHandle:
     def _release_lock(self) -> None:
         if self._lock is not None:
             self._lock.release()
+
+    async def _kill_and_reap(self, timeout_s: float = 2.0) -> None:
+        """Kill a harness still running and wait (bounded) for it to exit, so it no longer has the home's files open
+        when the credential copy is deleted."""
+        self._kill_if_running()
+        proc = self._proc
+        if proc is not None and proc.proc is not None and proc.proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout_s)
+            except Exception:  # the delete retries on sharing errors anyway; this wait is only a head start
+                pass
 
     def _kill_if_running(self) -> None:
         proc = self._proc
@@ -348,7 +359,7 @@ class RunHandle:
         argv = m.argv if self._resume_session is not None else self._d.adapter.resume_argv(m.argv, first.session_id, spec)
         if remaining is not None:
             argv = _with_budget(argv, remaining)
-        warnings = self._guard_warnings()
+        guard_notes = self._guard_warnings()
         self._proc.close()
         try:
             self._proc = self._new_process(argv, REPAIR_PROMPT.format(error=first.error.message))
@@ -364,9 +375,9 @@ class RunHandle:
         parser = self._d.adapter.parser()
         turn = await self._turn(events_file, parser, deadline, budget_spent=spent, cost_before=before)
         reported = parser.outcome()
-        session_cost = self._session_cost(reported.cost_usd, before) if reported.cost_usd is not None else first.session_cost_usd
+        session_cost = self._session_cost(reported.cost_usd, before)  # no report: the baseline carried forward
         result = self._finish(_merge(first_outcome, self._own_cost(reported, before)), turn, session_cost=session_cost)
-        result.warnings += [w for w in warnings if w not in result.warnings]  # the first turn's guard warning
+        result.warnings += [w for w in guard_notes if w not in result.warnings]  # the first turn's guard warning
         result.warnings.append("schema repair turn used")
         if result.error is not None and result.error.kind == "schema":
             result.error = RunError("schema", "after one repair turn: " + result.error.message)

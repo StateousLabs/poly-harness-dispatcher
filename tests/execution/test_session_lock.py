@@ -138,10 +138,27 @@ def test_acquire_refuses_a_live_holder(tmp_path):
     assert not (tmp_path / LOCK_NAME).exists()
 
 
-def test_busy_within_grace_for_a_fresh_unreadable_lock(tmp_path):
+def test_busy_within_grace_for_a_fresh_unreadable_lock(tmp_path, monkeypatch):
+    import phd.execution.session_lock as mod
+    monkeypatch.setattr(mod, "BRIEF_HOLD_WAIT_S", 0.0)  # no wait: the file is still inside its grace
     (tmp_path / LOCK_NAME).write_text("")
     with pytest.raises(NotResumable, match="lock file is being written"):
         SessionLock(tmp_path, "run-a").acquire("session s")
+
+
+def test_a_lock_being_written_is_waited_for(tmp_path):
+    import threading
+    from phd.execution.session_lock import _HELD
+    (tmp_path / LOCK_NAME).write_text("")
+    _HELD.add("run-b")  # a run of this process that is still going
+    try:
+        def finish():
+            (tmp_path / LOCK_NAME).write_text(json.dumps({"pid": os.getpid(), "run_id": "run-b"}))
+        threading.Timer(0.3, finish).start()
+        with pytest.raises(NotResumable, match="busy with run run-b"):  # waited for the writer: a real busy
+            SessionLock(tmp_path, "run-a").acquire("session s")
+    finally:
+        _HELD.discard("run-b")
 
 
 def test_lock_released_between_the_two_looks_is_retried(tmp_path, monkeypatch):

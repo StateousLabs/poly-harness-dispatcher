@@ -97,5 +97,10 @@ def remove_path(path: Path) -> None:
         raise OSError(f"could not remove {path}")
 
 
+def is_link(path: Path) -> bool:
+    """True for a symlink or a Windows junction (never followed by PHD's deletions)."""
+    return path.is_symlink() or path.is_junction()
+
+
 def is_within(path: Path, parent: Path) -> bool:
     return Path(path).resolve().is_relative_to(Path(parent).resolve())
