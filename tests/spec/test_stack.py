@@ -80,6 +80,26 @@ def test_content_hash_changes_with_content(stack_copy):
     assert Stack.load(stack_copy).content_hash() != before
 
 
+def test_content_hash_covers_dot_folders(stack_copy):
+    """Stack assembly copies dot-folders into the run, so the hash must change when one changes."""
+    before = Stack.load(stack_copy).content_hash()
+    (stack_copy / ".config").mkdir()
+    (stack_copy / ".config" / "a.txt").write_text("one")
+    with_one = Stack.load(stack_copy).content_hash()
+    assert with_one != before
+    (stack_copy / ".config" / "a.txt").write_text("two")
+    assert Stack.load(stack_copy).content_hash() != with_one
+    # nested too, and .git / __pycache__ inside it are still ignored
+    (stack_copy / "hooks" / ".hidden").mkdir()
+    (stack_copy / "hooks" / ".hidden" / "x").write_text("x")
+    nested = Stack.load(stack_copy).content_hash()
+    (stack_copy / "hooks" / ".hidden" / ".git").mkdir()
+    (stack_copy / "hooks" / ".hidden" / ".git" / "HEAD").write_text("ref")
+    (stack_copy / "hooks" / ".hidden" / "__pycache__").mkdir()
+    (stack_copy / "hooks" / ".hidden" / "__pycache__" / "m.pyc").write_bytes(b"1")
+    assert Stack.load(stack_copy).content_hash() == nested
+
+
 def test_content_hash_ignores_pycache_and_hidden(stack_copy):
     """Hash should not change when __pycache__ or hidden files are added."""
     before = Stack.load(stack_copy).content_hash()

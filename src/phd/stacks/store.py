@@ -64,6 +64,10 @@ class StackStore:
         with self._locked():
             index = self._read_index()
             record = index.get(ref)
+            if record is not None and record["hash"] != ident and self._rehash_matches(ref, ident):
+                # the index hash predates the current hash rule (dot-folders were not covered): refresh it
+                record = index[ref] = {**record, "hash": ident}
+                self._write_index(index)
             if record is not None and record["hash"] == ident:
                 if (self._target(ref) / "config").is_dir():
                     _discard(staged)
@@ -100,6 +104,11 @@ class StackStore:
             if old is not None:
                 _discard(old)  # best effort; prune() collects it later
             return self._entry(ref, index[ref], ref)
+
+    def _rehash_matches(self, ref: str, ident: str) -> bool:
+        """True if the stored config of `ref`, hashed with the current rule, equals `ident`."""
+        config = self._target(ref) / "config"
+        return config.is_dir() and identity_hash(config) == ident
 
     def get(self, ref: str) -> StoreEntry:
         """`"name@version"`, or `"name"` for its most recently stored version.

@@ -191,12 +191,12 @@ Rules:
 - Files are visited in sorted order; for each file the hash takes its path relative to the stack root (forward
   slashes), a NUL byte, its raw bytes, and a NUL byte. No line-ending normalization: a CRLF checkout hashes
   differently from an LF one.
-- Skipped: files under any directory whose name starts with `.` (relative to the stack root, so `.git/` is
-  skipped, while the `.mcp.json` *file* and hidden files inside normal folders are hashed); files under
-  `__pycache__/`; `*.pyc` files.
+- Skipped: files under a `.git/` or `__pycache__/` directory (at any depth) and `*.pyc` files. Everything else is
+  hashed, including other dot-folders (`.config/`) and the `.mcp.json` file: the hash covers exactly what the
+  resolver copies into a stack and what a run receives.
 - The stack root's own location does not matter (a stack under `~/.phd/` hashes like anywhere else).
 
-The run-home copy (`home/stack/`) is a full `copytree` and does include `.git/` and `__pycache__/`.
+The run-home copy (`home/stack/`) is a full `copytree` and does include `.git/` and `__pycache__/` (the hash skips them; the resolver does not copy them).
 
 ---
 

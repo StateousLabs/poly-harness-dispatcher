@@ -207,6 +207,34 @@ def test_replace_writes_the_index_before_deleting_the_old_folder(tmp_path, monke
     assert ident2 == ident and not put(store, staged, ident2).reused
 
 
+def test_old_rule_index_hash_is_refreshed_not_a_conflict(tmp_path):
+    # hashes computed before dot-folders were covered: re-resolving the identical stack must not conflict
+    store = StackStore(tmp_path / "store")
+
+    def stage_dot(name="s"):
+        staged, _ = stage(store, name=name)
+        (staged / "config" / ".extra").mkdir()
+        (staged / "config" / ".extra" / "f.txt").write_text("x")
+        return staged, identity_hash(staged / "config")
+
+    staged, ident = stage_dot()
+    first = put(store, staged, ident)
+    index = _index(store)
+    index["s@1"]["hash"] = "sha256:oldrule"
+    (store.root / "index.json").write_text(json.dumps(index))
+    staged, ident = stage_dot()
+    again = put(store, staged, ident)
+    assert again.hash == ident and not staged.exists() and again.created_at == first.created_at
+    assert _index(store)["s@1"]["hash"] == ident and _index(store)["s@1"]["created_at"] == first.created_at
+    # a real content difference with a stale index hash is still a conflict
+    index = _index(store)
+    index["s@1"]["hash"] = "sha256:oldrule"
+    (store.root / "index.json").write_text(json.dumps(index))
+    staged, ident = stage(store, tweak="# changed" + chr(10))
+    with pytest.raises(StackConflict):
+        put(store, staged, ident)
+
+
 def test_prune_keeps_fresh_staging_and_removes_aged(tmp_path):
     store = StackStore(tmp_path / "store")
     fresh, aged = store.new_staging(), store.new_staging()

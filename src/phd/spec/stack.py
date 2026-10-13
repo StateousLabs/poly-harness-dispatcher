@@ -161,9 +161,9 @@ class Stack:
         """Return a SHA-256 over every file in the stack, as `"sha256:<hex>"`.
 
         Files are visited in sorted order; each contributes its POSIX relative path and raw bytes
-        (no line-ending normalization). Skipped, relative to the stack root: files under any
-        directory whose name starts with `.` (so `.git/` is skipped but the `.mcp.json` file is
-        hashed), files under `__pycache__/`, and `*.pyc` files. The dispatcher computes it at
+        (no line-ending normalization). Skipped, relative to the stack root: files under a
+        `.git/` or `__pycache__/` directory, and `*.pyc` files (exactly what stack assembly leaves
+        out when it copies; other dot-folders and dot-files such as `.mcp.json` are hashed). The dispatcher computes it at
         plan time and records it as `RunResult.stack_hash`.
         """
         return hash_tree(self.root)
@@ -173,14 +173,14 @@ def hash_tree(root: Path, *, ignore_meta: tuple[str, ...] = ()) -> str:
     """SHA-256 over a stack directory, as `"sha256:<hex>"`.
 
     Files are visited in sorted order; each contributes its POSIX relative path and bytes. Skipped
-    (relative to `root`): files under a directory whose name starts with `.`, files under
-    `__pycache__/`, and `*.pyc`. With `ignore_meta`, `stack.json` is hashed as canonical JSON
+    (relative to `root`): files under a `.git/` or `__pycache__/` directory, and `*.pyc`: exactly what stack
+    assembly does not copy, so the hash covers everything a run gets (dot-folders included). With `ignore_meta`, `stack.json` is hashed as canonical JSON
     without those keys (used for the store's identity hash).
     """
     digest = hashlib.sha256()
     for path in sorted(p for p in Path(root).rglob("*") if p.is_file()):
         rel = path.relative_to(root)
-        if "__pycache__" in rel.parts[:-1] or any(part.startswith(".") for part in rel.parts[:-1]):
+        if "__pycache__" in rel.parts[:-1] or ".git" in rel.parts[:-1]:
             continue
         if rel.suffix == ".pyc":
             continue

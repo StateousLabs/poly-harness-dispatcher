@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows
 - **Stack component names are portable on every OS.** Skill, MCP component and hook bundle names are checked with the
   same rule as stack names: no Windows device names (`con`, `nul.md`, `com1`, ...) and no trailing `.`, so a stack
   resolved on Linux or macOS also works on Windows.
+- **Stack content hash covers dot-folders.** `Stack.content_hash()` and the store's identity hash skipped every file
+  under a `.`-folder, although assembly and the run copy include them (only `.git/`, `__pycache__/` and `*.pyc` are
+  left out). The hash now skips exactly those. A stack already stored with a hash from the old rule is re-hashed on
+  `resolve` and its index hash updated, instead of raising `StackConflict`.
 
 ## [0.1.0] — 2026-10-12
 

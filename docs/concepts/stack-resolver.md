@@ -330,6 +330,11 @@ Storing a staged stack with ref `name@version` and identity hash `h`:
 | a different ref has hash `h` | **reuse that one** (the oldest such entry) | store under the ref |
 | this ref exists with a different hash | `StackConflict`, unless `replace=True` (overwrite) | same |
 
+The hash covers dot-folders (only `.git/`, `__pycache__/` and `*.pyc` are left out). A stack stored by 0.1.0 may
+carry an index hash computed without dot-folders; when the hashes differ, the stored `config/` is re-hashed with the
+current rule, and if that equals the new hash the entry is reused and its index hash is updated (no `StackConflict`).
+The "different ref has hash `h`" lookup uses the index hashes only, so a stale one just means a duplicate is stored.
+
 When an identical stack stored under another ref is reused, nothing new is written and the returned stack is that
 other entry:
 
