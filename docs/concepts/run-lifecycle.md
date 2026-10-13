@@ -52,7 +52,7 @@ sequenceDiagram
 |---|---|---|---|
 | 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, warnings), claude model check, codex temp `runs_root`. The codex / opencode model catalogue is looked up lazily, in a worker thread, at the start of step 2 on the first run (once per process) | `execution/dispatcher.py` | `HookUnsupported`, `InvalidRunsRoot`; `ModelNotSupported` (claude here, codex from `start()` / `plan()`; an opencode miss is a warning) |
 | 2 | **Plan**: on the first `start()` / `plan()` of the process for this `runs_root`, delete credential copies (codex `home/auth.json`) that a killed PHD process left in run homes no live run holds (each home's session lock is taken for the check, marked as a sweeper; a home a live run holds keeps its copy; links and homes outside `runs_root` are skipped, so nothing outside it is touched); with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
-| 3 | **Materialize**: create `home/` (or, [resuming](#resume), clear the PHD-owned paths of the session's home), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
+| 3 | **Materialize**: for a fresh run, fill the empty `home/` that step 2 created and locked (a dry run creates `home/` here; [resuming](#resume), clear the PHD-owned paths of the session's home first), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
 | 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background; attach the [orphan-protection](#orphan-protection) guard | `RunHandle.launch`, `execution/process.py`, `execution/lifetime/` | `HarnessNotInstalled` |
 | 5 | **Stream / parse**: read stdout line by line; non-JSON lines become `log` events; JSON objects go to the harness parser, which yields normalized events and accumulates the outcome; stderr is copied to `stderr.log` | `RunHandle._consume` | never (data) |
 | 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False`; delete the adapter's credential copies (codex `home/auth.json`) however the run ended, before the session lock is released (a failed deletion becomes a warning) | `RunHandle._build_result`, `_repair`, `_pump` | never (data) |
@@ -65,7 +65,10 @@ nothing behind: the session lock is released and a fresh run's directory is remo
 
 ### Never blocks the event loop
 
-Every wait in the async API is an `await`. `start()` runs the model catalogue lookup, the home materialization (stack copy, skills, credential files), the session lock and the ledger writes in worker threads (`asyncio.to_thread`); the removal of a `resumable=False` home also runs in a worker thread. The Windows `taskkill` fallback of the process-tree kill is started without waiting for it. A ticker task on the same loop keeps beating while a run starts, runs and ends. What stays on the loop is small: appending events and writing `result.json`. The blocking wrappers (`spawn`, `plan`) are for code without a running loop.
+Every wait in the async API is an `await`. `start()` runs the model catalogue lookup, the home materialization (stack copy, skills, credential files), the session lock and the ledger writes in worker threads (`asyncio.to_thread`); the removal of a `resumable=False` home also runs in a worker thread. The Windows `taskkill` fallback of the process-tree kill is started without waiting for it. A ticker task on the same loop keeps beating while a run starts, runs and ends. What stays on the loop is small: appending events, writing `result.json` and releasing the session lock (a
+delete that retries for up to about 1 s on a Windows sharing error). The credential copies are deleted in a worker
+thread too, except on the rare paths where the run was interrupted or the harness could not be started, which
+delete them synchronously while unwinding. The blocking wrappers (`spawn`, `plan`) are for code without a running loop.
 
 ## Using a run: `run()` vs `start()`
 
@@ -207,10 +210,11 @@ budget, cancel, interrupt, and when the harness cannot be started); a fresh run 
 before its home is deleted. A lock whose process is no longer running, or whose file cannot be read, is **stale**
 and is taken over automatically; the takeover (re-check, then delete) runs under an OS lock on
 `<home>/.phd-session.lock.takeover` (waits up to 5 s, then `NotResumable` "busy"), so two acquirers that see the same
-stale lock cannot both win. That file is never written to or deleted and holds nothing. The credential sweep holds
+stale lock cannot both win. That file is never written to or deleted and holds nothing; if it is a symlink or junction the takeover is refused (`NotResumable`), so the OS lock never opens a path outside the home. The credential sweep holds
 a lock marked `"sweep": true` for one delete; an acquirer that meets a live sweeper, or a lock file that is still
-being written, waits up to 2 s for it before it reports busy, so a sweep in another process usually delays a resume (by up to
-2 s) rather than failing it; a hold longer than that (a sharing error that outlasts the delete retries, heavy load)
+being written, waits up to 2.5 s for it before it reports busy (longer than the 2 s after which an unreadable lock
+file counts as stale, so a lock left half-written by a dead process is always taken over), so a sweep in another
+process usually delays a resume (by up to 2.5 s) rather than failing it; a hold longer than that (a sharing error that outlasts the delete retries, heavy load)
 still reports busy (a 0.1.0 process does not know the marker and reports busy at once). Several runs can share one
 Python process (async), so for a lock written by this process PHD checks its in-process record of runs that still hold a lock rather than the pid. In practice the lock
 matters for turns of an existing session: a session only becomes resumable once a run of it has finished (its

@@ -333,6 +333,8 @@ Storing a staged stack with ref `name@version` and identity hash `h`:
 The hash covers dot-folders (only `.git/`, `__pycache__/` and `*.pyc` are left out). A stack stored by 0.1.0 may
 carry an index hash computed without dot-folders; when the hashes differ, the stored `config/` is re-hashed with the
 current rule, and if that equals the new hash the entry is reused and its index hash is updated (no `StackConflict`).
+Reading does not refresh it: `stacks.get()` / `stacks.list()` keep returning the old `StoreEntry.hash` until that ref
+is resolved again, so a caller that keys a cache on it sees it change once, at that resolve.
 The "different ref has hash `h`" lookup uses the index hashes only, so a stale one just means a duplicate is stored.
 An old entry whose folder is gone cannot be re-hashed: it needs `stacks.prune()` (drops the entry) or
 `replace=True`.

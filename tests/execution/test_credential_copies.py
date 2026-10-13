@@ -414,3 +414,29 @@ def test_a_sweeper_that_never_lets_go_is_busy_after_the_wait(tmp_path, codex_spe
         d.spawn(Inputs(msg="next"), session_id=first.session_id)
     assert time.monotonic() - t0 >= BRIEF_HOLD_WAIT_S * 0.9
     assert "busy" in str(caught.value) and "phd-sweep" not in str(caught.value)
+
+
+@pytest.mark.parametrize("resumable", [True, False])
+async def test_a_slow_delete_does_not_block_the_event_loop(tmp_path, codex_spec, echo, monkeypatch, resumable):
+    # final review M3: a delete stuck in sharing-error retries runs in a worker thread, not on the loop
+    real = credential_copies._unlink
+
+    def slow(path):
+        time.sleep(1.0)
+        real(path)
+    monkeypatch.setattr(credential_copies, "_unlink", slow)
+    d = dispatcher(codex_spec(resumable=resumable), tmp_path)
+    stamps, stop = [], asyncio.Event()
+
+    async def ticker():
+        while not stop.is_set():
+            stamps.append(time.monotonic())
+            await asyncio.sleep(0.05)
+    t = asyncio.create_task(ticker())
+    await asyncio.sleep(0.1)
+    r = await (await d.start(Inputs(msg="x"))).wait()
+    stamps.append(time.monotonic())  # a block right before the result counts too
+    stop.set()
+    await t
+    assert r.status is RunStatus.SUCCEEDED and leftovers(tmp_path) == []
+    assert max(b - a for a, b in zip(stamps, stamps[1:])) < 0.5

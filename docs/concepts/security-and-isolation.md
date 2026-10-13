@@ -84,7 +84,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 | Location | What |
 |---|---|
 | run home config files | `${env:NAME}` values from `Spec.secrets`, resolved into claude `mcp.json`, codex `config.toml`, opencode `opencode.json`, and `phd/hooks.resolved.json` |
-| `home/auth.json` (codex) | the full codex auth file, including any refresh token. It exists only while a turn runs: PHD deletes it when the turn ends, however it ends (success, failure, cancel, timeout, idle, crash, spawn failure), and a dry run (`plan()`) deletes it right after writing the preview home. A resumed turn copies it again from the spec's credential file. A PHD process killed mid-turn leaves it behind; the first `start()` or `plan()` of the next PHD process that uses the same `runs_root` deletes the copies of every run home no live run holds (it takes the home's session lock to check, which can delay a concurrent resume of that session by up to 2 s, or make it report busy if the hold lasts longer; it never follows a symlink or junction and skips any home outside `runs_root`). If a deletion fails (a Windows sharing error that outlasts the retries), the run carries a warning and the file waits for that sweep |
+| `home/auth.json` (codex) | the full codex auth file, including any refresh token. It exists only while a turn runs: PHD deletes it when the turn ends, however it ends (success, failure, cancel, timeout, idle, crash, spawn failure), and a dry run (`plan()`) deletes it right after writing the preview home. A resumed turn copies it again from the spec's credential file. A PHD process killed mid-turn leaves it behind; the first `start()` or `plan()` of the next PHD process that uses the same `runs_root` deletes the copies of every run home no live run holds (it takes the home's session lock to check, which can delay a concurrent resume of that session by up to 2.5 s, or make it report busy if the hold lasts longer; it never follows a symlink or junction and skips any home outside `runs_root`). If a deletion fails (a Windows sharing error that outlasts the retries), the run carries a warning and the file waits for that sweep |
 | `~/.phd/cache/codex/catalog-home/<id>/<uuid>/auth.json` | the full codex auth file, including the refresh token, copied for the model catalogue. It exists only while `codex debug models` runs and is deleted right after (a crash of the PHD process in that window can leave it behind; the next catalogue load deletes it once it is 10 minutes old) |
 | the harness process environment | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `OPENCODE_AUTH_CONTENT` |
 | `events.jsonl`, `stderr.log`, `result_text` | whatever the harness prints, unfiltered: if the agent echoes a secret it is recorded |
@@ -116,6 +116,10 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
 - `LocalLedger.find_session` scans every `result.json` (and, for a session with no finished run, every `session.json`) in the ledger on each resume; fine at current scale,
   an index is needed later.
 - Rules files are stored in plain text as `rules_text` in each `run.json` of a session (secrets never are).
+- Upgrade every process that shares a `runs_root` together: a 0.1.0 process writes a fresh run's `auth.json`
+  before it locks the home and does not know the sweep's lock marker, so beside a 0.1.1 process it can lose that copy
+  to the sweep (error kind `auth`) or report the sweep as a busy run. The first `start()` / `plan()` after upgrading
+  deletes every copy 0.1.0 left behind, which can take a while with many codex runs.
 - codex token refresh during a turn is lost: if codex refreshes its OAuth token mid-turn and writes it to the run's
   `home/auth.json`, PHD deletes that file when the turn ends and never writes it back to your auth file, so the next
   turn starts from the original file and may fail with error kind `auth` (run `codex login` again). In 31 observed

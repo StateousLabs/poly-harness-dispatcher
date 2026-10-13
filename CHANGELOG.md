@@ -6,19 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0
+
+- **Upgrade every process that shares a `runs_root` together.** A 0.1.0 process locks a fresh run's home only after
+  it has written the codex `auth.json` copy into it, and it does not know the sweep's lock marker. Running beside a
+  0.1.1 process, it can lose a fresh codex run's credential copy to the 0.1.1 sweep (the run fails with error kind
+  `auth`), or report the sweep as a busy run (`busy with run phd-sweep-...`).
+- **The first `start()` / `plan()` after upgrading deletes every `auth.json` copy 0.1.0 left in codex run homes.**
+  Each one is locked, deleted and unlocked in turn; with thousands of runs this first call can take a while, and
+  other plans on the same `runs_root` in that process wait for it.
+
 ### Fixed
 
-- **Stack component names are portable on every OS.** Skill, MCP component and hook bundle names are checked with the
-  same rule as stack names: no Windows device names (`con`, `nul.md`, `com1`, ...) and no trailing `.`, so a stack
-  resolved on Linux or macOS also works on Windows.
+- **Stack component names are portable on every OS.** Skill, MCP component, hook bundle and agent file names are
+  checked with the same rule as stack names: no Windows device names (`con`, `nul.md`, `com1`, ...) and no trailing
+  `.`, so a stack resolved on Linux or macOS also works on Windows. The `StackInvalid` message changed from
+  `... name 'x' must match [A-Za-z0-9][A-Za-z0-9._-]*` to `<what>: invalid <kind> name 'x': use <rule>`.
 - **Stack content hash covers dot-folders.** `Stack.content_hash()` and the store's identity hash skipped every file
   under a `.`-folder, although assembly and the run copy include them (only `.git/`, `__pycache__/` and `*.pyc` are
-  left out). The hash now skips exactly those (anything named `.git` or `__pycache__`, and `*.pyc`). Dot-folders
-  such as `.venv/` or `.pytest_cache/` in a component source were already copied and now count: keep them out of sources. A stack already stored with a hash from the old rule is re-hashed on
-  `resolve` and its index hash updated, instead of raising `StackConflict`.
-- **Session lock takeover race.** Two runs that found the same stale `.phd-session.lock` could both take it over: one
+  left out). The hash now skips exactly those (anything named `.git` or `__pycache__`, and `*.pyc`), so
+  `Stack.content_hash()`, `RunResult.stack_hash` and new `StoreEntry.hash` values change for any stack with a
+  dot-folder. Dot-folders such as `.venv/` or `.pytest_cache/` in a component source were already copied and now
+  count: keep them out of sources. A stack already stored with a hash from the old rule is re-hashed on `resolve`
+  and its index hash updated, instead of raising `StackConflict`; until then `stacks.get()` / `stacks.list()` return
+  its old hash.
+- **Session lock races.** Two runs that found the same stale `.phd-session.lock` could both take it over: one
   deleted the lock the other had just written, and both ran on the same session. Taking over a stale lock is now
-  serialized by an OS lock on `<home>/.phd-session.lock.takeover` and re-checks the lock before deleting it; `release` now deletes its lock before it stops counting as held.
+  serialized by an OS lock on `<home>/.phd-session.lock.takeover` (the file may be left in a home; a takeover file
+  that is a symlink or junction is refused) and re-checks the lock before deleting it. `release` deletes its lock
+  before it stops counting as held, and `acquire` counts its run as held before its lock file exists, so two
+  resumes of one session in the same process can no longer both win.
+- **`pid_alive` no longer raises on an out-of-range pid** (a corrupt lock or owner file): such a pid is not alive.
 - **`prune` no longer deletes a running resolve's staging folder.** A resolve that took longer than an hour (slow
   downloads) lost its folder to a concurrent `stacks.prune()`. Each staging folder now records its owner process
   (`.owner.json`); `prune` keeps folders whose owner is still running and applies the one-hour rule to the rest.
@@ -30,10 +48,17 @@ All notable changes to this project are documented here. The format follows
   `session_cost_usd` (claude's cumulative figure; `None` for codex and opencode, whose `cost_usd` is unchanged).
 - **The codex `auth.json` copy no longer stays at rest.** It stayed in `<runs_root>/<run_id>/home/auth.json` after
   the turn. It is now deleted when the turn ends, however it ends (also after a failed spawn and after a dry run,
-  which no longer leaves one), and re-copied on resume. Copies left by a killed PHD process are deleted by the first
-  `start()` / `plan()` of the next process using the same `runs_root`, except in homes a live run holds; the sweep never follows a symlink or junction, and a resume that meets its brief hold (or any lock file still being written) waits up to 2 s before it reports busy. Adapters
-  declare their credential files with a new `secret_paths(home)` method. If codex refreshes its token mid-turn, the
-  refreshed token is discarded (see Security and isolation, Known limitations).
+  which no longer leaves one), and re-copied on resume. If codex refreshes its token mid-turn, the refreshed token is
+  discarded (see Security and isolation, Known limitations).
+  - Copies left by a killed PHD process are deleted by the first `start()` / `plan()` of the next process using the
+    same `runs_root`, except in homes a live run holds. The sweep never follows a symlink or junction and skips homes
+    outside `runs_root`.
+  - The sweep holds each home's session lock for one delete, marked `"sweep": true` in the lock file. A resume that
+    meets that hold, or any lock file still being written, waits up to 2.5 s before it reports busy.
+  - A fresh run now creates and locks its empty home before it is materialized, so a credential copy never sits in
+    an unlocked home.
+  - Adapters declare their credential files with a new `secret_paths(home)` method; `phd.harnesses.all_secret_paths`
+    lists them for every adapter.
 - **Credential files are copied byte for byte.** The codex `auth.json` (run home and model-catalogue home) was read
   and written as text, so on Windows its LF line endings became CRLF. `write_private` now takes bytes.
 
@@ -41,8 +66,8 @@ All notable changes to this project are documented here. The format follows
 
 - Coverage now measures child processes (the reaper, harness stand-ins) with `patch = ["subprocess"]`; the hook shim,
   which runs from a copy in each run home, is covered by in-process tests. The CI coverage floors for Linux and macOS
-  were raised to 89 (Windows stays 90). New POSIX tests cover the 5 s stderr wait (`STDERR_GRACE_S`) and run
-  `reaper_main.py` directly.
+  were raised to 89 (Windows stays 90). New POSIX tests cover the 5 s stderr wait (now the module constant
+  `phd.execution.process.STDERR_GRACE_S`) and run `reaper_main.py` directly.
 
 ## [0.1.0] — 2026-10-12
 

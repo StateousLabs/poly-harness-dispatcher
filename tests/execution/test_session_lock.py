@@ -266,3 +266,81 @@ def test_takeover_does_not_recreate_a_deleted_home(tmp_path):
     home = tmp_path / "gone"
     SessionLock(home, "run-a")._take_over("session s", {"pid": 1})
     assert not home.exists()
+
+
+class _ClosedThenHook:
+    """A file whose `with` block runs `hook` right after the file is closed."""
+
+    def __init__(self, f, hook):
+        self._f, self._hook = f, hook
+
+    def __enter__(self):
+        return self._f.__enter__()
+
+    def __exit__(self, *exc):
+        result = self._f.__exit__(*exc)
+        if self._hook is not None:
+            self._hook()
+        return result
+
+
+class _OsWithHook:
+    """`os` for the session_lock module, except that closing the first lock file it writes runs `hook`."""
+
+    def __init__(self, hook):
+        self._hook = hook
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def fdopen(self, fd, *args, **kwargs):
+        hook, self._hook = self._hook, None
+        return _ClosedThenHook(os.fdopen(fd, *args, **kwargs), hook)
+
+
+def test_an_acquirer_in_the_same_process_never_takes_over_a_lock_just_written(tmp_path, monkeypatch):
+    # final review I1: B reads A's complete lock right after A wrote it; A must already count as held, else B takes
+    # the "stale" lock over and both run on the same home
+    import phd.execution.session_lock as mod
+    outcome = {}
+
+    def second_acquirer():
+        try:
+            SessionLock(tmp_path, "run-b").acquire("session s").release()  # (only the old order lets B win)
+            outcome["b"] = "won"
+        except NotResumable as e:
+            outcome["b"] = str(e)
+    monkeypatch.setattr(mod, "os", _OsWithHook(second_acquirer))
+    a = SessionLock(tmp_path, "run-a").acquire("session s")
+    assert a.held and "busy with run run-a" in outcome["b"]
+    assert json.loads((tmp_path / LOCK_NAME).read_text(encoding="utf-8"))["run_id"] == "run-a"
+    a.release()
+    assert "run-a" not in mod._HELD and "run-b" not in mod._HELD
+
+
+def test_a_failed_acquire_does_not_stay_registered(tmp_path):
+    import phd.execution.session_lock as mod
+    (tmp_path / LOCK_NAME).write_text(json.dumps({"pid": os.getpid(), "run_id": "run-a"}), encoding="utf-8")
+    mod._HELD.add("run-a")
+    try:
+        with pytest.raises(NotResumable):
+            SessionLock(tmp_path, "run-b").acquire("session s")
+        assert "run-b" not in mod._HELD
+    finally:
+        mod._HELD.discard("run-a")
+
+
+def test_takeover_refuses_a_linked_takeover_file(tmp_path):
+    from phd.execution.session_lock import TAKEOVER_NAME
+    victim = tmp_path / "victim" / "host-file"
+    victim.parent.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / LOCK_NAME).write_text(json.dumps({"pid": 2**31 + 5, "run_id": "gone"}), encoding="utf-8")  # stale
+    try:
+        os.symlink(victim, home / TAKEOVER_NAME)  # dangling: opening it with O_CREAT would create the host file
+    except OSError as e:
+        pytest.skip(f"cannot create a file symlink here: {e}")
+    with pytest.raises(NotResumable, match="symlink or junction"):
+        SessionLock(home, "run-a").acquire("session s")
+    assert not victim.exists() and json.loads((home / LOCK_NAME).read_text(encoding="utf-8"))["run_id"] == "gone"

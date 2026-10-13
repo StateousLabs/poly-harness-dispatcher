@@ -21,14 +21,18 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .._util.filelock import FileLock, is_stale, read_holder, retry_sharing
+from .._util.filelock import UNREADABLE_GRACE_S, FileLock, is_stale, read_holder, retry_sharing
+from .._util.fs import is_link
 from .._util.proc import pid_alive
 from ..errors import NotResumable
 
 LOCK_NAME = ".phd-session.lock"
 TAKEOVER_NAME = LOCK_NAME + ".takeover"  # an OS lock (FileLock) that serializes taking over a stale lock; never deleted
 TAKEOVER_TIMEOUT_S = 5.0
-BRIEF_HOLD_WAIT_S = 2.0  # how long an acquirer waits out a sweeper's hold or a lock file being written
+# How long an acquirer waits out a sweeper's hold or a lock file being written. Longer than the unreadable grace, so
+# a lock file whose writer died before writing it always ends in a takeover within the wait, never in a coin toss
+# between "busy" and the takeover; and well above a sweeper's hold (one delete, ~1.6 s at most with retries).
+BRIEF_HOLD_WAIT_S = UNREADABLE_GRACE_S + 0.5
 POLL_S = 0.05
 SWEEP_TAKEOVER_TIMEOUT_S = 0.5  # a sweeper skips a home rather than queue behind another takeover
 _HELD: set[str] = set()  # run_ids that hold a lock in this process
@@ -55,6 +59,17 @@ class SessionLock:
 
         A live sweeper's hold, or a lock file between its create and its write, is waited out for up to
         `BRIEF_HOLD_WAIT_S` (a sweeper itself never waits)."""
+        # Registered before the lock file can exist: another acquirer in this process that reads our complete file
+        # must already see this run as holding it, or it would take the "stale" lock over and both would run.
+        # Safe because no lock file names this (unique) run_id until we write it.
+        _HELD.add(self.run_id)
+        try:
+            return self._acquire(what)
+        except BaseException:
+            _HELD.discard(self.run_id)
+            raise
+
+    def _acquire(self, what: str) -> SessionLock:
         deadline = time.monotonic() + (0.0 if self.sweep else BRIEF_HOLD_WAIT_S)
         takeovers = 0
         while True:
@@ -88,7 +103,6 @@ class SessionLock:
                           "started_at": datetime.now(timezone.utc).isoformat()}
                 json.dump(record | {"sweep": True} if self.sweep else record, f)
             self.held = True
-            _HELD.add(self.run_id)
             return self
 
     def _take_over(self, what: str, holder: dict | None) -> None:
@@ -98,9 +112,12 @@ class SessionLock:
         write its own lock between our check and our unlink, and we would delete that live lock."""
         if not self.path.parent.is_dir():  # the home is gone: do not let the lock file recreate it; acquire retries
             return
+        takeover = self.path.with_name(TAKEOVER_NAME)
+        if is_link(takeover):  # opening it (O_CREAT) would create or open the link's target outside the home
+            raise NotResumable(f"{what}: {takeover} is a symlink or junction")
         try:
             timeout = SWEEP_TAKEOVER_TIMEOUT_S if self.sweep else TAKEOVER_TIMEOUT_S
-            with FileLock(self.path.with_name(TAKEOVER_NAME), timeout_s=timeout):
+            with FileLock(takeover, timeout_s=timeout):
                 current = read_holder(self.path)
                 # an unreadable file may be a new lock between its create and its write: stale only after the grace
                 if current == holder and (holder is not None or is_stale(self.path)):

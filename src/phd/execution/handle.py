@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import threading
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -79,6 +80,7 @@ class RunHandle:
         self._task: asyncio.Task | None = None
         self._session_warnings: list[str] = []  # problems recording the session; added to the result
         self._secrets_dropped = False
+        self._drop_lock = threading.Lock()  # the drop runs in a worker thread; the backstop must wait for it
         self._started_at = datetime.now(timezone.utc)
         self._t0 = time.monotonic()
 
@@ -196,7 +198,8 @@ class RunHandle:
             except BaseException:  # KeyboardInterrupt / CancelledError: never leave the harness running
                 self._kill_if_running()
                 raise
-            result.warnings += self._drop_secrets()  # before the sinks, so a failed deletion is recorded
+            # before the sinks, so a failed deletion is recorded; off the loop (it retries on sharing errors)
+            result.warnings += await asyncio.to_thread(self._drop_secrets)
             for sink in self._d.sinks:
                 try:
                     await sink.put(result)
@@ -215,11 +218,13 @@ class RunHandle:
     def _drop_secrets(self) -> list[str]:
         """Delete the adapter's credential copies in the home (codex `auth.json`) once the turn is over; call it
         before the lock is released, so the next turn's fresh copy is never the one deleted. Never raises: returns
-        what could not be deleted. Only the first call does anything."""
-        if self._secrets_dropped:
-            return []
-        self._secrets_dropped = True
-        return credential_copies.drop(self._d.adapter.secret_paths(self.materialized.home))
+        what could not be deleted. Only the first call does anything; a later one waits until that has finished (so
+        the backstop never releases the lock while a worker thread is still deleting)."""
+        with self._drop_lock:
+            if self._secrets_dropped:
+                return []
+            self._secrets_dropped = True
+            return credential_copies.drop(self._d.adapter.secret_paths(self.materialized.home))
 
     def _release_lock(self) -> None:
         if self._lock is not None:
@@ -279,7 +284,7 @@ class RunHandle:
             result.warnings += self._session_warnings
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
-            result.warnings += self._drop_secrets()
+            result.warnings += await asyncio.to_thread(self._drop_secrets)
             self._release_lock()  # the lock file lives in the home that is about to go
             try:
                 await asyncio.to_thread(robust_rmtree, m.home)
