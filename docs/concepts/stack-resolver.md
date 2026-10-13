@@ -147,7 +147,10 @@ dedupe step below stops identical results piling up).
 | `mcp` | a folder with `.mcp.json`, or a single JSON file `{"mcpServers": {...}}` | each server key; a folder's own name is the component folder (for a single file, see [below](#single-file-mcp-sources)) |
 | `hooks` | a folder with `hooks.json` plus the files it uses | the bundle (folder) name |
 
-A skill, MCP component or hook bundle name must match `[A-Za-z0-9][A-Za-z0-9._-]*`. A folder with a missing marker
+A skill, MCP component or hook bundle name follows the same [rule as stack names](#names) on every OS (so a stack
+resolved on Linux still works on Windows): it must match `[A-Za-z0-9][A-Za-z0-9._-]*`, must not end in `.`, and must not
+be a Windows device name (`con`, `nul.md`, `com1`, ...), else `StackInvalid`. A single-file MCP source whose name is not
+safe (for example `.mcp.json`) is named after its parent folder, or `mcp` if that is not safe either. A folder with a missing marker
 file raises `StackFetchError`; a malformed one raises `StackInvalid` (including a `SKILL.md` that is not UTF-8). A
 component that cannot be copied into the staging folder raises `StackFetchError` naming the entry (`skills[0]`,
 `base`, ...), not the paths.

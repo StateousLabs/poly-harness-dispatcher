@@ -203,10 +203,55 @@ def test_skill_hostile_name(tmp_path, parts):
     evil.mkdir()
     (evil / "SKILL.md").write_text("---\nname: ../evil\n---\nbody\n", encoding="utf-8")
 
-    with pytest.raises(StackInvalid, match="must match"):
+    with pytest.raises(StackInvalid, match="invalid skill name"):
         build(tmp_path, compose("c", "1", base=parts / "base", skills=[evil]))
 
 
+
+
+@pytest.mark.parametrize("bad", ["con", "Aux", "nul.md", "com1", "name."])
+def test_component_names_follow_the_portable_name_rule(tmp_path, parts, bad):
+    """Windows device names and a trailing dot are refused on every OS, so stacks stay portable."""
+    skill = parts / "dev-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(f"---\nname: {bad}\n---\nbody\n", encoding="utf-8")
+    with pytest.raises(StackInvalid, match=r"skills\[0\]: invalid skill name .* not a Windows device name"):
+        build(tmp_path, compose("c", "1", base=parts / "base", skills=[skill]))
+
+
+@pytest.mark.parametrize("bad", ["con", "com1"])  # no trailing dot: Windows cannot create that folder
+def test_hook_bundle_and_mcp_folder_names_follow_the_rule(tmp_path, parts, bad):
+    hooks = parts / "bundles" / bad
+    shutil.copytree(parts / "audit", hooks)
+    with pytest.raises(StackInvalid, match=r"invalid hook bundle name .* not a Windows device name"):
+        build(tmp_path, compose("c", "1", base=parts / "base", hooks=[hooks]))
+    mcp = parts / "mcps" / bad
+    shutil.copytree(parts / "weather", mcp)
+    with pytest.raises(StackInvalid, match=r"invalid MCP component name .* not a Windows device name"):
+        build(tmp_path / "m", compose("c", "1", base=parts / "base", mcp=[mcp]))
+
+
+@pytest.mark.parametrize("good", ["console", "com10", "aux-tools"])
+def test_similar_but_safe_names_are_accepted(tmp_path, parts, good):
+    skill = parts / "ok-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(f"---\nname: {good}\n---\nbody\n", encoding="utf-8")
+    config, _ = build(tmp_path, compose("c", "1", base=parts / "base", skills=[skill]))
+    assert (config / "skills" / good / "SKILL.md").is_file()
+
+
+def test_mcp_file_named_like_a_device_falls_back_to_its_folder(tmp_path, parts):
+    folder = parts / "weather-pack"
+    folder.mkdir()
+    (folder / "nul.json").write_text(json.dumps({"mcpServers": {"w": {"command": "python"}}}), encoding="utf-8")
+    config, provenance = build(tmp_path, compose("c", "1", base=parts / "base", mcp=[folder / "nul.json"]))
+    assert [p.name for p in provenance if p.kind == "mcp"] == ["weather-pack"]
+    # a parent folder that is itself unsafe falls back to "mcp"
+    bad = parts / "con"
+    bad.mkdir()
+    (bad / ".mcp.json").write_text(json.dumps({"mcpServers": {"w2": {"command": "python"}}}), encoding="utf-8")
+    _, provenance = build(tmp_path / "b", compose("c", "1", base=parts / "base", mcp=[bad / ".mcp.json"]))
+    assert [p.name for p in provenance if p.kind == "mcp"] == ["mcp"]
 
 
 def test_hook_bundle_name_conflicts_with_file(tmp_path, parts):

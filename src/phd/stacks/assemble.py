@@ -10,12 +10,12 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from .._util.fs import write_json
+from .._util.names import SAFE_NAME_RULE, is_safe_part
 from ..errors import StackFetchError, StackInvalid
 from .manifest import ComponentSource, Manifest
 from .sources import Fetched, display_source, fetch
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".git")
-_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _HERE = "${here}"
 
 
@@ -130,9 +130,9 @@ def _put_mcp(src: ComponentSource, config: Path, work: Path, what: str, servers:
     fetched = fetch(src, work, what=what)
     component = fetched.name
     if fetched.path.is_file():
-        if not _SAFE_NAME.fullmatch(component):  # e.g. ".mcp" from weather/.mcp.json: name it after the folder
+        if not is_safe_part(component):  # e.g. ".mcp" from weather/.mcp.json: name it after the folder
             parent = _source_parent_name(src)
-            component = parent if _SAFE_NAME.fullmatch(parent) else "mcp"
+            component = parent if is_safe_part(parent) else "mcp"
         data, files = _read_json(fetched.path, what), None
     else:
         if not (fetched.path / ".mcp.json").is_file():
@@ -212,8 +212,8 @@ def _frontmatter_name(skill_md: Path, what: str) -> str | None:
 
 
 def _check_name(name: str, what: str, kind: str) -> None:
-    if not _SAFE_NAME.fullmatch(name):
-        raise StackInvalid(f"{what}: {kind} name {name!r} must match [A-Za-z0-9][A-Za-z0-9._-]*")
+    if not is_safe_part(name):
+        raise StackInvalid(f"{what}: invalid {kind} name {name!r}: use {SAFE_NAME_RULE}")
 
 
 def _rewrite(value, here: str):

@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it leaves alpha.
 
+## [Unreleased]
+
+### Fixed
+
+- **Stack component names are portable on every OS.** Skill, MCP component and hook bundle names are checked with the
+  same rule as stack names: no Windows device names (`con`, `nul.md`, `com1`, ...) and no trailing `.`, so a stack
+  resolved on Linux or macOS also works on Windows.
+
 ## [0.1.0] — 2026-10-12
 
 First release: layer 1, the core spawner. Agents run on the host with no sandbox.
