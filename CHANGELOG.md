@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
 - **`prune` no longer deletes a running resolve's staging folder.** A resolve that took longer than an hour (slow
   downloads) lost its folder to a concurrent `stacks.prune()`. Each staging folder now records its owner process
   (`.owner.json`); `prune` keeps folders whose owner is still running and applies the one-hour rule to the rest.
+- **`from phd.stacks import *` no longer shadows the builtin `list`.** `list` is out of `phd.stacks.__all__`;
+  `phd.stacks.list()` works as before.
 
 ## [0.1.0] — 2026-10-12
 

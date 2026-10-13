@@ -156,3 +156,11 @@ def test_removed_stack_refuses_a_resumed_turn_without_a_run_dir(tmp_path, store,
     with pytest.raises(StackNotFound):
         d.spawn(Inputs(msg="again"), session_id=result.session_id)
     assert sorted(p.name for p in runs.iterdir()) == before
+
+
+def test_star_import_leaves_the_builtin_list_alone():
+    ns: dict = {}
+    exec("from phd.stacks import *", ns)
+    assert ns["resolve"] is not None and "list" not in ns
+    import phd.stacks
+    assert "list" not in phd.stacks.__all__ and callable(phd.stacks.list)

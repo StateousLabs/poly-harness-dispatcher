@@ -99,5 +99,5 @@ def _load(entry: StoreEntry) -> Stack:
     return dataclasses.replace(Stack.load(entry.path), store=entry)
 
 
-__all__ = ["ComponentSource", "Manifest", "StoreEntry", "compose", "get", "list", "load_manifest", "prune",
+__all__ = ["ComponentSource", "Manifest", "StoreEntry", "compose", "get", "load_manifest", "prune",
            "remove", "resolve"]
