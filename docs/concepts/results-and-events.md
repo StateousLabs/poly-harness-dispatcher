@@ -117,7 +117,7 @@ own events. `summary` is a one-line description of the event (see below).
 | `message` | parser | `{"text": ...}` |
 | `tool_call` | parser | claude `{"tool", "input", "id"}`; codex `{"tool", "id", "status", "input"}`; opencode `{"tool", "id", "status", "input"}` |
 | `tool_result` | parser | claude `{"id", "is_error"}`; codex `{"tool", "id", "status", "exit_code"}`; opencode `{"tool", "id", "status"}` |
-| `usage` | parser | `Usage` fields so far + `"cost_usd"` |
+| `usage` | parser | `Usage` fields so far + `"cost_usd"` (this invocation's own cost, by the same rule as `RunResult.cost_usd`: for a resumed claude turn the reported session total minus the session's cost before the invocation; on a run with a schema repair turn each turn's `usage` event carries that turn's own cost, so they add up to `RunResult.cost_usd`) + `"session_cost_usd"` (claude: the session's cumulative cost, as `RunResult.session_cost_usd`; `None` for codex and opencode). `raw` keeps the harness line unchanged, so for claude `raw["total_cost_usd"]` is the cumulative figure. `events.jsonl` holds the same adjusted data |
 | `schema.repair` | PHD | `{"error": ...}`: the schema error that triggered the [repair turn](run-lifecycle.md#schema-repair-turn); emitted when the repair turn starts (after its process started) |
 | `log` | PHD or parser | non-JSON stdout line: `{"text": line}`; parser warning: `{"text", "level": "warning"}`; unparsable event: `{"text": "unparsed <harness> event", "raw_type"}` |
 | `run.finished` | PHD, last | `{"status": "<status>"}` |
@@ -133,7 +133,7 @@ Per harness, which native stream items produce which events:
 | assistant text | `assistant` text item → `message` | `item.completed` `agent_message` → `message` | `text` → `message` |
 | tool call | `assistant` `tool_use` item → `tool_call` | `item.started` of `command_execution`, `mcp_tool_call` (tool `mcp:<server>/<tool>`), `file_change`, `web_search` → `tool_call` | `tool_use` → `tool_call` (OpenCode reports a tool once, when finished) |
 | tool result | `user` `tool_result` item → `tool_result` | `item.completed` of those types → `tool_result` | the same `tool_use` → `tool_result`, right after its `tool_call` |
-| usage / cost | `result` → `usage` (once, with `cost_usd` as claude reported it: session-cumulative on a resumed turn) | `turn.completed` → `usage` (cumulative, `cost_usd: null`) | `step_finish` → `usage` (cumulative tokens and cost) |
+| usage / cost | `result` → `usage` (once per invocation; `cost_usd` is the turn's own cost, `session_cost_usd` claude's cumulative figure) | `turn.completed` → `usage` (cumulative, `cost_usd: null`) | `step_finish` → `usage` (cumulative tokens and cost) |
 | warnings | none | `item.completed` `error` item → `log` warning (except the hook-trust warning) | retryable `error` → `log` warning |
 | failure | `result` with `is_error` → error, no event | `turn.failed` / `error` → error, no event | non-retryable `error` → error, no event |
 

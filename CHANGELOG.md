@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   (`.owner.json`); `prune` keeps folders whose owner is still running and applies the one-hour rule to the rest.
 - **`from phd.stacks import *` no longer shadows the builtin `list`.** `list` is out of `phd.stacks.__all__`;
   `phd.stacks.list()` works as before.
+- **The streamed `usage` event's cost matches `RunResult`.** On a resumed claude turn the `usage` event (and its line
+  in `events.jsonl`) carried claude's session-cumulative `total_cost_usd` as `cost_usd`. It now carries the turn's own
+  cost, computed by the same rule as `RunResult.cost_usd` (a repair turn's events add up to the run's `cost_usd`), plus
+  `session_cost_usd` (claude's cumulative figure; `None` for codex and opencode, whose `cost_usd` is unchanged).
 
 ## [0.1.0] — 2026-10-12
 

@@ -246,7 +246,7 @@ class RunHandle:
             turn = await self._turn(events_file, parser, deadline, cost_before=self._cost_before)
             reported = parser.outcome()
             own = self._own_cost(reported, self._cost_before)
-            result = self._finish(own, turn, session_cost=self._session_cost(reported, self._cost_before))
+            result = self._finish(own, turn, session_cost=self._session_cost(reported.cost_usd, self._cost_before))
             if (spec.schema_repair and result.error is not None and result.error.kind == "schema"
                     and result.session_id is not None and not self._cancelled):
                 result = await self._repair(events_file, result, own, reported.cost_usd, deadline)
@@ -280,18 +280,29 @@ class RunHandle:
         return HarnessProcess(self._resolve(argv), env=child_env(m.env), cwd=self._d.spec.cwd,
                               stdin_text=stdin_text, stderr_path=m.run_dir / "stderr.log")
 
-    def _own_cost(self, o: Outcome, before: float) -> Outcome:
-        """`o` with the cost of this invocation alone (the reported figure minus `before` for a cumulative adapter)."""
-        if not self._cumulative or o.cost_usd is None:
-            return o
-        return dataclasses.replace(o, cost_usd=_own_cost(o.cost_usd, before))
+    def _turn_cost(self, reported: float | None, before: float) -> float | None:
+        """The cost of this invocation alone: the reported figure minus `before` for a cumulative adapter."""
+        if not self._cumulative or reported is None:
+            return reported
+        return _own_cost(reported, before)
 
-    def _session_cost(self, reported: Outcome, before: float) -> float | None:
+    def _own_cost(self, o: Outcome, before: float) -> Outcome:
+        """`o` with the cost of this invocation alone (see `_turn_cost`)."""
+        return dataclasses.replace(o, cost_usd=self._turn_cost(o.cost_usd, before))
+
+    def _session_cost(self, reported: float | None, before: float) -> float | None:
         """The session's cumulative cost after this invocation: what it reported, else the baseline carried forward
         (a turn killed before its result line reports nothing; the next resume must not be charged the session)."""
         if not self._cumulative:
             return None
-        return reported.cost_usd if reported.cost_usd is not None else (before or None)
+        return reported if reported is not None else (before or None)
+
+    def _usage_data(self, data: dict, before: float) -> dict:
+        """A `usage` event's data with the figures `RunResult` reports: `cost_usd` is this invocation's own and
+        `session_cost_usd` the session's total (`None` for a harness that reports per invocation)."""
+        reported = data.get("cost_usd")
+        return data | {"cost_usd": self._turn_cost(reported, before),
+                       "session_cost_usd": self._session_cost(reported, before)}
 
     async def _repair(self, events_file: TextIO, first: RunResult, first_outcome: Outcome,
                       first_reported: float | None, deadline: float) -> RunResult:
@@ -337,7 +348,7 @@ class RunHandle:
         parser = self._d.adapter.parser()
         turn = await self._turn(events_file, parser, deadline, budget_spent=spent, cost_before=before)
         reported = parser.outcome()
-        session_cost = self._session_cost(reported, before) if reported.cost_usd is not None else first.session_cost_usd
+        session_cost = self._session_cost(reported.cost_usd, before) if reported.cost_usd is not None else first.session_cost_usd
         result = self._finish(_merge(first_outcome, self._own_cost(reported, before)), turn, session_cost=session_cost)
         result.warnings += [w for w in warnings if w not in result.warnings]  # the first turn's guard warning
         result.warnings.append("schema repair turn used")
@@ -401,11 +412,12 @@ class RunHandle:
             if not isinstance(obj, dict):
                 continue
             for kind, data in parser.feed(obj):
-                self._emit(events_file, kind, data, raw=obj, summary=parser.summarize(kind, data))
+                summary = parser.summarize(kind, data)
+                if kind == "usage":  # adjusted before _emit, so the caller and events.jsonl see the same figures
+                    data = self._usage_data(data, cost_before)
+                self._emit(events_file, kind, data, raw=obj, summary=summary)
             self._note_session(events_file, parser.outcome().session_id)
-            cost = parser.running_cost()
-            if cost is not None and self._cumulative:
-                cost = _own_cost(cost, cost_before)
+            cost = self._turn_cost(parser.running_cost(), cost_before)
             if budget is not None and cost is not None and budget_spent + cost > budget:
                 self._proc.kill_tree()
                 return True, False
