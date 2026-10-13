@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import subprocess
@@ -16,6 +17,17 @@ from phd.execution.process import HarnessProcess, child_env
 def make(tmp_path, stdin="hello"):
     return HarnessProcess([sys.executable, str(FAKE_HARNESS)], env=child_env({}), cwd=tmp_path,
                           stdin_text=stdin, stderr_path=tmp_path / "stderr.log")
+
+
+async def release_pipes(proc):
+    """After a test killed a descendant that held the harness's pipes open, let the loop see them close so the
+    subprocess transport is not left unclosed (a ResourceWarning at garbage collection, in some later test)."""
+    for _ in range(100):
+        if proc.proc.stderr.at_eof() and proc.proc.stdout.at_eof():
+            break
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.05)
+    proc.proc._transport.close()
 
 
 async def collect(proc):
@@ -167,3 +179,30 @@ async def test_wait_returns_when_descendant_holds_stderr(tmp_path, monkeypatch):
                 subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
             else:
                 os.kill(pid, 9)
+        await release_pipes(p)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a descendant that escapes the POSIX group kill (setsid)")
+async def test_wait_gives_up_on_stderr_held_by_a_detached_descendant(tmp_path, monkeypatch):
+    """A descendant in its own session survives the group kill and keeps stderr open; wait() must not wait for it."""
+    pidfile = tmp_path / "detached.pid"
+    monkeypatch.setattr(launcher, "STDERR_GRACE_S", 1)
+    monkeypatch.setenv("FAKE_DETACHED_PIDFILE", str(pidfile))
+    monkeypatch.setenv("FAKE_STDERR", "boom")
+    monkeypatch.setenv("FAKE_SLEEP", "0")
+    p = make(tmp_path)
+    await p.start()
+    try:
+        assert await collect(p) == []
+        start = time.monotonic()
+        code = await asyncio.wait_for(p.wait(), timeout=10)
+        elapsed = time.monotonic() - start
+        assert code == 0
+        assert elapsed < 5, f"wait() blocked on the descendant's stderr for {elapsed:.1f}s"
+        assert pidfile.read_text(), "the harness never spawned the detached descendant"
+        os.kill(int(pidfile.read_text()), 0)  # still alive: the group kill really did miss it
+    finally:
+        if pidfile.exists() and pidfile.read_text():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pidfile.read_text()), 9)
+        await release_pipes(p)

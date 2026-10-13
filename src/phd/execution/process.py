@@ -16,6 +16,7 @@ from . import lifetime
 
 __all__ = ["HOST_ENV_PREFIXES", "HarnessProcess", "child_env"]
 STREAM_LIMIT = 16 * 1024 * 1024  # Claude stream-json lines carry whole tool results
+STDERR_GRACE_S = 5  # how long wait() lets the stderr copy drain after the harness exits
 
 
 def child_env(overrides: dict[str, str]) -> dict[str, str]:
@@ -121,7 +122,7 @@ class HarnessProcess:
             await asyncio.gather(self._stdin_task, return_exceptions=True)
         if self._stderr_task is not None:
             try:
-                await asyncio.wait_for(asyncio.shield(self._stderr_task), 5)
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), STDERR_GRACE_S)
             except asyncio.TimeoutError:
                 self._stderr_task.cancel()  # a descendant still holds stderr open
         self.close()

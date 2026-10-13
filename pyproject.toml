@@ -31,7 +31,7 @@ Issues = "https://github.com/StateousLabs/poly-harness-dispatcher/issues"
 Changelog = "https://github.com/StateousLabs/poly-harness-dispatcher/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=5"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=5", "coverage>=7.10"]
 examples = ["ipykernel>=6"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
 
@@ -49,7 +49,12 @@ markers = ["live: runs real harness CLIs (set PHD_LIVE=1; costs money)"]
 
 [tool.coverage.run]
 source = ["phd"]
+# source_dirs: a script run as __main__ (the reaper) is matched by path, not by package name.
+source_dirs = ["src/phd"]
 branch = true
+# Harness, reaper and hook-shim children run in their own interpreters; measure them too (coverage >= 7.10).
+parallel = true
+patch = ["subprocess"]
 
 [tool.coverage.report]
 show_missing = true

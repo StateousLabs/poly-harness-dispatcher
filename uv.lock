@@ -909,6 +909,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "coverage" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -923,6 +924,7 @@ examples = [
 
 [package.metadata]
 requires-dist = [
+    { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.10" },
     { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=6" },
     { name = "jsonschema", specifier = ">=4.18" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },

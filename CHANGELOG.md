@@ -37,6 +37,12 @@ All notable changes to this project are documented here. The format follows
 - **Credential files are copied byte for byte.** The codex `auth.json` (run home and model-catalogue home) was read
   and written as text, so on Windows its LF line endings became CRLF. `write_private` now takes bytes.
 
+### Internal
+
+- Coverage now measures child processes (reaper, hook shim, harness stand-ins) with `patch = ["subprocess"]`; the CI
+  coverage floors were raised to the measured totals (Linux 89, Windows 90). New POSIX tests cover the 5 s stderr wait
+  (`STDERR_GRACE_S`) and run `reaper_main.py` directly.
+
 ## [0.1.0] — 2026-10-12
 
 First release: layer 1, the core spawner. Agents run on the host with no sandbox.

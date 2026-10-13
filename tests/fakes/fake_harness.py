@@ -2,6 +2,7 @@
 
 FAKE_ECHO_FILE      append {"argv","stdin","cwd","env"} as one JSON line
 FAKE_CHILD_PIDFILE  spawn a sleeping grandchild process and write its pid here
+FAKE_DETACHED_PIDFILE  (POSIX) spawn a sleeping descendant in its own session that inherits stderr; pid goes here
 FAKE_STREAM         path of a JSONL file to print line by line
 FAKE_LINE_DELAY     seconds to sleep before each FAKE_STREAM line
 FAKE_SLEEP          seconds to sleep after printing (simulates a hang)
@@ -55,6 +56,11 @@ def main() -> int:
             f.write(json.dumps(record) + "\n")
     if path := os.environ.get("FAKE_CHILD_PIDFILE"):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        with open(path, "w") as f:
+            f.write(str(child.pid))
+    if path := os.environ.get("FAKE_DETACHED_PIDFILE"):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)  # stderr stays inherited
         with open(path, "w") as f:
             f.write(str(child.pid))
     delay = float(os.environ.get("FAKE_LINE_DELAY", "0"))
