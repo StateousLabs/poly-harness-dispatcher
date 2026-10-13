@@ -150,8 +150,8 @@ dedupe step below stops identical results piling up).
 A skill, MCP component or hook bundle name follows the same [rule as stack names](#names) on every OS (so a stack
 resolved on Linux still works on Windows): it must match `[A-Za-z0-9][A-Za-z0-9._-]*`, must not end in `.`, and must not
 be a Windows device name (`con`, `nul.md`, `com1`, ...), else `StackInvalid`. A single-file MCP source whose name is not
-safe (for example `.mcp.json`) is named after its parent folder, or `mcp` if that is not safe either. A folder with a missing marker
-file raises `StackFetchError`; a malformed one raises `StackInvalid` (including a `SKILL.md` that is not UTF-8). A
+safe (for example `.mcp.json`) is named after its parent folder, or `mcp` if that is not safe either. The agent file
+name (`agents/<name>.md`) follows the same rule. A folder with a missing marker file raises `StackFetchError`; a malformed one raises `StackInvalid` (including a `SKILL.md` that is not UTF-8). A
 component that cannot be copied into the staging folder raises `StackFetchError` naming the entry (`skills[0]`,
 `base`, ...), not the paths.
 
@@ -334,6 +334,12 @@ The hash covers dot-folders (only `.git/`, `__pycache__/` and `*.pyc` are left o
 carry an index hash computed without dot-folders; when the hashes differ, the stored `config/` is re-hashed with the
 current rule, and if that equals the new hash the entry is reused and its index hash is updated (no `StackConflict`).
 The "different ref has hash `h`" lookup uses the index hashes only, so a stale one just means a duplicate is stored.
+An old entry whose folder is gone cannot be re-hashed: it needs `stacks.prune()` (drops the entry) or
+`replace=True`.
+
+Dot-folders in a component source (`.venv/`, `.pytest_cache/`, `.mypy_cache/`) were always copied into the stack and
+now also count towards the hash, so running tests in a source folder changes the stack and re-resolving the same
+`name@version` raises `StackConflict`. Keep such folders out of component sources.
 
 When an identical stack stored under another ref is reused, nothing new is written and the returned stack is that
 other entry:
@@ -390,6 +396,10 @@ An identical stack under another ref is reused only if its folder is still there
 | `stacks.prune()` | deletes `.staging/` leftovers older than 1 hour whose resolving process is no longer running (a resolve that is still running keeps its folder however long it takes; a folder without a readable `.owner.json` is deleted by age alone), and index entries whose folder is gone |
 
 All of them take `store_root=`.
+
+`prune` identifies a running resolve by the pid in `.owner.json`, which only means something on the host that wrote it.
+For a store shared between machines or containers (separate pid namespaces) a resolve on another host looks dead and
+can lose its folder after an hour; give each such host its own store (`store_root=`).
 
 ### What removal means for runs
 

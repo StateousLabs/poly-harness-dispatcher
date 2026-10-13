@@ -99,6 +99,7 @@ def _put_agent(src: ComponentSource, config: Path, work: Path) -> Provenance:
         if len(mds) != 1:
             raise StackInvalid(f"agent: {display_source(src.source)} must contain exactly one .md file, found {len(mds)}")
         md = mds[0]
+    _check_name(md.name, "agent", "agent file")
     agents = config / "agents"
     if agents.is_dir():
         for old in agents.glob("*.md"):

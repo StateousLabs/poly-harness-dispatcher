@@ -388,3 +388,18 @@ def test_permission_error_after_retries_is_stack_invalid(tmp_path, monkeypatch):
     with pytest.raises(StackInvalid, match="in use or not writable") as e:
         put(store, staged, ident)
     assert str(store.root) in str(e.value)
+
+
+def test_prune_survives_a_corrupt_owner_pid(tmp_path):
+    store = StackStore(tmp_path / "store")
+    bad = _aged(store, owner=2**40)
+    store.prune()  # must not raise; the age rule applies
+    assert not bad.exists()
+
+
+def test_prune_collects_an_own_folder_whose_resolve_is_over(tmp_path):
+    store = StackStore(tmp_path / "store")
+    live, finished = _aged(store, owner=os.getpid()), _aged(store, owner=os.getpid())
+    store.release_staging(finished)  # e.g. the resolve's cleanup failed but it is no longer running
+    store.prune()
+    assert live.exists() and not finished.exists()

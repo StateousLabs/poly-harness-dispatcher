@@ -54,6 +54,7 @@ def resolve(source: str | Path | Manifest, *, allow_duplicates: bool = False, re
                           manifest=str(manifest.path) if manifest.path else None,
                           allow_duplicates=allow_duplicates, replace=replace)
     finally:
+        store.release_staging(staging)
         if staging.exists():
             robust_rmtree(staging)
     return _load(entry)
@@ -75,7 +76,9 @@ def remove(*refs: str, store_root: str | Path | None = None) -> None:
 
 
 def prune(*, store_root: str | Path | None = None) -> None:
-    """Delete leftover staging folders (older than 1 hour, and not owned by a running resolve) and index entries whose folder is gone."""
+    """Delete leftover staging folders and index entries whose folder is gone.
+
+    A staging folder is left alone while the process that created it is running (or younger than 1 hour)."""
     StackStore(store_root).prune()
 
 

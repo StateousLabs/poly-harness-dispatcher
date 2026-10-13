@@ -246,3 +246,11 @@ def test_store_entry_and_stack_store(stack, tmp_path):
     assert e.reused
     assert not dataclasses.replace(e, requested="a@1").reused
     assert dataclasses.replace(stack, store=e).store is e
+
+
+def test_content_hash_ignores_a_git_file(stack_copy):
+    """A worktree or submodule has a `.git` file (a pointer), which assembly does not copy."""
+    before = Stack.load(stack_copy).content_hash()
+    (stack_copy / ".git").write_text("gitdir: /somewhere/else/.git/worktrees/x")
+    (stack_copy / "hooks" / ".git").write_text("gitdir: /elsewhere")
+    assert Stack.load(stack_copy).content_hash() == before

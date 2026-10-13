@@ -215,3 +215,37 @@ def test_a_takeover_that_lost_the_race_does_not_unlink_the_winners_lock(tmp_path
 def test_free_home_does_not_touch_the_takeover_lock(tmp_path):
     SessionLock(tmp_path, "run-a").acquire("session s").release()
     assert not (tmp_path / (LOCK_NAME + ".takeover")).exists()
+
+
+def test_release_does_not_delete_a_lock_taken_while_it_runs(tmp_path, monkeypatch):
+    # the run is still registered until its lock file is gone, so a concurrent acquirer is refused, not handed the home
+    import phd.execution.session_lock as mod
+    a, b = SessionLock(tmp_path, "run-a").acquire("session s"), SessionLock(tmp_path, "run-b")
+    real_read, state = mod.read_holder, {"b": None}
+
+    def read_then_race(path):
+        holder = real_read(path)
+        if state["b"] is None:  # A has read its own lock and is about to delete it: B tries to acquire now
+            state["b"] = "tried"
+            try:
+                b.acquire("session s")
+                state["b"] = "won"
+            except NotResumable:
+                state["b"] = "busy"
+        return holder
+    monkeypatch.setattr(mod, "read_holder", read_then_race)
+    a.release()
+    monkeypatch.undo()
+    assert state["b"] == "busy" and not (tmp_path / LOCK_NAME).exists()
+    b.acquire("session s").release()
+
+
+def test_corrupt_pid_in_a_lock_file_is_stale_not_a_crash(tmp_path):
+    (tmp_path / LOCK_NAME).write_text(json.dumps({"pid": 2**40, "run_id": "run-x"}), encoding="utf-8")
+    SessionLock(tmp_path, "run-a").acquire("session s").release()
+
+
+def test_takeover_does_not_recreate_a_deleted_home(tmp_path):
+    home = tmp_path / "gone"
+    SessionLock(home, "run-a")._take_over("session s", {"pid": 1})
+    assert not home.exists()

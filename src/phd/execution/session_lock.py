@@ -61,6 +61,8 @@ class SessionLock:
 
         The re-check and the unlink run under the takeover lock: otherwise a second acquirer could take over and
         write its own lock between our check and our unlink, and we would delete that live lock."""
+        if not self.path.parent.is_dir():  # the home is gone: do not let the lock file recreate it; acquire retries
+            return
         try:
             with FileLock(self.path.with_name(TAKEOVER_NAME), timeout_s=TAKEOVER_TIMEOUT_S):
                 current = read_holder(self.path)
@@ -75,10 +77,14 @@ class SessionLock:
         if not self.held:
             return
         self.held = False
-        _HELD.discard(self.run_id)
-        holder = read_holder(self.path)
-        if holder is not None and holder.get("run_id") == self.run_id:
-            _unlink(self.path)
+        try:
+            holder = read_holder(self.path)
+            if holder is not None and holder.get("run_id") == self.run_id:
+                _unlink(self.path)
+        finally:
+            # only after the unlink: until then a concurrent acquirer must still see this run as holding the lock,
+            # or it would take the "stale" lock over and we would delete its fresh one
+            _HELD.discard(self.run_id)
 
 
 def _running(holder: dict) -> bool:

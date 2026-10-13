@@ -254,6 +254,14 @@ def test_mcp_file_named_like_a_device_falls_back_to_its_folder(tmp_path, parts):
     assert [p.name for p in provenance if p.kind == "mcp"] == ["mcp"]
 
 
+@pytest.mark.parametrize("bad", ["con.md", "nul.md", "aux.md"])
+def test_agent_file_names_follow_the_rule(tmp_path, parts, bad):
+    agent = parts / bad
+    agent.write_text("# Agent\n", encoding="utf-8")
+    with pytest.raises(StackInvalid, match="invalid agent file name"):
+        build(tmp_path, compose("c", "1", base=parts / "base", agent=agent))
+
+
 def test_hook_bundle_name_conflicts_with_file(tmp_path, parts):
     """Hook bundle named after an existing file raises StackInvalid."""
     custom_base = parts / "custombase2"

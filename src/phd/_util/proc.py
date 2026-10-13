@@ -5,9 +5,12 @@ import signal
 import subprocess
 
 
+_MAX_PID = 2**31 - 1
+
+
 def pid_alive(pid: int) -> bool:
     """True if a process with this pid is running (on Windows: exists and has not exited)."""
-    if pid <= 0:
+    if pid <= 0 or pid > _MAX_PID:  # a corrupt pid (e.g. from a lock file) must not raise OverflowError below
         return False
     if os.name == "nt":
         import ctypes

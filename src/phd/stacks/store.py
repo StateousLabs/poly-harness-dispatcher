@@ -23,6 +23,7 @@ from ..spec import StoreEntry, hash_tree
 DEFAULT_STORE_ROOT = Path.home() / ".phd" / "stacks"
 IDENTITY_IGNORE = ("name", "version", "description")
 STAGING_MAX_AGE_S = 3600
+_LIVE_STAGING: set[str] = set()  # staging folders of resolves running in this process
 OWNER_FILE = ".owner.json"  # in a staging folder, next to config/: the resolve that is filling it
 LOCK_TIMEOUT_S = 30.0
 
@@ -56,7 +57,12 @@ class StackStore:
         path = self.root / ".staging" / uuid.uuid4().hex
         path.mkdir(parents=True)
         write_json(path / OWNER_FILE, {"pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat()})
+        _LIVE_STAGING.add(str(path))
         return path
+
+    def release_staging(self, staging: Path) -> None:
+        """Tell `prune` that the resolve using `staging` in this process is over (idempotent; `put` does it too)."""
+        _LIVE_STAGING.discard(str(staging))
 
     def put(self, staged: Path, *, name: str, version: str, ident: str, manifest: str | None,
             allow_duplicates: bool, replace: bool) -> StoreEntry:
@@ -66,6 +72,13 @@ class StackStore:
                 raise StackInvalid(f"invalid stack {label} {part!r}: use letters, digits, '.', '_' and '-' "
                                    "(starting with a letter or digit, not ending in '.', not a Windows device name)")
         ref = f"{name}@{version}"
+        try:
+            return self._put(staged, name, version, ref, ident, manifest, allow_duplicates, replace)
+        finally:
+            self.release_staging(staged)
+
+    def _put(self, staged: Path, name: str, version: str, ref: str, ident: str, manifest: str | None,
+             allow_duplicates: bool, replace: bool) -> StoreEntry:
         with self._locked():
             index = self._read_index()
             record = index.get(ref)
@@ -220,12 +233,18 @@ class StackStore:
 
 
 def _owner_alive(staging: Path) -> bool:
-    """True if `staging`'s owner file names a running process (this one included)."""
+    """True if `staging`'s owner file names a running process. For this process the registry of its own running
+    resolves decides, so a folder whose resolve failed to clean up is still collected. A pid is only meaningful on
+    the host that wrote it (see the docs on a store shared across machines)."""
     try:
         pid = json.loads((staging / OWNER_FILE).read_text(encoding="utf-8")).get("pid")
     except (OSError, ValueError, AttributeError):
         return False
-    return isinstance(pid, int) and not isinstance(pid, bool) and pid_alive(pid)
+    if not isinstance(pid, int) or isinstance(pid, bool):
+        return False
+    if pid == os.getpid():
+        return str(staging) in _LIVE_STAGING
+    return pid_alive(pid)
 
 
 def _discard(path: Path) -> None:

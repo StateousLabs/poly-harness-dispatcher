@@ -203,8 +203,8 @@ budget, cancel, interrupt, and when the harness cannot be started); a fresh run 
 before its home is deleted. A lock whose process is no longer running, or whose file cannot be read, is **stale**
 and is taken over automatically; the takeover (re-check, then delete) runs under an OS lock on
 `<home>/.phd-session.lock.takeover` (waits up to 5 s, then `NotResumable` "busy"), so two acquirers that see the same
-stale lock cannot both win. That file is never written to or deleted and holds nothing. Several runs can share one Python process (async), so for a lock written by this
-process PHD checks its in-process record of runs that still hold a lock rather than the pid. In practice the lock
+stale lock cannot both win. That file is never written to or deleted and holds nothing. Several runs can share one
+Python process (async), so for a lock written by this process PHD checks its in-process record of runs that still hold a lock rather than the pid. In practice the lock
 matters for turns of an existing session: a session only becomes resumable once a run of it has finished (its
 `result.json` exists), so the lock prevents two resumed turns (from one process or several) from running at once.
 

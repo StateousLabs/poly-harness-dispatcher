@@ -13,11 +13,12 @@ All notable changes to this project are documented here. The format follows
   resolved on Linux or macOS also works on Windows.
 - **Stack content hash covers dot-folders.** `Stack.content_hash()` and the store's identity hash skipped every file
   under a `.`-folder, although assembly and the run copy include them (only `.git/`, `__pycache__/` and `*.pyc` are
-  left out). The hash now skips exactly those. A stack already stored with a hash from the old rule is re-hashed on
+  left out). The hash now skips exactly those (anything named `.git` or `__pycache__`, and `*.pyc`). Dot-folders
+  such as `.venv/` or `.pytest_cache/` in a component source were already copied and now count: keep them out of sources. A stack already stored with a hash from the old rule is re-hashed on
   `resolve` and its index hash updated, instead of raising `StackConflict`.
 - **Session lock takeover race.** Two runs that found the same stale `.phd-session.lock` could both take it over: one
   deleted the lock the other had just written, and both ran on the same session. Taking over a stale lock is now
-  serialized by an OS lock on `<home>/.phd-session.lock.takeover` and re-checks the lock before deleting it.
+  serialized by an OS lock on `<home>/.phd-session.lock.takeover` and re-checks the lock before deleting it; `release` now deletes its lock before it stops counting as held.
 - **`prune` no longer deletes a running resolve's staging folder.** A resolve that took longer than an hour (slow
   downloads) lost its folder to a concurrent `stacks.prune()`. Each staging folder now records its owner process
   (`.owner.json`); `prune` keeps folders whose owner is still running and applies the one-hour rule to the rest.
