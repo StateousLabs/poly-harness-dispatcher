@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
 - **Session lock takeover race.** Two runs that found the same stale `.phd-session.lock` could both take it over: one
   deleted the lock the other had just written, and both ran on the same session. Taking over a stale lock is now
   serialized by an OS lock on `<home>/.phd-session.lock.takeover` and re-checks the lock before deleting it.
+- **`prune` no longer deletes a running resolve's staging folder.** A resolve that took longer than an hour (slow
+  downloads) lost its folder to a concurrent `stacks.prune()`. Each staging folder now records its owner process
+  (`.owner.json`); `prune` keeps folders whose owner is still running and applies the one-hour rule to the rest.
 
 ## [0.1.0] — 2026-10-12
 

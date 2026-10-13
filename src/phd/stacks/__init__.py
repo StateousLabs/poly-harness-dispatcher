@@ -75,7 +75,7 @@ def remove(*refs: str, store_root: str | Path | None = None) -> None:
 
 
 def prune(*, store_root: str | Path | None = None) -> None:
-    """Delete leftover staging folders and index entries whose folder is gone."""
+    """Delete leftover staging folders (older than 1 hour, and not owned by a running resolve) and index entries whose folder is gone."""
     StackStore(store_root).prune()
 
 

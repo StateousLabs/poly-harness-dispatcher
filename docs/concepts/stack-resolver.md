@@ -307,7 +307,7 @@ environment variable (the argument wins).
   index.json                        {"reviewer@1.3.0": {"hash": "sha256:...", "created_at": "...", "manifest": "<path or null>"}}
   reviewer/1.3.0/config/            the assembled stack (config/ layout)
   reviewer/1.3.0/stack.lock.json    provenance
-  .staging/<uuid>/                  in-progress resolves
+  .staging/<uuid>/                  in-progress resolves (.owner.json records the resolving process)
   .store.lock                       the store's lock file
 ```
 
@@ -387,7 +387,7 @@ An identical stack under another ref is reused only if its folder is still there
 | `stacks.get("reviewer")` | the entry of that name with the most recent `created_at` |
 | `stacks.list()` | every `StoreEntry`, sorted by name then storage time |
 | `stacks.remove("a@1", "b@2")` | removes those entries and their folders; if **any** ref is unknown, `StackNotFound` is raised and nothing is removed |
-| `stacks.prune()` | deletes `.staging/` leftovers older than 1 hour and index entries whose folder is gone |
+| `stacks.prune()` | deletes `.staging/` leftovers older than 1 hour whose resolving process is no longer running (a resolve that is still running keeps its folder however long it takes; a folder without a readable `.owner.json` is deleted by age alone), and index entries whose folder is gone |
 
 All of them take `store_root=`.
 

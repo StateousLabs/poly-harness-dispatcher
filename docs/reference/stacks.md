@@ -13,7 +13,7 @@ This page is the API reference for `phd.stacks`: composing, resolving and storin
 | `get(ref, *, store_root=None) -> Stack` | a stored stack by `"name@version"`, or `"name"` for its latest version; `StackNotFound` if unknown or its folder is missing |
 | `list(*, store_root=None) -> list[StoreEntry]` | every stored stack, sorted by name then storage time |
 | `remove(*refs, store_root=None) -> None` | remove stored stacks; nothing is removed if any ref is unknown |
-| `prune(*, store_root=None) -> None` | delete `.staging` leftovers older than 1 hour and index entries whose folder is gone |
+| `prune(*, store_root=None) -> None` | delete `.staging` leftovers older than 1 hour whose resolve is no longer running, and index entries whose folder is gone |
 | `compose(name, version, *, description=None, harnesses=None, default_models=None, base=None, agent=None, base_hooks=True, skills=(), mcp=(), hooks=(), root=None) -> Manifest` | build a `Manifest` in code (same rules as `stack.toml`) |
 | `load_manifest(path) -> Manifest` | parse and validate a `stack.toml` |
 

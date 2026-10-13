@@ -16,12 +16,14 @@ from typing import TypeVar
 from .._util.filelock import FileLock, retry_sharing
 from .._util.fs import robust_rmtree, write_json
 from .._util.names import is_safe_part
+from .._util.proc import pid_alive
 from ..errors import StackConflict, StackInvalid, StackNotFound
 from ..spec import StoreEntry, hash_tree
 
 DEFAULT_STORE_ROOT = Path.home() / ".phd" / "stacks"
 IDENTITY_IGNORE = ("name", "version", "description")
 STAGING_MAX_AGE_S = 3600
+OWNER_FILE = ".owner.json"  # in a staging folder, next to config/: the resolve that is filling it
 LOCK_TIMEOUT_S = 30.0
 
 T = TypeVar("T")
@@ -48,9 +50,12 @@ class StackStore:
         return self.root / "index.json"
 
     def new_staging(self) -> Path:
-        """A fresh staging folder under the store root (same volume, so the final move is atomic)."""
+        """A fresh staging folder under the store root (same volume, so the final move is atomic).
+
+        It records its owner (`<staging>/.owner.json`: pid, started_at) so `prune` leaves a long resolve alone."""
         path = self.root / ".staging" / uuid.uuid4().hex
         path.mkdir(parents=True)
+        write_json(path / OWNER_FILE, {"pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat()})
         return path
 
     def put(self, staged: Path, *, name: str, version: str, ident: str, manifest: str | None,
@@ -83,6 +88,7 @@ class StackStore:
                 if same:
                     _discard(staged)
                     return self._entry(same[0], index[same[0]], ref)
+            (staged / OWNER_FILE).unlink(missing_ok=True)  # the stored folder is config/ + stack.lock.json only
             target = self.root / name / version
             target.parent.mkdir(parents=True, exist_ok=True)
             old = None
@@ -148,7 +154,11 @@ class StackStore:
             self._write_index(index)
 
     def prune(self) -> None:
-        """Delete stale staging folders (older than STAGING_MAX_AGE_S) and index entries whose folder is gone."""
+        """Delete stale staging folders and index entries whose folder is gone.
+
+        A staging folder is stale when it is older than STAGING_MAX_AGE_S and its owner (`.owner.json`) is not a
+        running process; one whose owner is alive (a slow resolve) is kept however old it is. A folder with no
+        readable owner file (a `replaced-*` one, or one from before owners were recorded) is stale by age alone."""
         with self._locked():
             staging = self.root / ".staging"
             if staging.is_dir():
@@ -157,7 +167,7 @@ class StackStore:
                         age = time.time() - leftover.stat().st_mtime
                     except OSError:
                         continue
-                    if age > STAGING_MAX_AGE_S:
+                    if age > STAGING_MAX_AGE_S and not _owner_alive(leftover):
                         _discard(leftover)
             index = self._read_index()
             kept = {r: v for r, v in index.items() if (self._target(r) / "config").is_dir()}
@@ -207,6 +217,15 @@ class StackStore:
         tmp = self._index_path.with_name("index.json.tmp")
         write_json(tmp, index)
         _sharing(lambda: os.replace(tmp, self._index_path), self._index_path)
+
+
+def _owner_alive(staging: Path) -> bool:
+    """True if `staging`'s owner file names a running process (this one included)."""
+    try:
+        pid = json.loads((staging / OWNER_FILE).read_text(encoding="utf-8")).get("pid")
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid_alive(pid)
 
 
 def _discard(path: Path) -> None:

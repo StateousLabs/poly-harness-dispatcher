@@ -103,9 +103,7 @@ def test_get_remove_prune(tmp_path):
     with pytest.raises(StackNotFound):
         store.remove("s@1", "nope@1")
     assert store.get("s@1")  # nothing removed when one ref is unknown
-    leftover = store.new_staging()
-    old = time.time() - 2 * STAGING_MAX_AGE_S
-    os.utime(leftover, (old, old))
+    leftover = _aged(store, owner=None)
     store.remove("s@1")
     assert not (store.root / "s" / "1").exists() and store.list() == []
     store.prune()
@@ -237,11 +235,67 @@ def test_old_rule_index_hash_is_refreshed_not_a_conflict(tmp_path):
 
 def test_prune_keeps_fresh_staging_and_removes_aged(tmp_path):
     store = StackStore(tmp_path / "store")
-    fresh, aged = store.new_staging(), store.new_staging()
-    old = time.time() - 2 * STAGING_MAX_AGE_S
-    os.utime(aged, (old, old))
+    fresh, aged = store.new_staging(), _aged(store, owner=None)
     store.prune()
     assert fresh.exists() and not aged.exists()
+
+
+def _dead_pid() -> int:
+    out = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
+    return int(out.stdout)
+
+
+def _aged(store, *, owner, age_s=2 * STAGING_MAX_AGE_S):
+    """A staging folder `age_s` old whose owner is `owner` (a pid), or has no owner file when None."""
+    path = store.new_staging()
+    if owner is None:
+        (path / ".owner.json").unlink(missing_ok=True)
+    else:
+        (path / ".owner.json").write_text(json.dumps({"pid": owner, "started_at": "2026-01-01T00:00:00+00:00"}))
+    old = time.time() - age_s
+    os.utime(path, (old, old))
+    return path
+
+
+def test_new_staging_records_its_owner(tmp_path):
+    store = StackStore(tmp_path / "store")
+    owner = json.loads((store.new_staging() / ".owner.json").read_text())
+    assert owner["pid"] == os.getpid() and owner["started_at"]
+
+
+def test_prune_keeps_an_old_staging_folder_whose_owner_is_alive(tmp_path):
+    store = StackStore(tmp_path / "store")
+    mine = _aged(store, owner=os.getpid())  # this process: a slow resolve still running
+    store.prune()
+    assert mine.exists()
+
+
+def test_prune_removes_old_staging_folders_of_dead_or_unknown_owners(tmp_path):
+    store = StackStore(tmp_path / "store")
+    dead, ownerless = _aged(store, owner=_dead_pid()), _aged(store, owner=None)
+    garbled = _aged(store, owner=None)
+    (garbled / ".owner.json").write_text("{not json")
+    replaced = store.root / ".staging" / "replaced-abc"  # from a replace: no owner, age rule
+    replaced.mkdir()
+    old = time.time() - 2 * STAGING_MAX_AGE_S
+    for path in (garbled, replaced):  # writing the file above refreshed the folder's mtime
+        os.utime(path, (old, old))
+    store.prune()
+    assert not any(p.exists() for p in (dead, ownerless, garbled, replaced))
+
+
+def test_prune_keeps_a_young_staging_folder_of_a_dead_owner(tmp_path):
+    store = StackStore(tmp_path / "store")
+    young = _aged(store, owner=_dead_pid(), age_s=60)
+    store.prune()
+    assert young.exists()
+
+
+def test_the_owner_file_is_not_stored_with_the_stack(tmp_path):
+    store = StackStore(tmp_path / "store")
+    e = put(store, *stage(store))
+    assert not (e.path.parent / ".owner.json").exists() and (e.path.parent / "stack.lock.json").is_file()
+    assert identity_hash(e.path) == e.hash
 
 
 def test_reuse_and_conflict_discard_the_staged_folder(tmp_path):
