@@ -31,7 +31,7 @@ All notable changes to this project are documented here. The format follows
 - **The codex `auth.json` copy no longer stays at rest.** It stayed in `<runs_root>/<run_id>/home/auth.json` after
   the turn. It is now deleted when the turn ends, however it ends (also after a failed spawn and after a dry run,
   which no longer leaves one), and re-copied on resume. Copies left by a killed PHD process are deleted by the first
-  `start()` / `plan()` of the next process using the same `runs_root`, except in homes a live run holds; the sweep never follows a symlink or junction, and a resume that meets its brief hold (or any lock file still being written) waits up to 2 s instead of reporting busy. Adapters
+  `start()` / `plan()` of the next process using the same `runs_root`, except in homes a live run holds; the sweep never follows a symlink or junction, and a resume that meets its brief hold (or any lock file still being written) waits up to 2 s before it reports busy. Adapters
   declare their credential files with a new `secret_paths(home)` method. If codex refreshes its token mid-turn, the
   refreshed token is discarded (see Security and isolation, Known limitations).
 - **Credential files are copied byte for byte.** The codex `auth.json` (run home and model-catalogue home) was read

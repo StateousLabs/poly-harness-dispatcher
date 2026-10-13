@@ -209,8 +209,9 @@ and is taken over automatically; the takeover (re-check, then delete) runs under
 `<home>/.phd-session.lock.takeover` (waits up to 5 s, then `NotResumable` "busy"), so two acquirers that see the same
 stale lock cannot both win. That file is never written to or deleted and holds nothing. The credential sweep holds
 a lock marked `"sweep": true` for one delete; an acquirer that meets a live sweeper, or a lock file that is still
-being written, waits up to 2 s for it before it reports busy, so a sweep in another process delays a resume but does
-not fail it (a 0.1.0 process does not know the marker and reports busy at once). Several runs can share one
+being written, waits up to 2 s for it before it reports busy, so a sweep in another process usually delays a resume (by up to
+2 s) rather than failing it; a hold longer than that (a sharing error that outlasts the delete retries, heavy load)
+still reports busy (a 0.1.0 process does not know the marker and reports busy at once). Several runs can share one
 Python process (async), so for a lock written by this process PHD checks its in-process record of runs that still hold a lock rather than the pid. In practice the lock
 matters for turns of an existing session: a session only becomes resumable once a run of it has finished (its
 `result.json` exists), so the lock prevents two resumed turns (from one process or several) from running at once.

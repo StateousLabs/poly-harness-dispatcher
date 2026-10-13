@@ -171,6 +171,13 @@ def test_sweep_runs_once_per_process_per_root(tmp_path, codex_spec):
     assert (later / "auth.json").exists()
 
 
+def test_sweep_cleans_a_run_dir_killed_before_its_run_json(tmp_path, codex_spec):
+    dead = leftover_run(tmp_path / "runs", "20260101-early")
+    (dead.parent / "run.json").unlink()  # killed between materialize and write_record
+    dispatcher(codex_spec(), tmp_path).plan(Inputs(msg="x"))
+    assert not (dead / "auth.json").exists()
+
+
 def test_sweep_survives_a_missing_root_and_odd_entries(tmp_path, codex_spec):
     root = tmp_path / "runs"
     root.mkdir()

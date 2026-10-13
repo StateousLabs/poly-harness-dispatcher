@@ -89,9 +89,10 @@ def sweep_once(root: Path, secret_paths: Callable[[Path], list[Path]]) -> None:
 
 
 def _run_home(root: Path, entry: os.DirEntry) -> Path | None:
-    """`<entry>/home` if `entry` is a real run directory of `root` with a real home in it, else None."""
+    """`<entry>/home` if `entry` is a real directory of `root` with a real home in it, else None. `run.json` is not
+    required: a process killed between materialize and writing it leaves a copy in a run dir without one."""
     run_dir = Path(entry.path)
-    if not entry.is_dir(follow_symlinks=False) or is_link(run_dir) or not (run_dir / "run.json").is_file():
+    if not entry.is_dir(follow_symlinks=False) or is_link(run_dir):
         return None
     home = run_dir / "home"
     if is_link(home) or not home.is_dir() or home.resolve() != root / entry.name / "home":
