@@ -9,21 +9,22 @@ from pathlib import Path
 
 import pytest
 
+from phd._util.shell import shell_join
 from phd.materialize import hooks
 from phd.materialize.hooks import shim as hook_shim
 
 
 def _py(code: str) -> str:
-    return f'{Path(sys.executable).as_posix()} -c "{code}"'
+    return shell_join([Path(sys.executable).as_posix(), "-c", code])
 
 
 @pytest.fixture
 def run_shim(tmp_path, monkeypatch, capsys):
-    def run(hook: dict | None, argv_tail=("claude", "0"), stdin: str = "{}", *, write=True):
+    def run(hook: dict | None, argv_tail=("claude", "0"), stdin: str = "{}", *, delete=()):
         runtime = hooks.write_runtime(tmp_path / "home", run_id="run-1", run_dir=tmp_path,
                                       hooks=[hook] if hook else [])
         monkeypatch.setattr(hook_shim, "HERE", runtime.parent)
-        for name in write if isinstance(write, tuple) else ():
+        for name in delete:
             (runtime.parent / name).unlink()
         monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
         code = hook_shim.main(["hook_shim.py", *argv_tail])
@@ -64,7 +65,7 @@ def test_event_carries_run_id_and_neutral_tool(run_shim, tmp_path):
     assert code == 0 and event["tool"] == "mcp:echo/echo" and event["run_id"] == "run-1" and event["input"] == {"a": 1}
 
 
-def test_opencode_payload_is_passed_through_neutral(run_shim):
+def test_opencode_payload_is_passed_through_neutral():
     raw = {"event": "pre_tool", "tool": "shell"}
     assert hook_shim.to_neutral("opencode", "pre_tool", raw) is raw
 
@@ -82,7 +83,7 @@ def test_hook_index_out_of_range(run_shim):
 
 
 def test_missing_shim_config(run_shim):
-    code, _, err = run_shim(hook(), write=("shim_config.json",))
+    code, _, err = run_shim(hook(), delete=("shim_config.json",))
     assert code == 2 and "shim_config.json" in err
 
 

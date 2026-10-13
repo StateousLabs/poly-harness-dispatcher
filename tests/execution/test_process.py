@@ -27,7 +27,8 @@ async def release_pipes(proc):
             break
         await asyncio.sleep(0.05)
     await asyncio.sleep(0.05)
-    proc.proc._transport.close()
+    if transport := getattr(proc.proc, "_transport", None):
+        transport.close()
 
 
 async def collect(proc):
@@ -198,7 +199,7 @@ async def test_wait_gives_up_on_stderr_held_by_a_detached_descendant(tmp_path, m
         code = await asyncio.wait_for(p.wait(), timeout=10)
         elapsed = time.monotonic() - start
         assert code == 0
-        assert elapsed < 5, f"wait() blocked on the descendant's stderr for {elapsed:.1f}s"
+        assert 0.9 <= elapsed < 5, f"wait() blocked on the descendant's stderr for {elapsed:.1f}s"
         assert pidfile.read_text(), "the harness never spawned the detached descendant"
         os.kill(int(pidfile.read_text()), 0)  # still alive: the group kill really did miss it
     finally:

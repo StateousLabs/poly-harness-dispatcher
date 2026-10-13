@@ -39,9 +39,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Internal
 
-- Coverage now measures child processes (reaper, hook shim, harness stand-ins) with `patch = ["subprocess"]`; the CI
-  coverage floors were raised to the measured totals (Linux 89, Windows 90). New POSIX tests cover the 5 s stderr wait
-  (`STDERR_GRACE_S`) and run `reaper_main.py` directly.
+- Coverage now measures child processes (the reaper, harness stand-ins) with `patch = ["subprocess"]`; the hook shim,
+  which runs from a copy in each run home, is covered by in-process tests. The CI coverage floors for Linux and macOS
+  were raised to 89 (Windows stays 90). New POSIX tests cover the 5 s stderr wait (`STDERR_GRACE_S`) and run
+  `reaper_main.py` directly.
 
 ## [0.1.0] — 2026-10-12
 

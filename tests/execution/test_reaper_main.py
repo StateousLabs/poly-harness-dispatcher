@@ -4,7 +4,6 @@ test process's environment, which carries coverage's variables) is what lets sub
 import os
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -30,7 +29,6 @@ def group():
 
 def test_eof_on_stdin_kills_the_group(group):
     r = start_reaper(group.pid)
-    time.sleep(0.5)
     r.stdin.close()  # the caller "died"
     assert r.wait(timeout=10) == 0
     assert group.wait(timeout=10) < 0  # SIGKILL
