@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it leaves alpha.
 
-## [Unreleased]
+## [0.1.1] — 2026-10-13
 
 ### Upgrading from 0.1.0
 
@@ -131,4 +131,5 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
   Agents' own `npm` commands on claude, codex and opencode therefore use PHD's npm cache and ignore the host
   `~/.npmrc`, so private registries are not reachable unless a future stack-level npmrc provides them (planned).
 
+[0.1.1]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StateousLabs/poly-harness-dispatcher/releases/tag/v0.1.0
