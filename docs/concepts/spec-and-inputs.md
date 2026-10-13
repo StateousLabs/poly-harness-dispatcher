@@ -114,7 +114,7 @@ A frozen dataclass; build it with a constructor. `secret` is excluded from `repr
 | `Credentials.claude_oauth_token(token)` | claude | `claude_oauth_token` | nothing | (held in memory) | env `CLAUDE_CODE_OAUTH_TOKEN` |
 | `Credentials.anthropic_api_key(key)` | claude | `anthropic_api_key` | nothing | (held in memory) | env `ANTHROPIC_API_KEY` |
 | `Credentials.claude_host_login(path=None)` | claude | `claude_host_login` | file exists (default `~/.claude/.credentials.json`), else `MissingCredentials` | `claudeAiOauth.accessToken` from the file | env `CLAUDE_CODE_OAUTH_TOKEN` (access token only) |
-| `Credentials.codex_auth_file(path=None)` | codex | `codex_auth_file` | file exists (default `~/.codex/auth.json`) | whole file | copied to `home/auth.json` (mode 0600 on POSIX) |
+| `Credentials.codex_auth_file(path=None)` | codex | `codex_auth_file` | file exists (default `~/.codex/auth.json`) | whole file | copied byte for byte to `home/auth.json` (mode 0600 on POSIX) for the turn, deleted when it ends |
 | `Credentials.opencode_auth_file(path=None, providers=())` | opencode | `opencode_auth_file` | file exists (default `~/.local/share/opencode/auth.json`) | JSON, filtered to `providers` (all if empty) | env `OPENCODE_AUTH_CONTENT` (no file written) |
 | `Credentials.from_host(harness)` | any | as above | as above; unknown harness → `UnknownHarness` | | |
 

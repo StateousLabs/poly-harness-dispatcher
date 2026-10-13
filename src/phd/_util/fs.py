@@ -21,16 +21,16 @@ def write_json_atomic(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
-def write_private(path: Path, text: str) -> None:
-    """Write a file only the current user should read (credentials).
+def write_private(path: Path, data: bytes) -> None:
+    """Write a file only the current user should read (credentials), byte for byte (no newline translation).
 
     On POSIX systems, creates the file with 0o600 permissions from the start to avoid
     a window where credentials are readable. On Windows, POSIX modes are ignored."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
     finally:
         try:
             path.chmod(0o600)

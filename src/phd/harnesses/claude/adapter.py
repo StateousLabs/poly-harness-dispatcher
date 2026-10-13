@@ -63,6 +63,10 @@ class ClaudeAdapter:
         """Everything `materialize` writes under `home`; the rest (projects/, sessions, .claude.json) is Claude's."""
         return [home / "skills", home / "system-prompt.md", home / "mcp.json", home / "settings.json"]
 
+    def secret_paths(self, home: Path) -> list[Path]:
+        """None: claude's credentials go in the environment, never into the home."""
+        return []
+
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
         if c.kind == "claude_oauth_token":

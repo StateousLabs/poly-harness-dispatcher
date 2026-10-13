@@ -126,7 +126,7 @@ home/
   AGENTS.md             identity + rules (+ project context): codex global instructions
   config.toml           model, approval/sandbox, MCP, skill disabling, merged harness_config
   hooks.json            {"hooks": {...}} (only with hooks)
-  auth.json             copy of the credential file (mode 0600 on POSIX)
+  auth.json             byte-for-byte copy of the credential file (mode 0600 on POSIX); only while a turn runs
   output-schema.json    (only with output_schema)
   skills/<name>/        stack skills
   phd/                  hook runtime (only with hooks)
@@ -144,7 +144,7 @@ codex exec --json --strict-config --skip-git-repo-check -C <cwd> -m <model>
 ```
 
 **Environment set:** `CODEX_HOME=<home>` and the common npm settings (above). **Credentials:** `codex_auth_file` is copied to `home/auth.json`
-(again on every resume).
+(again on every resume) and deleted when the turn ends (see [Security and isolation](security-and-isolation.md)).
 
 **`config.toml`** (before `harness_config`):
 

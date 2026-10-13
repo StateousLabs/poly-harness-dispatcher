@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import time
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from ..materialize import MaterializedHome
 from ..results import Event, RunError, RunResult, Usage
 from ..results.model import decide_status
 from ..spec.output_schema import extract_json, validate_answer
+from . import credential_copies
 from .process import HarnessProcess, child_env
 
 REPAIR_PROMPT = "Your final answer did not match the required JSON Schema: {error}. Reply with only the corrected JSON."
@@ -77,6 +79,7 @@ class RunHandle:
         self._proc: HarnessProcess | None = None
         self._task: asyncio.Task | None = None
         self._session_warnings: list[str] = []  # problems recording the session; added to the result
+        self._secrets_dropped = False
         self._started_at = datetime.now(timezone.utc)
         self._t0 = time.monotonic()
 
@@ -194,6 +197,7 @@ class RunHandle:
             except BaseException:  # KeyboardInterrupt / CancelledError: never leave the harness running
                 self._kill_if_running()
                 raise
+            result.warnings += self._drop_secrets()  # before the sinks, so a failed deletion is recorded
             for sink in self._d.sinks:
                 try:
                     await sink.put(result)
@@ -202,9 +206,20 @@ class RunHandle:
         finally:
             if self._proc is not None:
                 self._proc.close()
+            for problem in self._drop_secrets():  # only on an interrupted run; otherwise already done above
+                warnings.warn(problem, RuntimeWarning, stacklevel=2)
             self._release_lock()
             self._result = result
             self._queue.put_nowait(None)
+
+    def _drop_secrets(self) -> list[str]:
+        """Delete the adapter's credential copies in the home (codex `auth.json`) once the turn is over; call it
+        before the lock is released, so the next turn's fresh copy is never the one deleted. Never raises: returns
+        what could not be deleted. Only the first call does anything."""
+        if self._secrets_dropped:
+            return []
+        self._secrets_dropped = True
+        return credential_copies.drop(self._d.adapter.secret_paths(self.materialized.home))
 
     def _release_lock(self) -> None:
         if self._lock is not None:
@@ -253,6 +268,7 @@ class RunHandle:
             result.warnings += self._session_warnings
             self._emit(events_file, "run.finished", {"status": str(result.status)})
         if not spec.resumable and self.resumed_from is None:  # a resumed turn never deletes the shared home
+            result.warnings += self._drop_secrets()
             self._release_lock()  # the lock file lives in the home that is about to go
             try:
                 await asyncio.to_thread(robust_rmtree, m.home)

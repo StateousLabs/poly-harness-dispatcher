@@ -6,15 +6,17 @@ import asyncio
 import contextlib
 import tempfile
 import threading
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 from .._util.fs import is_within, robust_rmtree
 from ..errors import InvalidRunsRoot, NotResumable, StackNotFound, UnsupportedFeature
-from ..harnesses import ModelCatalog, get_adapter
+from ..harnesses import ModelCatalog, all_secret_paths, get_adapter
 from ..materialize import MaterializedHome, materialize
 from ..results import LocalLedger, ResultSink, RunResult, SessionRef
 from ..spec import Inputs, Spec
+from . import credential_copies
 from .handle import RunHandle
 from .session_lock import SessionLock
 
@@ -104,7 +106,8 @@ class Dispatcher:
     def plan(self, inputs: Inputs, *, session_id: str | None = None) -> MaterializedHome:
         """Dry run: allocate a run directory and write the run home, but launch nothing.
 
-        Writes the run home and `<run_dir>/run.json` exactly as `start` would. No `result.json` is
+        Writes the run home and `<run_dir>/run.json` exactly as `start` would, except that credential copies (codex
+        `auth.json`) are deleted again before this returns: nothing runs, so none stays at rest. No `result.json` is
         written, so the run never appears in `LocalLedger.list`. With `session_id` this previews a
         resumed turn without modifying the session: the session checks run, the session's rules are
         applied and `argv` carries the harness's resume flag for that session, but the files are
@@ -136,6 +139,7 @@ class Dispatcher:
               dry_run: bool = False) -> tuple[MaterializedHome, str, str | None, SessionLock | None, float]:
         """Blocking (catalogue lookup, stack copy, ledger writes): `start` runs it in a worker thread, so it must
         not touch the event loop or any asyncio object."""
+        credential_copies.sweep_once(self.ledger.root, all_secret_paths)  # copies left by a killed PHD process
         self._check_model()
         if not self.spec.stack.root.is_dir():
             raise StackNotFound(f"stack {self.spec.stack.ref}: {self.spec.stack.root} no longer exists "
@@ -146,25 +150,38 @@ class Dispatcher:
         home = Path(prev.home_dir) if prev and not dry_run else None  # a dry run never touches the session
         # A resumed turn locks the shared home before rewriting it; a dry run never locks.
         lock = self._lock_session(home, run_id, run_dir, session_id) if home is not None else None
+        if home is None and not dry_run:
+            # A fresh run locks its new (empty) home for as long as it runs, before any credential is copied into
+            # it: a home with a credential copy and no live lock is one the sweep may clean.
+            home = run_dir / "home"
+            home.mkdir()
+            lock = SessionLock(home, run_id).acquire(f"run home {home}")
         try:
             rules_text = self.ledger.read_record(prev.run_id).get("rules_text") if prev else None  # session's rules
             m = materialize(self.adapter, self.spec, inputs, run_id=run_id, run_dir=run_dir, home=home,
                             rules_text=rules_text, executable=self.executables.get(self.spec.harness))
-            if lock is None and not dry_run:  # a fresh run locks its new home for as long as it runs
-                lock = SessionLock(m.home, run_id).acquire(f"run home {m.home}")
-            warnings = list(self.warnings)
+            if dry_run:  # nothing will run: no credential copy stays in the preview home
+                m.warnings += credential_copies.drop(self.adapter.secret_paths(m.home))
+            notes = list(self.warnings)
             if prev:
                 m.argv = self.adapter.resume_argv(m.argv, session_id, self.spec)
                 if prev.stack != self.spec.stack.ref:
-                    warnings.append(f"session {session_id} ran stack {prev.stack}; this turn runs {self.spec.stack.ref}")
-            m.warnings[:0] = warnings
+                    notes.append(f"session {session_id} ran stack {prev.stack}; this turn runs {self.spec.stack.ref}")
+            m.warnings[:0] = notes
             resumed_from = prev.run_id if prev else None
             self.ledger.write_record(run_dir, self._record(m, session_id=session_id, resumed_from=resumed_from))
         except BaseException:
+            self._drop_secrets(home or run_dir / "home")
             if lock is not None:
                 lock.release()
             raise
         return m, stack_hash, resumed_from, lock, prev.cost_before if prev else 0.0
+
+    def _drop_secrets(self, home: Path) -> None:
+        """Delete the adapter's credential copies in `home` for a run that will not launch (call before releasing
+        its lock). Never raises: what cannot be deleted is warned about and left to the next process's sweep."""
+        for problem in credential_copies.drop(self.adapter.secret_paths(home)):
+            warnings.warn(problem, RuntimeWarning, stacklevel=2)
 
     def _lock_session(self, home: Path, run_id: str, run_dir: Path, session_id: str) -> SessionLock:
         """Lock the session's shared home; when another live run holds it, remove the still-empty run
@@ -282,6 +299,7 @@ class Dispatcher:
             return await RunHandle.launch(self, m, resumed_from=resumed_from, stack_hash=stack_hash, lock=lock,
                                           session_id=session_id, session_cost_before=cost_before)
         except BaseException:  # the harness never started: free the home again
+            self._drop_secrets(m.home)
             if lock is not None:
                 lock.release()
             raise
@@ -293,6 +311,7 @@ class Dispatcher:
         fut = asyncio.ensure_future(asyncio.to_thread(self._plan, inputs, session_id))
 
         def cleanup(m: MaterializedHome, lock: SessionLock | None) -> None:
+            self._drop_secrets(m.home)
             if lock is not None:
                 lock.release()
             if session_id is None:

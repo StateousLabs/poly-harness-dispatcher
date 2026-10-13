@@ -292,3 +292,16 @@ def test_opencode_catalogue_home_is_seeded_and_npm_is_phd_owned(captured, creden
         assert "@opencode-ai/plugin" in lock["packages"][""]["dependencies"], folder
     assert Path(env["npm_config_cache"]).is_relative_to(phd_cache_dir)
     assert Path(env["npm_config_userconfig"]).is_relative_to(phd_cache_dir)
+
+
+def test_codex_catalogue_copies_the_auth_file_verbatim(monkeypatch, tmp_path):
+    source = tmp_path / "lf-auth.json"
+    source.write_bytes(b'{\n  "tokens": {"access_token": "lf"}\n}\n')
+    seen = []
+
+    def fake_run_cli(argv, *, env, cwd):
+        seen.append((Path(env["CODEX_HOME"]) / "auth.json").read_bytes())
+        return json.dumps({"models": [{"slug": "gpt-5.6-terra"}]})
+    monkeypatch.setattr(catalog, "_run_cli", fake_run_cli)
+    ModelCatalog().models("codex", Credentials.codex_auth_file(source))
+    assert seen == [source.read_bytes()]  # LF stays LF on Windows

@@ -77,23 +77,23 @@ def test_resolve_argv_wraps_cmd_shims(tmp_path):
     assert argv[0].lower().endswith("cmd.exe")
 
 
-def test_write_private_writes_exact_text_and_mode(tmp_path):
+def test_write_private_writes_exact_bytes_and_mode(tmp_path):
     creds_path = tmp_path / "nested" / "secret.txt"
-    text_with_unicode = "token=xyz&café=1\n"
+    data = "token=xyz&café=1\nlf\r\ncrlf\n".encode()
 
-    # Write new file
-    _fs.write_private(creds_path, text_with_unicode)
-    assert creds_path.read_text(encoding="utf-8") == text_with_unicode
+    # Write new file: byte for byte, no newline translation (LF stays LF on Windows)
+    _fs.write_private(creds_path, data)
+    assert creds_path.read_bytes() == data
 
     # Check mode is 0o600 on POSIX (Windows ignores POSIX modes)
     if os.name != "nt":
         mode = creds_path.stat().st_mode & 0o777
         assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
 
-    # Overwrite existing file with new text
-    new_text = "new_secret=abc\ncafé2"
-    _fs.write_private(creds_path, new_text)
-    assert creds_path.read_text(encoding="utf-8") == new_text
+    # Overwrite existing file with new bytes
+    new_data = "new_secret=abc\ncafé2".encode()
+    _fs.write_private(creds_path, new_data)
+    assert creds_path.read_bytes() == new_data
 
 
 def test_write_json_creates_parents_and_ensures_unicode(tmp_path):

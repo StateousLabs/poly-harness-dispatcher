@@ -77,6 +77,10 @@ class OpencodeAdapter:
         cfg_dir = home / "config"
         return [cfg_dir / "skills", cfg_dir / "plugin" / "phd-hooks.js", cfg_dir / "opencode.json", home / "AGENTS.md"]
 
+    def secret_paths(self, home: Path) -> list[Path]:
+        """None: the auth content goes in the environment (`OPENCODE_AUTH_CONTENT`), never into the home."""
+        return []
+
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
         if c.kind != "opencode_auth_file":

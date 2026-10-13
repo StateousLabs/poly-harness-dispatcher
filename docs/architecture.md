@@ -60,6 +60,7 @@ src/phd/
     handle.py          RunHandle
     process.py         HarnessProcess, child_env
     session_lock.py    SessionLock: one run at a time per run home
+    credential_copies.py  credential copies in a run home (codex auth.json): drop at turn end, sweep leftovers
     lifetime/          tie each harness to its caller (orphan protection)
       __init__.py        Guard protocol, new_guard(), CREATE_SUSPENDED
       windows_job.py     JobGuard: Job Object with kill-on-close; harness created suspended, assigned, resumed

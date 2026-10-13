@@ -104,8 +104,8 @@ class Credentials:
     def codex_auth_file(cls, path: str | Path | None = None) -> Credentials:
         """Use a codex `auth.json` (from `codex login`).
 
-        The file is copied verbatim into the run home as `auth.json` (mode 0600 on POSIX) at
-        materialize time and again on resume.
+        The file is copied verbatim (byte for byte) into the run home as `auth.json` (mode 0600 on POSIX) at
+        materialize time and again on resume, and deleted when the turn ends. PHD never writes to `path`.
 
         Args:
             path: The auth file. Defaults to `~/.codex/auth.json`.

@@ -347,13 +347,15 @@ def test_opencode_resume_argv(tmp_path, monkeypatch, make_spec, inputs, echo):
     assert first.session_id and echo()[1]["argv"][-2:] == ["--session", first.session_id]
 
 
-def test_codex_auth_is_refreshed_on_resume(tmp_path, monkeypatch, make_spec, inputs, credentials):
+def test_codex_auth_is_refreshed_on_resume(tmp_path, monkeypatch, make_spec, inputs, credentials, echo):
     monkeypatch.setenv("FAKE_STREAM", str(STREAMS / "codex_ok.jsonl"))
+    monkeypatch.setenv("FAKE_CAPTURE", "auth.json")
     d = dispatcher(make_spec("codex"), tmp_path)
     first = d.spawn(inputs)
     credentials["codex"].path.write_text('{"tokens": {"access_token": "rotated"}}', encoding="utf-8")
     d.spawn(Inputs(msg="next"), session_id=first.session_id)
-    assert "rotated" in (Path(first.home_dir) / "auth.json").read_text(encoding="utf-8")
+    assert b"rotated" in bytes.fromhex(echo()[1]["captured"])  # the resumed turn ran with the new file
+    assert not (Path(first.home_dir) / "auth.json").exists()  # and it is gone again
 
 
 def test_read_only_owned_file_is_replaced(tmp_path, monkeypatch, make_spec, inputs):

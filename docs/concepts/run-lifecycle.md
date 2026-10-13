@@ -51,15 +51,16 @@ sequenceDiagram
 | # | Step | Code | Can raise (pre-launch) |
 |---|---|---|---|
 | 1 | **Validate** in `Dispatcher.__init__`: adapter checks (hooks, warnings), claude model check, codex temp `runs_root`. The codex / opencode model catalogue is looked up lazily, in a worker thread, at the start of step 2 on the first run (once per process) | `execution/dispatcher.py` | `HookUnsupported`, `InvalidRunsRoot`; `ModelNotSupported` (claude here, codex from `start()` / `plan()`; an opencode miss is a warning) |
-| 2 | **Plan**: with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
+| 2 | **Plan**: on the first `start()` / `plan()` of the process for this `runs_root`, delete credential copies (codex `home/auth.json`) that a killed PHD process left in run homes no live run holds (each home's session lock is taken for the check; a home a live run holds keeps its copy); with `session_id`, find and check the session ([Resume](#resume)); hash the stack (pinned now: this is what runs), allocate `<runs_root>/<run_id>/` | `Dispatcher._plan` | `UnsupportedFeature`, `NotResumable`, `OSError` |
 | 3 | **Materialize**: create `home/` (or, [resuming](#resume), clear the PHD-owned paths of the session's home), copy the whole stack to `home/stack/`, assemble the prompt, let the adapter write its files and return `argv` and `env`; write `run.json` | `materialize/__init__.py`, adapters | `MissingCredentials`, `MissingSecret` |
 | 4 | **Launch**: resolve `argv[0]` (or use `executables[harness]`), start the process in `Spec.cwd` with the stripped host env plus `env`, stdout/stderr piped, stdin written in the background; attach the [orphan-protection](#orphan-protection) guard | `RunHandle.launch`, `execution/process.py`, `execution/lifetime/` | `HarnessNotInstalled` |
 | 5 | **Stream / parse**: read stdout line by line; non-JSON lines become `log` events; JSON objects go to the harness parser, which yields normalized events and accumulates the outcome; stderr is copied to `stderr.log` | `RunHandle._consume` | never (data) |
-| 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False` | `RunHandle._build_result`, `_repair` | never (data) |
+| 6 | **Result**: decide the error (precedence below), check the answer against `output_schema`, build `RunResult`; optionally run one [schema repair turn](#schema-repair-turn); emit `run.finished`; delete `home/` if `resumable=False`; delete the adapter's credential copies (codex `home/auth.json`) however the run ended, before the session lock is released (a failed deletion becomes a warning) | `RunHandle._build_result`, `_repair`, `_pump` | never (data) |
 | 7 | **Sinks**: `LocalLedger.put` writes `result.json` atomically, then each extra sink | `RunHandle._pump` | never: sink errors become warnings |
 
-`plan(inputs)` runs steps 2 and 3 only (and, for codex / opencode, the catalogue lookup, synchronously). Note that a `HarnessNotInstalled` at step 4 leaves a run
-directory with `run.json` and `home/` but no `result.json`. A caller cancelled while `start()` is still planning leaves
+`plan(inputs)` runs steps 2 and 3 only (and, for codex / opencode, the catalogue lookup, synchronously), then deletes
+the credential copies again: a dry run's home has no codex `auth.json`. Note that a `HarnessNotInstalled` at step 4 leaves a run
+directory with `run.json` and `home/` (without credential copies) but no `result.json`. A caller cancelled while `start()` is still planning leaves
 nothing behind: the session lock is released and a fresh run's directory is removed (a resumed turn's shared home is kept).
 
 ### Never blocks the event loop
@@ -193,7 +194,8 @@ If the harness itself reports that the session no longer exists (claude `No conv
 Every run that uses a home holds `<home>/.phd-session.lock` (JSON: `pid`, `run_id`, `started_at`) for as long
 as it runs:
 
-- a **fresh run** takes it on its new home right after materialization;
+- a **fresh run** takes it on its new, still empty home, before materialization (so no credential copy is ever in
+  a home without a live lock; see the sweep below);
 - a **resumed turn** takes it on the session's shared home after the checks above pass and **before** any
   PHD-owned path in the home is deleted or rewritten;
 - `plan(...)`, with or without `session_id`, never takes or checks it (a dry run never touches the shared home).

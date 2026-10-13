@@ -28,6 +28,14 @@ All notable changes to this project are documented here. The format follows
   in `events.jsonl`) carried claude's session-cumulative `total_cost_usd` as `cost_usd`. It now carries the turn's own
   cost, computed by the same rule as `RunResult.cost_usd` (a repair turn's events add up to the run's `cost_usd`), plus
   `session_cost_usd` (claude's cumulative figure; `None` for codex and opencode, whose `cost_usd` is unchanged).
+- **The codex `auth.json` copy no longer stays at rest.** It stayed in `<runs_root>/<run_id>/home/auth.json` after
+  the turn. It is now deleted when the turn ends, however it ends (also after a failed spawn and after a dry run,
+  which no longer leaves one), and re-copied on resume. Copies left by a killed PHD process are deleted by the first
+  `start()` / `plan()` of the next process using the same `runs_root`, except in homes a live run holds. Adapters
+  declare their credential files with a new `secret_paths(home)` method. If codex refreshes its token mid-turn, the
+  refreshed token is discarded (see Security and isolation, Known limitations).
+- **Credential files are copied byte for byte.** The codex `auth.json` (run home and model-catalogue home) was read
+  and written as text, so on Windows its LF line endings became CRLF. `write_private` now takes bytes.
 
 ## [0.1.0] — 2026-10-12
 

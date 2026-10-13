@@ -12,6 +12,7 @@ FAKE_PIDFILE        write this process's pid here at start
 FAKE_STREAMS        os.pathsep-separated JSONL paths; invocation N prints the Nth (needs FAKE_STATE)
 FAKE_IGNORE_SIGNALS set to 1 to ignore SIGTERM, SIGINT and (Windows) SIGBREAK, so only a hard kill stops it
 FAKE_STATE          counter file for FAKE_STREAMS
+FAKE_CAPTURE        a file name in $CODEX_HOME; its bytes (hex, or null if absent) go into the echo line as "captured"
 """
 import json
 import os
@@ -46,8 +47,12 @@ def main() -> int:
         sys.stderr.flush()
     if path := os.environ.get("FAKE_ECHO_FILE"):
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"argv": sys.argv[1:], "stdin": stdin, "cwd": os.getcwd(),
-                                "env": {k: v for k, v in os.environ.items() if k.startswith(PREFIXES)}}) + "\n")
+            record = {"argv": sys.argv[1:], "stdin": stdin, "cwd": os.getcwd(),
+                      "env": {k: v for k, v in os.environ.items() if k.startswith(PREFIXES)}}
+            if name := os.environ.get("FAKE_CAPTURE"):
+                target = os.path.join(os.environ.get("CODEX_HOME", ""), name)
+                record["captured"] = open(target, "rb").read().hex() if os.path.isfile(target) else None
+            f.write(json.dumps(record) + "\n")
     if path := os.environ.get("FAKE_CHILD_PIDFILE"):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
         with open(path, "w") as f:

@@ -107,8 +107,12 @@ class CodexAdapter:
         c = spec.credentials
         if c.kind != "codex_auth_file":
             raise MissingCredentials(f"codex cannot use credentials of kind {c.kind!r}")
-        write_private(home / "auth.json", c.path.read_text(encoding="utf-8"))
+        write_private(home / "auth.json", c.path.read_bytes())  # verbatim; deleted when the turn ends (secret_paths)
         return {}
+
+    def secret_paths(self, home: Path) -> list[Path]:
+        """The credential copies `materialize` writes under `home`; PHD deletes them when the turn ends."""
+        return [home / "auth.json"]
 
     def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:
         kept = [a for a in fresh_argv if a in RESUME_FLAGS]

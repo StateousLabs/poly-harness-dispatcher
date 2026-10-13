@@ -28,9 +28,9 @@ def load(run: Callable[[list[str]], str]) -> list[str]:
     return [m["slug"] for m in data.get("models", []) if m.get("slug")]
 
 
-def _read_auth(credentials: Credentials) -> str:
+def _read_auth(credentials: Credentials) -> bytes:
     try:
-        return credentials.path.read_text(encoding="utf-8")
+        return credentials.path.read_bytes()  # copied verbatim
     except OSError as e:
         raise MissingCredentials(f"{credentials.path}: cannot read the codex auth file ({e}); run `codex login`") from e
 
