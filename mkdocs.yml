@@ -1,5 +1,6 @@
 site_name: poly-harness-dispatcher (PHD)
 site_description: Spawn headless AI coding agents (Claude Code, Codex, OpenCode) from one harness-neutral spec.
+site_url: https://stateouslabs.github.io/poly-harness-dispatcher/
 repo_url: https://github.com/StateousLabs/poly-harness-dispatcher
 repo_name: Stateous/poly-harness-dispatcher
 edit_uri: edit/main/docs/
