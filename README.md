@@ -3,6 +3,7 @@
 [![CI](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml/badge.svg)](https://github.com/StateousLabs/poly-harness-dispatcher/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/poly-harness-dispatcher?cacheSeconds=3600)](https://pypi.org/project/poly-harness-dispatcher/)
 [![Python](https://img.shields.io/pypi/pyversions/poly-harness-dispatcher?cacheSeconds=3600)](https://pypi.org/project/poly-harness-dispatcher/)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://stateouslabs.github.io/poly-harness-dispatcher/)
 [![License](https://img.shields.io/pypi/l/poly-harness-dispatcher?cacheSeconds=3600)](LICENSE)
 
 Spawn headless AI coding agents (**Claude Code** `claude -p`, **Codex** `codex exec`, **OpenCode** `opencode run`)
@@ -82,6 +83,7 @@ On macOS the Claude login lives in the Keychain: use `Credentials.claude_oauth_t
 
 ## Documentation
 
+- **[Read the docs online](https://stateouslabs.github.io/poly-harness-dispatcher/)**
 - [Documentation index](docs/index.md): what is built, what is planned, and every page
 - [Getting started](docs/getting-started.md): install, authentication per harness, first agent, tests, dry runs
 - [Stack resolver](docs/concepts/stack-resolver.md): compose and store stacks from several sources
