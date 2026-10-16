@@ -14,6 +14,7 @@ Everything a user needs is importable from the top-level package: `from phd impo
 | [Results](results.md) | `RunResult`, `RunStatus`, `RunError`, `Usage`, `Event`, `LocalLedger`, `ResultSink`, `phd.runs` | what a run produced, and where it is recorded |
 | [Models](models.md) | `ModelCatalog` | pre-launch model validation |
 | [Errors](errors.md) | `PhdError` and its 19 subclasses | pre-launch failures |
+| [File formats](file-formats.md) | n/a | copy-paste examples of every file PHD reads |
 
 Typical flow:
 
@@ -37,7 +38,7 @@ print(phd.runs.get(result.run_id).cost_usd)
 Each reference page starts with a hand-written summary (readable on GitHub). The full rendered reference below
 it is generated from the docstrings by mkdocstrings and appears on the MkDocs site only.
 
-`phd.__version__` is `"0.1.0"`.
+`phd.__version__` is `"0.1.1"`.
 
 ---
 

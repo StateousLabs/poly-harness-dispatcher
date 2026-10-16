@@ -85,6 +85,7 @@ nav:
       - Overview: reference/index.md
       - Spec and stack: reference/spec.md
       - Stack resolver: reference/stacks.md
+      - File formats: reference/file-formats.md
       - Dispatcher: reference/dispatcher.md
       - Results: reference/results.md
       - Models: reference/models.md
