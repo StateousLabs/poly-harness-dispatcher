@@ -18,13 +18,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, python: "3.12", experimental: false, cov_min: 89 }
-          - { os: ubuntu-latest, python: "3.13", experimental: false, cov_min: 89 }
-          - { os: ubuntu-latest, python: "3.14", experimental: false, cov_min: 89 }
-          - { os: windows-latest, python: "3.12", experimental: false, cov_min: 90 }
-          - { os: windows-latest, python: "3.14", experimental: false, cov_min: 90 }
+          - { os: ubuntu-latest, python: "3.12", experimental: false, cov_min: 97 }
+          - { os: ubuntu-latest, python: "3.13", experimental: false, cov_min: 97 }
+          - { os: ubuntu-latest, python: "3.14", experimental: false, cov_min: 97 }
+          - { os: windows-latest, python: "3.12", experimental: false, cov_min: 97 }
+          - { os: windows-latest, python: "3.14", experimental: false, cov_min: 97 }
           # macOS is untested locally: informational only.
-          - { os: macos-latest, python: "3.12", experimental: true, cov_min: 89 }
+          - { os: macos-latest, python: "3.12", experimental: true, cov_min: 97 }
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

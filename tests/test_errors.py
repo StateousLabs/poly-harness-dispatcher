@@ -24,3 +24,7 @@ def test_model_not_supported_truncates_long_lists():
     assert str(e).endswith("p/m24 …")
     with pytest.raises(errors.PhdError):
         raise e
+
+
+def test_model_not_supported_with_empty_catalogue_omits_the_supported_list():
+    assert str(errors.ModelNotSupported("claude", "foo", [])) == "'foo' is not a claude model."
