@@ -42,6 +42,7 @@ def test_run_cli_timeout_survives_a_process_that_will_not_die(monkeypatch, tmp_p
         def communicate(self, timeout=None):
             raise subprocess.TimeoutExpired("cmd", timeout)
 
+    monkeypatch.setattr(catalog, "resolve_argv", lambda argv: argv)  # codex need not be installed (CI)
     monkeypatch.setattr(catalog.subprocess, "Popen", lambda *a, **kw: Stuck())
     monkeypatch.setattr(catalog, "kill_tree", killed.append)
     # the second wait (after the kill) also times out: it is swallowed and the original timeout is re-raised
