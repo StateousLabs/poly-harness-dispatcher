@@ -10,7 +10,7 @@ from .harnesses import ModelCatalog
 from .results import ERROR_KINDS, Event, LocalLedger, ResultSink, RunError, RunResult, RunStatus, Usage
 from .spec import Credentials, HookDef, Inputs, Spec, Stack, StoreEntry
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "ERROR_KINDS", "Credentials", "CwdNotFound", "Dispatcher", "EmptyTask", "Event", "HarnessNotInstalled", "HookDef",

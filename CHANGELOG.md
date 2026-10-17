@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it leaves alpha.
 
+## [0.1.2] — 2026-10-17
+
+No behaviour changes to the library: this release is documentation, packaging metadata and tests.
+
+### Added
+
+- **Documentation site on GitHub Pages** (<https://stateouslabs.github.io/poly-harness-dispatcher/>), built with
+  `mkdocs build --strict` and deployed from `main`. The package's `Documentation` URL now points at it.
+- **File formats reference** (`docs/reference/file-formats.md`): copy-paste `stack.json`, agent, `SKILL.md`,
+  `.mcp.json`, `hooks.json`, `stack.toml` and `output_schema` examples, checked by `tests/docs`.
+
+### Changed
+
+- **Test coverage is 99%** (was 91%): about 260 new tests for error paths in stacks, execution, harnesses, spec and
+  results. The CI coverage floor is 97% on every platform (was 89–90%).
+
+### Fixed
+
+- `phd.__version__` was documented as `0.1.0` in the API overview.
+
 ## [0.1.1] — 2026-10-13
 
 ### Upgrading from 0.1.0
@@ -131,5 +151,6 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
   Agents' own `npm` commands on claude, codex and opencode therefore use PHD's npm cache and ignore the host
   `~/.npmrc`, so private registries are not reachable unless a future stack-level npmrc provides them (planned).
 
+[0.1.2]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StateousLabs/poly-harness-dispatcher/releases/tag/v0.1.0
