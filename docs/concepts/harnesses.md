@@ -61,7 +61,17 @@ claude -p --output-format stream-json --verbose --model <model>
 common npm settings (above).
 
 **Credentials:** `claude_oauth_token` → `CLAUDE_CODE_OAUTH_TOKEN`; `anthropic_api_key` → `ANTHROPIC_API_KEY`;
-`claude_host_login` → `CLAUDE_CODE_OAUTH_TOKEN` = the host file's current access token.
+`claude_host_login` → the host login file copied to `home/.credentials.json` for the turn (no environment variable).
+
+#### Chrome
+
+`Spec(chrome=True)` adds `--chrome` to the command and `mcp__claude-in-chrome` to the `settings.json` allow list, so
+the agent can drive the host's Chrome through the Claude in Chrome extension (read tabs, navigate, click, ...). It
+needs the extension installed in a running Chrome, and `Credentials.claude_host_login`: the integration did not
+connect with `claude_oauth_token` (checked by hand, not for `anthropic_api_key`), so `Spec` rejects the token kinds.
+Codex and opencode have no equivalent, so `chrome=True` with them raises `UnsupportedFeature`. The agent works in your
+real Chrome profile, with its sign-ins, and PHD has no sandbox: pair it with `autonomy="restricted"` and a `pre_tool`
+hook for anything you do not want it to touch.
 
 **`settings.json`** (before `harness_config` is merged in):
 

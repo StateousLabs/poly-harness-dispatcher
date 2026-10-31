@@ -9,7 +9,7 @@ from typing import Any
 
 from ..constants import AUTONOMY_MODES, HARNESSES, PROJECT_CONFIG_MODES
 from ..errors import (CwdNotFound, EmptyTask, InputNotFound, InvalidSpec, MissingCredentials,
-                      MissingSecret, UnknownHarness, UnsafeAutonomy)
+                      MissingSecret, UnknownHarness, UnsafeAutonomy, UnsupportedFeature)
 from .credentials import Credentials
 from .output_schema import schema_error
 from .placeholders import env_refs
@@ -101,16 +101,22 @@ class Spec:
             codex print nothing while a tool runs: set it above your longest expected tool call.
         schema_repair: With `output_schema`, when the answer does not match, resume the session once
             and ask for a corrected answer. Default `False` (fail at once with `kind="schema"`).
+        chrome: claude only: pass `--chrome` so the agent can drive the host's Chrome through the Claude in
+            Chrome extension. Needs `Credentials.claude_host_login` (the token kinds do not work with it) and
+            the extension installed. The agent acts in your real Chrome profile, with its sign-ins, and PHD has
+            no sandbox. Default `False`.
 
     Raises:
         UnknownHarness: `harness` is not supported.
         InvalidSpec: Blank `model`; bad `project_config` / `autonomy`; non-bool
             `harness_builtins`; non-positive or non-finite `timeout_s` or `budget_usd`; bad `idle_timeout_s` /
-            `schema_repair`; malformed `output_schema` (also one with a `$ref` that does
+            `schema_repair` / `chrome`; malformed `output_schema` (also one with a `$ref` that does
             not resolve).
         CwdNotFound: `cwd` is not a directory.
         UnsafeAutonomy: `autonomy="full"` without `unsafe=True`.
-        MissingCredentials: `credentials.harness` differs from `harness`.
+        UnsupportedFeature: `chrome=True` with a harness other than claude.
+        MissingCredentials: `credentials.harness` differs from `harness`, or `chrome=True` without a
+            `claude_host_login` credential.
         StackIncompatible: The stack's `harnesses` list excludes `harness`.
         MissingSecret: The stack references `${env:NAME}` values absent from `secrets`.
 
@@ -138,6 +144,7 @@ class Spec:
     harness_builtins: bool = False
     idle_timeout_s: float | None = None
     schema_repair: bool = False
+    chrome: bool = False
 
     def __post_init__(self) -> None:
         if self.harness not in HARNESSES:
@@ -169,6 +176,14 @@ class Spec:
             raise InvalidSpec(f"idle_timeout_s must be a positive number when set, got {self.idle_timeout_s!r}")
         if not isinstance(self.schema_repair, bool):
             raise InvalidSpec(f"schema_repair must be a bool, got {self.schema_repair!r}")
+        if not isinstance(self.chrome, bool):
+            raise InvalidSpec(f"chrome must be a bool, got {self.chrome!r}")
+        if self.chrome:
+            if self.harness != "claude":
+                raise UnsupportedFeature(f"chrome=True needs the claude harness ({self.harness} has no Chrome integration)")
+            if self.credentials.kind != "claude_host_login":
+                raise MissingCredentials("chrome=True needs Credentials.claude_host_login(): the Chrome integration "
+                                         f"does not work with {self.credentials.kind!r}")
         if self.output_schema is not None:
             if not isinstance(self.output_schema, dict):
                 raise InvalidSpec("output_schema must be a dict (a JSON Schema)")

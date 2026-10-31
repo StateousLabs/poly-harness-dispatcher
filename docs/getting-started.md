@@ -39,7 +39,7 @@ injects it into each run's own environment or config home. Two styles:
 
 | Harness | Host login (reuse the CLI's own login) | Token / key |
 |---|---|---|
-| claude | `claude auth login`, then `Credentials.from_host("claude")` (= `claude_host_login()`, reads `~/.claude/.credentials.json`) | `Credentials.claude_oauth_token(token)` with a token from `claude setup-token` (preferred), or `Credentials.anthropic_api_key(key)` |
+| claude | `claude auth login`, then `Credentials.from_host("claude")` (= `claude_host_login()`, reads `~/.claude/.credentials.json`) | `Credentials.claude_oauth_token(token)` with a token from `claude setup-token` (no Chrome), or `Credentials.anthropic_api_key(key)` |
 | codex | `codex login`, then `Credentials.from_host("codex")` (= `codex_auth_file()`, `~/.codex/auth.json`) | none (only the auth file kind exists) |
 | opencode | `opencode auth login`, then `Credentials.from_host("opencode")` (= `opencode_auth_file()`, `~/.local/share/opencode/auth.json`) | none; to copy only some provider entries use `Credentials.opencode_auth_file(providers=[...])` (`from_host` takes no `providers`) |
 
@@ -47,9 +47,9 @@ injects it into each run's own environment or config home. Two styles:
 > `~/.claude/.credentials.json` does not exist and `Credentials.from_host("claude")` raises
 > `MissingCredentials`. Use `Credentials.claude_oauth_token(token)` with a token from `claude setup-token`.
 
-`claude_host_login` copies only the current *access token*, never the refresh token. When that access token
-expires, runs fail with `error.kind == "auth"` until the host CLI refreshes it (use it once, interactively, or
-switch to `claude setup-token`). Details: [Credentials](concepts/spec-and-inputs.md#credentials).
+`claude_host_login` copies the whole login file into the run home for the turn and deletes it afterwards, like
+`codex_auth_file`. It is the only claude credential that works with `Spec(chrome=True)` (Claude in Chrome). Details:
+[Credentials](concepts/spec-and-inputs.md#credentials).
 
 ## 3. A stack
 

@@ -5,7 +5,8 @@ import pytest
 from conftest import FIXTURES
 from phd.spec import placeholders
 from phd.errors import (CwdNotFound, EmptyTask, InputNotFound, InvalidSpec, MissingCredentials,
-                        MissingSecret, StackIncompatible, UnknownHarness, UnsafeAutonomy)
+                        MissingSecret, StackIncompatible, UnknownHarness, UnsafeAutonomy,
+                        UnsupportedFeature)
 from phd.spec import Credentials, Inputs
 from phd.spec import Stack
 
@@ -83,11 +84,11 @@ def test_credentials_repr_hides_secret():
     assert "s3cret" not in repr(Credentials.claude_oauth_token("s3cret"))
 
 
-def test_claude_host_login_reads_access_token_only(tmp_path):
+def test_claude_host_login_checks_the_file_exists(tmp_path):
     f = tmp_path / ".credentials.json"
-    f.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-1", "refreshToken": "rt-SECRET"}}))
+    f.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-1"}}))
     c = Credentials.claude_host_login(f)
-    assert c.kind == "claude_host_login" and c.claude_access_token() == "at-1"
+    assert c.kind == "claude_host_login" and c.path == f
     with pytest.raises(MissingCredentials):
         Credentials.claude_host_login(tmp_path / "absent.json")
 
@@ -99,30 +100,6 @@ def test_opencode_auth_content_filters_providers(credentials):
 def test_credentials_from_host_unknown_harness():
     with pytest.raises(UnknownHarness, match="'gemini'"):
         Credentials.from_host("gemini")
-
-
-def test_claude_access_token_missing_field(tmp_path):
-    f = tmp_path / ".credentials.json"
-    f.write_text(json.dumps({"claudeAiOauth": {"refreshToken": "rt"}}))
-    c = Credentials.claude_host_login(f)
-    with pytest.raises(MissingCredentials, match="accessToken"):
-        c.claude_access_token()
-
-
-def test_claude_access_token_malformed_json(tmp_path):
-    f = tmp_path / ".credentials.json"
-    f.write_text("not valid json {")
-    c = Credentials.claude_host_login(f)
-    with pytest.raises(MissingCredentials, match="failed to read or parse"):
-        c.claude_access_token()
-
-
-def test_claude_access_token_top_level_list(tmp_path):
-    f = tmp_path / ".credentials.json"
-    f.write_text(json.dumps([1, 2, 3]))
-    c = Credentials.claude_host_login(f)
-    with pytest.raises(MissingCredentials, match="top level must be"):
-        c.claude_access_token()
 
 
 def test_opencode_auth_content_missing_provider(tmp_path):
@@ -183,7 +160,7 @@ def test_placeholders_resolve_non_strings():
     assert result == {"num": 42, "bool": True, "list": [1, "x", None]}
 
 
-def test_claude_host_login_hides_refresh_token(tmp_path):
+def test_claude_host_login_repr_hides_the_login_contents(tmp_path):
     f = tmp_path / ".credentials.json"
     f.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-1", "refreshToken": "rt-SECRET"}}))
     c = Credentials.claude_host_login(f)
@@ -239,3 +216,29 @@ def test_spec_numbers_must_be_finite(make_spec, field, message, bad):
 def test_output_schema_with_an_unresolvable_ref_is_rejected(make_spec, schema):
     with pytest.raises(InvalidSpec, match=r"output_schema is not a valid JSON Schema: unresolvable \$ref: "):
         make_spec(output_schema=schema)
+
+
+def _host_login(tmp_path):
+    f = tmp_path / ".credentials.json"
+    f.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at", "refreshToken": "rt"}}))
+    return Credentials.claude_host_login(f)
+
+
+def test_chrome_defaults_off_and_must_be_bool(make_spec, tmp_path):
+    assert make_spec("claude").chrome is False
+    assert make_spec("claude", credentials=_host_login(tmp_path), chrome=True).chrome is True
+    for bad in ("yes", 1, None):
+        with pytest.raises(InvalidSpec, match="chrome"):
+            make_spec("claude", chrome=bad)
+
+
+def test_chrome_needs_the_claude_harness(make_spec):
+    for harness in ("codex", "opencode"):
+        with pytest.raises(UnsupportedFeature, match="claude harness"):
+            make_spec(harness, chrome=True)
+
+
+def test_chrome_needs_a_host_login_credential(make_spec):
+    for creds in (Credentials.claude_oauth_token("t"), Credentials.anthropic_api_key("k")):
+        with pytest.raises(MissingCredentials, match="claude_host_login"):
+            make_spec("claude", credentials=creds, chrome=True)

@@ -13,7 +13,7 @@ FAKE_PIDFILE        write this process's pid here at start
 FAKE_STREAMS        os.pathsep-separated JSONL paths; invocation N prints the Nth (needs FAKE_STATE)
 FAKE_IGNORE_SIGNALS set to 1 to ignore SIGTERM, SIGINT and (Windows) SIGBREAK, so only a hard kill stops it
 FAKE_STATE          counter file for FAKE_STREAMS
-FAKE_CAPTURE        a file name in $CODEX_HOME; its bytes (hex, or null if absent) go into the echo line as "captured"
+FAKE_CAPTURE        a file name in $CODEX_HOME (or $CLAUDE_CONFIG_DIR); its bytes (hex, or null if absent) go into the echo line as "captured"
 """
 import json
 import os
@@ -51,7 +51,7 @@ def main() -> int:
             record = {"argv": sys.argv[1:], "stdin": stdin, "cwd": os.getcwd(),
                       "env": {k: v for k, v in os.environ.items() if k.startswith(PREFIXES)}}
             if name := os.environ.get("FAKE_CAPTURE"):
-                target = os.path.join(os.environ.get("CODEX_HOME", ""), name)
+                target = os.path.join(os.environ.get("CODEX_HOME") or os.environ.get("CLAUDE_CONFIG_DIR", ""), name)
                 record["captured"] = open(target, "rb").read().hex() if os.path.isfile(target) else None
             f.write(json.dumps(record) + "\n")
     if path := os.environ.get("FAKE_CHILD_PIDFILE"):

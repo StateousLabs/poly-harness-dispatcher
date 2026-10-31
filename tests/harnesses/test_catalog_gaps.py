@@ -51,6 +51,6 @@ def test_run_cli_timeout_survives_a_process_that_will_not_die(monkeypatch, tmp_p
     assert len(killed) == 1
 
 
-def test_all_secret_paths_lists_only_codex_credential_copies(tmp_path):
+def test_all_secret_paths_lists_the_claude_and_codex_credential_copies(tmp_path):
     from phd.harnesses import all_secret_paths
-    assert all_secret_paths(tmp_path) == [tmp_path / "auth.json"]
+    assert all_secret_paths(tmp_path) == [tmp_path / ".credentials.json", tmp_path / "auth.json"]

@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it leaves alpha.
 
+## [Unreleased]
+
+### Added
+
+- **`Spec(chrome=True)`** (claude only): passes `--chrome` and allows the `mcp__claude-in-chrome` tools, so the agent
+  can drive the host's Chrome through the Claude in Chrome extension. It needs `Credentials.claude_host_login`;
+  `Spec` raises `UnsupportedFeature` for codex or opencode and `MissingCredentials` for the token kinds.
+
+### Changed
+
+- **`claude_host_login` now copies the whole login file** (refresh token included) into the run home as
+  `.credentials.json` for the turn and deletes it when the turn ends, like `codex_auth_file`. It used to inject only
+  the access token as `CLAUDE_CODE_OAUTH_TOKEN`, which the Chrome integration did not accept. Copies a killed process
+  leaves behind are swept like the codex ones. Whether claude rotates the refresh token inside the run home, which
+  would invalidate the host's login, is unverified.
+- **Removed `Credentials.claude_access_token()`**, which only the access-token injection used.
+
 ## [0.1.2] — 2026-10-17
 
 No behaviour changes to the library: this release is documentation, packaging metadata and tests.
