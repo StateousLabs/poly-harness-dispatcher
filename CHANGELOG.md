@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to follow
 [Semantic Versioning](https://semver.org/) once it leaves alpha.
 
-## [Unreleased]
+## [0.2.0] — 2026-10-31
+
+### Upgrading from 0.1.2
+
+- **`Credentials.claude_access_token()` is removed**, and `claude_host_login` no longer sets
+  `CLAUDE_CODE_OAUTH_TOKEN`; it copies the login file instead. Code that called `claude_access_token()` must read
+  the file itself. `Credentials.from_host("claude")` and `claude_host_login()` are used as before.
+- The claude login file now includes the refresh token inside the run home for the length of a turn. If your host
+  `claude` login stops working after PHD runs, log in again with `claude auth login`.
 
 ### Added
 
@@ -168,6 +176,7 @@ First release: layer 1, the core spawner. Agents run on the host with no sandbox
   Agents' own `npm` commands on claude, codex and opencode therefore use PHD's npm cache and ignore the host
   `~/.npmrc`, so private registries are not reachable unless a future stack-level npmrc provides them (planned).
 
+[0.2.0]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/StateousLabs/poly-harness-dispatcher/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/StateousLabs/poly-harness-dispatcher/releases/tag/v0.1.0

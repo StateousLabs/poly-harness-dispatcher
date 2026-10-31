@@ -38,7 +38,7 @@ print(phd.runs.get(result.run_id).cost_usd)
 Each reference page starts with a hand-written summary (readable on GitHub). The full rendered reference below
 it is generated from the docstrings by mkdocstrings and appears on the MkDocs site only.
 
-`phd.__version__` is `"0.1.2"`.
+`phd.__version__` is `"0.2.0"`.
 
 ---
 

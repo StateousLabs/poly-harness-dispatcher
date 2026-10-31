@@ -1,6 +1,6 @@
 [project]
 name = "poly-harness-dispatcher"
-version = "0.1.2"
+version = "0.2.0"
 description = "Spawn headless AI coding agents (Claude Code, Codex, OpenCode) from one harness-neutral spec."
 readme = "README.md"
 requires-python = ">=3.12"
