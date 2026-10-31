@@ -76,7 +76,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 | `run.json` `env` | values of variables whose name contains `TOKEN`, `KEY`, `AUTH_CONTENT`, `SECRET` or `PASSWORD` (case-insensitive) replaced with `<redacted>` |
 | `result.json` | records only `credential_kind`, never the credential |
 | `harness_crash` message | the stderr tail is scrubbed: every value of `Spec.secrets` and `Credentials.secret` is replaced with `<redacted>` |
-| claude host login | only the access token is used; the refresh token is never copied |
+| claude host login | the full login file is copied, refresh token included, and present only while a turn runs (below) |
 | codex `auth.json` copy | copied byte for byte, created with mode 0600 on POSIX (no POSIX mode on Windows), and present only while a turn runs (below) |
 
 **Where secrets do end up in plaintext**
@@ -84,6 +84,7 @@ hook and the hook log all work. (It poisons the repo, not the global user config
 | Location | What |
 |---|---|
 | run home config files | `${env:NAME}` values from `Spec.secrets`, resolved into claude `mcp.json`, codex `config.toml`, opencode `opencode.json`, and `phd/hooks.resolved.json` |
+| `home/.credentials.json` (claude) | the full claude login file (`claude_host_login`), including the refresh token. Like the codex copy below it exists only while a turn runs: PHD deletes it when the turn ends, however it ends, and sweeps copies a killed process left behind |
 | `home/auth.json` (codex) | the full codex auth file, including any refresh token. It exists only while a turn runs: PHD deletes it when the turn ends, however it ends (success, failure, cancel, timeout, idle, crash, spawn failure), and a dry run (`plan()`) deletes it right after writing the preview home. A resumed turn copies it again from the spec's credential file. A PHD process killed mid-turn leaves it behind; the first `start()` or `plan()` of the next PHD process that uses the same `runs_root` deletes the copies of every run home no live run holds (it takes the home's session lock to check, which can delay a concurrent resume of that session by up to 2.5 s, or make it report busy if the hold lasts longer; it never follows a symlink or junction and skips any home outside `runs_root`). If a deletion fails (a Windows sharing error that outlasts the retries), the run carries a warning and the file waits for that sweep |
 | `~/.phd/cache/codex/catalog-home/<id>/<uuid>/auth.json` | the full codex auth file, including the refresh token, copied for the model catalogue. It exists only while `codex debug models` runs and is deleted right after (a crash of the PHD process in that window can leave it behind; the next catalogue load deletes it once it is 10 minutes old) |
 | the harness process environment | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `OPENCODE_AUTH_CONTENT` |
@@ -94,8 +95,8 @@ session's home). Otherwise these files stay under `runs_root`
 until you delete them; PHD does not prune run directories (open item 13).
 
 Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets` values and
-`Credentials.secret`. A `claude_host_login` access token and `OPENCODE_AUTH_CONTENT` are not
-`Credentials.secret`, so they are not scrubbed from that message if a harness printed them.
+`Credentials.secret`. `OPENCODE_AUTH_CONTENT` is not
+`Credentials.secret`, so it is not scrubbed from that message if a harness printed them.
 
 ## Known limitations
 
@@ -120,6 +121,9 @@ Scrubbing gaps: the stderr scrub uses exact string replacement of `Spec.secrets`
   before it locks the home and does not know the sweep's lock marker, so beside a 0.1.1 process it can lose that copy
   to the sweep (error kind `auth`) or report the sweep as a busy run. The first `start()` / `plan()` after upgrading
   deletes every copy 0.1.0 left behind, which can take a while with many codex runs.
+- claude token refresh during a turn is lost in the same way: a refreshed token the harness writes to the run's
+  `home/.credentials.json` is deleted with the file, and whether the refresh invalidates the host's refresh token is
+  unverified. If a host login stops working after PHD runs, run `claude auth login` again.
 - codex token refresh during a turn is lost: if codex refreshes its OAuth token mid-turn and writes it to the run's
   `home/auth.json`, PHD deletes that file when the turn ends and never writes it back to your auth file, so the next
   turn starts from the original file and may fail with error kind `auth` (run `codex login` again). In 31 observed

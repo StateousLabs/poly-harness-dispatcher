@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from ..._util.fs import write_json
+from ..._util.fs import write_json, write_private
 from ..._util.npm import npm_env
 from ...errors import MissingCredentials
 from ...materialize import MaterializeContext, check_supported, claude_style_block, write_runtime
@@ -16,6 +16,8 @@ from .parser import ClaudeParser
 # denied through permissions (verified via the stream-json init event's `skills` / `plugins`).
 BUILTIN_PLUGINS = ("cc-plugin-agents-md@builtin", "cc-plugin-telemetry@builtin", "cc-plugin-plugin-authoring@builtin")
 RESIDUAL_BUILTIN_SKILLS = ("design", "doctor")
+CREDENTIALS_FILE = ".credentials.json"  # the login file `claude auth login` writes under the config dir
+CHROME_TOOLS = "mcp__claude-in-chrome"  # the tools `--chrome` adds; allowed so headless runs can call them
 
 
 class ClaudeAdapter:
@@ -34,6 +36,8 @@ class ClaudeAdapter:
         write_json(home / "mcp.json", {"mcpServers": servers})
 
         settings: dict = {"permissions": {"allow": ["Skill", *(f"mcp__{name}" for name in servers)]}}
+        if spec.chrome:
+            settings["permissions"]["allow"].append(CHROME_TOOLS)
         if not spec.harness_builtins:
             settings["disableBundledSkills"] = True
             settings["enabledPlugins"] = {plugin: False for plugin in BUILTIN_PLUGINS}
@@ -48,6 +52,8 @@ class ClaudeAdapter:
                 "--append-system-prompt-file", str(home / "system-prompt.md"),
                 "--strict-mcp-config", "--mcp-config", str(home / "mcp.json"),
                 "--setting-sources", "user,project,local" if spec.project_config == "full" else "user"]
+        if spec.chrome:
+            argv.append("--chrome")
         if spec.autonomy == "full":
             argv.append("--dangerously-skip-permissions")
         else:
@@ -61,11 +67,13 @@ class ClaudeAdapter:
 
     def owned_paths(self, home: Path) -> list[Path]:
         """Everything `materialize` writes under `home`; the rest (projects/, sessions, .claude.json) is Claude's."""
-        return [home / "skills", home / "system-prompt.md", home / "mcp.json", home / "settings.json"]
+        return [home / "skills", home / "system-prompt.md", home / "mcp.json", home / "settings.json",
+                home / CREDENTIALS_FILE]
 
     def secret_paths(self, home: Path) -> list[Path]:
-        """None: claude's credentials go in the environment, never into the home."""
-        return []
+        """The credential copy `materialize` writes under `home` (`claude_host_login`); PHD deletes it when the
+        turn ends."""
+        return [home / CREDENTIALS_FILE]
 
     def credential_env(self, spec: Spec, home: Path) -> dict[str, str]:
         c = spec.credentials
@@ -74,7 +82,8 @@ class ClaudeAdapter:
         if c.kind == "anthropic_api_key":
             return {"ANTHROPIC_API_KEY": c.secret}
         if c.kind == "claude_host_login":
-            return {"CLAUDE_CODE_OAUTH_TOKEN": c.claude_access_token()}
+            write_private(home / CREDENTIALS_FILE, c.path.read_bytes())  # verbatim; deleted when the turn ends
+            return {}
         raise MissingCredentials(f"claude cannot use credentials of kind {c.kind!r}")
 
     def resume_argv(self, fresh_argv: list[str], session_id: str, spec: Spec) -> list[str]:

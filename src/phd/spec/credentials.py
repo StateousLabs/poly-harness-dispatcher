@@ -81,9 +81,10 @@ class Credentials:
     def claude_host_login(cls, path: str | Path | None = None) -> Credentials:
         """Use the host's `claude auth login` session.
 
-        Only the current *access token* (`claudeAiOauth.accessToken`) is read, at materialize time,
-        and injected as `CLAUDE_CODE_OAUTH_TOKEN`; the refresh token is never copied. When the
-        access token expires the run fails with an auth error until the host CLI refreshes it.
+        The file is copied verbatim (byte for byte, refresh token included) into the run home as
+        `.credentials.json` (mode 0600 on POSIX) at materialize time and again on resume, and deleted
+        when the turn ends. PHD never writes to `path`. This is the full login that `Spec.chrome`
+        (`claude --chrome`) needs; the token kinds do not work with it.
 
         Args:
             path: The credentials file. Defaults to `~/.claude/.credentials.json`.
@@ -93,7 +94,7 @@ class Credentials:
 
         Raises:
             MissingCredentials: The file does not exist (for example on macOS, where the login is
-                kept in the Keychain; use `claude_oauth_token` there).
+                kept in the Keychain; use `claude_oauth_token` there, which cannot drive Chrome).
         """
         p = Path(path) if path else CLAUDE_HOST_CREDENTIALS
         if not p.is_file():
@@ -173,18 +174,6 @@ class Credentials:
         if not isinstance(data, dict):
             raise MissingCredentials(f"{self.path}: top level must be a JSON object, got {type(data).__name__}")
         return data
-
-    def claude_access_token(self) -> str:
-        """Read `claudeAiOauth.accessToken` from `path` (used for `claude_host_login`).
-
-        Raises:
-            MissingCredentials: The file cannot be read or parsed, or has no access token.
-        """
-        data = self._read_auth_file()
-        token = (data.get("claudeAiOauth") or {}).get("accessToken")
-        if not token:
-            raise MissingCredentials(f"{self.path} has no claudeAiOauth.accessToken; run `claude auth login`")
-        return token
 
     def opencode_auth_content(self) -> str:
         """Return the auth file as JSON text, filtered to `providers` (used for `opencode_auth_file`).

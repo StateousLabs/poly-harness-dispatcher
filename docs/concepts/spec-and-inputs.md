@@ -28,6 +28,7 @@ idle_timeout_s, schema_repair, output_schema, stack compatibility, secrets.
 | `budget_usd` | `float or None` | `None` | finite and `> 0` when set (`InvalidSpec`) | claude `--max-budget-usd` + PHD check (per turn); opencode PHD check; codex warning only. See [combinations](combinations.md#budget-enforcement) |
 | `idle_timeout_s` | `float or None` | `None` | a positive finite number when set (`InvalidSpec`) | kill the run when the harness prints no stdout line for this long: `idle`, status `timed_out`. Claude and codex are silent during tool calls: set it above your longest tool call. See [Run lifecycle](run-lifecycle.md#idle-timeout) |
 | `output_schema` | `dict or None` | `None` | a dict that is a valid JSON Schema whose `$ref`s resolve locally (`InvalidSpec`) | claude `--json-schema '<json>'` (a non-object root is wrapped); codex `--output-schema home/output-schema.json` (strict-mode converted, wrapped when needed); opencode: an instruction in `AGENTS.md`. PHD validates the answer on every harness (error kind `schema`). See [per-harness translation](combinations.md#per-harness-schema-translation) |
+| `chrome` | `bool` | `False` | must be a real `bool` (`InvalidSpec`); claude only (`UnsupportedFeature`); needs a `claude_host_login` credential (`MissingCredentials`) | claude `--chrome` plus an allow rule for the `mcp__claude-in-chrome` tools: the agent can drive the host's Chrome through the Claude in Chrome extension. See [Harnesses](harnesses.md#chrome) |
 | `schema_repair` | `bool` | `False` | must be a real `bool` (`InvalidSpec`) | with `output_schema`: on a schema error, resume the session once and ask for a corrected answer. See [Run lifecycle](run-lifecycle.md#schema-repair-turn) |
 | `resumable` | `bool` | `True` | none | `False`: the run home is deleted after the result is built, so the session cannot be resumed (a resumed turn never deletes the shared home) |
 | `harness_builtins` | `bool` | `False` | must be a real `bool` (`InvalidSpec`) | `False` suppresses the harness's bundled skills/plugins; see [Harnesses](harnesses.md#built-in-skill-suppression-harness_builtins) |
@@ -113,21 +114,23 @@ A frozen dataclass; build it with a constructor. `secret` is excluded from `repr
 |---|---|---|---|---|---|
 | `Credentials.claude_oauth_token(token)` | claude | `claude_oauth_token` | nothing | (held in memory) | env `CLAUDE_CODE_OAUTH_TOKEN` |
 | `Credentials.anthropic_api_key(key)` | claude | `anthropic_api_key` | nothing | (held in memory) | env `ANTHROPIC_API_KEY` |
-| `Credentials.claude_host_login(path=None)` | claude | `claude_host_login` | file exists (default `~/.claude/.credentials.json`), else `MissingCredentials` | `claudeAiOauth.accessToken` from the file | env `CLAUDE_CODE_OAUTH_TOKEN` (access token only) |
+| `Credentials.claude_host_login(path=None)` | claude | `claude_host_login` | file exists (default `~/.claude/.credentials.json`), else `MissingCredentials` | whole file | copied byte for byte to `home/.credentials.json` (mode 0600 on POSIX) for the turn, deleted when it ends |
 | `Credentials.codex_auth_file(path=None)` | codex | `codex_auth_file` | file exists (default `~/.codex/auth.json`) | whole file | copied byte for byte to `home/auth.json` (mode 0600 on POSIX) for the turn, deleted when it ends |
 | `Credentials.opencode_auth_file(path=None, providers=())` | opencode | `opencode_auth_file` | file exists (default `~/.local/share/opencode/auth.json`) | JSON, filtered to `providers` (all if empty) | env `OPENCODE_AUTH_CONTENT` (no file written) |
 | `Credentials.from_host(harness)` | any | as above | as above; unknown harness → `UnknownHarness` | | |
 
-Read-time errors (`MissingCredentials`): unreadable or invalid JSON, top level not an object, no
-`claudeAiOauth.accessToken`, or a requested opencode provider missing from the file.
+Read-time errors (`MissingCredentials`): for `opencode_auth_file`, unreadable or invalid JSON, a top level that is
+not an object, or a requested provider missing from the file. The claude and codex files are copied without being
+parsed.
 
 Notes:
 
-- **Refresh tokens.** `claude_host_login` never copies the refresh token, so a run cannot rotate (and so
-  invalidate) the host login, but the access token expires; runs then fail with `error.kind == "auth"`. Prefer
-  `claude_oauth_token` from `claude setup-token`. `codex_auth_file` copies the whole `auth.json`, including any
-  refresh token; whether codex rotates it inside the run home (invalidating the host copy) is unverified
-  (CoreDesign §7). `opencode_auth_file` passes whatever the selected provider entries contain.
+- **Refresh tokens.** `claude_host_login` and `codex_auth_file` copy the whole login file, refresh token included
+  (it is deleted when the turn ends). Whether the harness rotates the refresh token inside the run home, which
+  would invalidate the host's copy, is unverified for both (CoreDesign §7); if a host login stops working after
+  PHD runs, log in again. `claude_oauth_token` from `claude setup-token` has no refresh token, so it cannot be
+  rotated, but it cannot drive Chrome (`Spec.chrome`). `opencode_auth_file` passes whatever the selected provider
+  entries contain.
 - **Host variables are not used.** The child process gets the host environment minus every `ANTHROPIC_*`,
   `CLAUDE_*`, `CODEX_*`, `OPENAI_*`, `OPENCODE_*` and `XDG_*` variable, so an `ANTHROPIC_API_KEY` in your shell
   does not leak into a run. There is no `*_from_env()` constructor and no `openai_api_key` kind today.

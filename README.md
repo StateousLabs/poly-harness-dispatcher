@@ -79,7 +79,7 @@ async with d.run(Inputs(msg="List the names of your skills.")) as handle:
 not raise: check `result.status` and `result.error`. Problems detectable before launch raise a `PhdError`.
 
 On macOS the Claude login lives in the Keychain: use `Credentials.claude_oauth_token(token)` with a token from
-`claude setup-token` instead of `from_host("claude")`.
+`claude setup-token` instead of `from_host("claude")` (that token cannot drive Chrome, see `Spec(chrome=True)`).
 
 ## Documentation
 

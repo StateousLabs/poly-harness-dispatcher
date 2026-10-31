@@ -24,8 +24,8 @@ def test_claude_refuses_credentials_of_another_harness(credentials, tmp_path):
 
 def test_claude_owns_its_files_and_keeps_no_secrets_on_disk(tmp_path):
     adapter = get_adapter("claude")
-    assert [p.name for p in adapter.owned_paths(tmp_path)] == ["skills", "system-prompt.md", "mcp.json", "settings.json"]
-    assert adapter.secret_paths(tmp_path) == []
+    assert [p.name for p in adapter.owned_paths(tmp_path)] == ["skills", "system-prompt.md", "mcp.json", "settings.json", ".credentials.json"]
+    assert adapter.secret_paths(tmp_path) == [tmp_path / ".credentials.json"]
     assert isinstance(adapter.parser(), ClaudeParser)
 
 

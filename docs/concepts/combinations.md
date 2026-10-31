@@ -126,7 +126,7 @@ Resume also requires the same harness and `cwd`, and rejects `Inputs.rules` (`Un
 |---|---|---|---|
 | `claude_oauth_token` | env `CLAUDE_CODE_OAUTH_TOKEN` | n/a | n/a |
 | `anthropic_api_key` | env `ANTHROPIC_API_KEY` | n/a | n/a |
-| `claude_host_login` | env `CLAUDE_CODE_OAUTH_TOKEN` (access token read from the file) | n/a | n/a |
+| `claude_host_login` | file `home/.credentials.json` | n/a | n/a |
 | `codex_auth_file` | n/a | file `home/auth.json` | n/a |
 | `opencode_auth_file` | n/a | n/a | env `OPENCODE_AUTH_CONTENT` |
 

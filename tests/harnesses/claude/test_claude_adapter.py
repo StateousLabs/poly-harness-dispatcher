@@ -68,15 +68,48 @@ def test_harness_config_merge_and_conflict_warning(tmp_path, make_spec, inputs):
     assert any("permissions.allow" in w for w in m2.warnings)
 
 
-def test_host_login_injects_access_token_only(tmp_path, make_spec, inputs):
-    creds = tmp_path / ".credentials.json"
-    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-123", "refreshToken": "rt-SECRET"}}))
-    m = materialize_spec(make_spec("claude", credentials=Credentials.claude_host_login(creds)), inputs,
-                    run_id="r", run_dir=tmp_path / "r")
-    assert m.env["CLAUDE_CODE_OAUTH_TOKEN"] == "at-123"
-    for f in m.home.rglob("*"):
-        if f.is_file():
-            assert b"rt-SECRET" not in f.read_bytes(), f
+def _login_file(tmp_path):
+    login = tmp_path / ".credentials.json"
+    login.write_text(json.dumps({"claudeAiOauth": {"accessToken": "at-123", "refreshToken": "rt-123"}}), encoding="utf-8")
+    return login
+
+
+def test_host_login_copies_the_whole_login_file(tmp_path, make_spec, inputs):
+    login = _login_file(tmp_path)
+    m = materialize_spec(make_spec("claude", credentials=Credentials.claude_host_login(login)), inputs,
+                         run_id="r", run_dir=tmp_path / "r")
+    assert (m.home / ".credentials.json").read_bytes() == login.read_bytes()  # verbatim, refresh token included
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in m.env and "ANTHROPIC_API_KEY" not in m.env
+    adapter = get_adapter("claude")
+    assert adapter.secret_paths(m.home) == [m.home / ".credentials.json"]
+    assert m.home / ".credentials.json" in adapter.owned_paths(m.home)
+
+
+def test_token_credentials_write_no_login_file(tmp_path, make_spec, inputs):
+    m = materialize_spec(make_spec("claude"), inputs, run_id="r", run_dir=tmp_path / "r")
+    assert m.env["CLAUDE_CODE_OAUTH_TOKEN"] == "test-oauth-token"
+    assert not (m.home / ".credentials.json").exists()
+
+
+def test_chrome_adds_the_flag_and_allows_the_chrome_tools(tmp_path, make_spec, inputs):
+    spec = make_spec("claude", credentials=Credentials.claude_host_login(_login_file(tmp_path)), chrome=True)
+    m = materialize_spec(spec, inputs, run_id="r", run_dir=tmp_path / "r")
+    assert "--chrome" in m.argv
+    allow = json.loads((m.home / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+    assert "mcp__claude-in-chrome" in allow
+
+
+def test_chrome_is_off_by_default(tmp_path, make_spec, inputs):
+    m = materialize_spec(make_spec("claude"), inputs, run_id="r", run_dir=tmp_path / "r")
+    assert "--chrome" not in m.argv
+    allow = json.loads((m.home / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+    assert "mcp__claude-in-chrome" not in allow
+
+
+def test_chrome_is_kept_on_resume(tmp_path, make_spec):
+    spec = make_spec("claude", credentials=Credentials.claude_host_login(_login_file(tmp_path)), chrome=True)
+    adapter = get_adapter("claude")
+    assert adapter.resume_argv(["claude", "-p", "--chrome"], "sid-1", spec) == ["claude", "-p", "--chrome", "--resume", "sid-1"]
 
 
 def test_claude_resume_argv(make_spec):

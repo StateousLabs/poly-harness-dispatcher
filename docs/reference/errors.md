@@ -27,7 +27,7 @@ All classes are importable from `phd` and subclass `PhdError` (which subclasses 
 | `MissingSecret` | `${env:NAME}` without `Spec.secrets["NAME"]` |
 | `MissingCredentials` | credentials missing, unreadable, for another harness, or of an unusable kind |
 | `UnsafeAutonomy` | `autonomy="full"` without `unsafe=True` |
-| `UnsupportedFeature` | `Inputs.rules` on a resumed turn (rules are part of the session's system prompt); an `output_schema` keyword codex cannot express (`patternProperties`, `if`, `not`, ...), raised by `Dispatcher(spec)` |
+| `UnsupportedFeature` | `Spec(chrome=True)` with codex or opencode; `Inputs.rules` on a resumed turn (rules are part of the session's system prompt); an `output_schema` keyword codex cannot express (`patternProperties`, `if`, `not`, ...), raised by `Dispatcher(spec)` |
 | `InvalidSpec` | invalid `Spec` field value, including a malformed `output_schema` and a bad `idle_timeout_s` / `schema_repair` |
 | `InvalidRunsRoot` | codex `runs_root` under the system temp dir |
 | `NotResumable` | a `session_id` cannot be continued right now (session busy, tampered home or missing `run.json`, or `plan()` with an unresumable session); other unresumable sessions come back as `error.kind == "session"` results |
